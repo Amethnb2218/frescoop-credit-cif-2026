@@ -1,89 +1,94 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { formatDateTime } from '../lib/format';
-import { BookOpen, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
+
+const ACTION_LABELS = {
+  LOGIN: 'Connexion',
+  REGISTER: 'Inscription',
+  DOSSIER_CREATED: 'Dossier créé',
+  DOSSIER_UPDATED: 'Dossier modifié',
+  STATUS_CHANGED: 'Statut modifié',
+  EVIDENCE_ADDED: 'Preuve ajoutée',
+  EVIDENCE_VERIFIED: 'Preuve vérifiée',
+  CASHFLOW_UPDATED: 'Cash-flow mis à jour',
+  STRESS_TEST_RUN: 'Stress test exécuté',
+  RULES_EVALUATED: 'Règles évaluées',
+  BIC_CHECK: 'Consultation BIC',
+  DECISION_MADE: 'Décision prise',
+  DECISION_OVERRIDE: 'Override humain',
+  SYNC_PUSH: 'Synchronisation',
+};
 
 export default function AuditLog() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
-  const [actionFilter, setActionFilter] = useState('');
 
-  useEffect(() => { loadLogs(); }, [actionFilter]);
+  useEffect(() => { loadLogs(); }, []);
 
   async function loadLogs() {
     try {
-      const params = { limit: '200' };
-      if (actionFilter) params.action = actionFilter;
-      const res = await api.getAuditLog(params);
+      const res = await api.getAuditLog({ limit: '200' });
       setLogs(res.logs || []);
-    } catch {} finally {
-      setLoading(false);
-    }
+    } catch {} finally { setLoading(false); }
   }
-
-  const actions = [...new Set(logs.map(l => l.action))].sort();
 
   const filtered = logs.filter(l => {
     if (!filter) return true;
     const q = filter.toLowerCase();
     return (l.user_name || '').toLowerCase().includes(q) ||
-           (l.action || '').toLowerCase().includes(q) ||
-           (l.entity_type || '').toLowerCase().includes(q);
+           (l.action || '').toLowerCase().includes(q);
   });
+
+  const importantActions = ['DECISION_MADE', 'DECISION_OVERRIDE', 'STATUS_CHANGED'];
 
   return (
     <div>
-      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: 24 }}>Journal d'audit</h1>
+      <div className="page-header">
+        <h1 className="page-title">Journal d'audit</h1>
+        <p className="page-subtitle">Historique complet des opérations et décisions</p>
+      </div>
 
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: 200, position: 'relative' }}>
-            <Search size={16} style={{ position: 'absolute', left: 12, top: 11, color: '#9ca3af' }} />
-            <input className="form-input" style={{ paddingLeft: 36 }} placeholder="Rechercher..." value={filter} onChange={e => setFilter(e.target.value)} />
-          </div>
-          <select className="form-input form-select" style={{ width: 'auto' }} value={actionFilter} onChange={e => setActionFilter(e.target.value)}>
-            <option value="">Toutes les actions</option>
-            {actions.map(a => <option key={a} value={a}>{a}</option>)}
-          </select>
+      <div className="surface" style={{ marginBottom: 16, padding: '12px 16px' }}>
+        <div style={{ position: 'relative', maxWidth: 360 }}>
+          <Search size={15} style={{ position: 'absolute', left: 10, top: 9, color: 'var(--c-400)' }} />
+          <input className="input" style={{ paddingLeft: 32 }} placeholder="Rechercher par utilisateur, action..." value={filter} onChange={e => setFilter(e.target.value)} />
         </div>
       </div>
 
-      <div className="card">
+      <div className="surface">
         {loading ? (
-          <p style={{ textAlign: 'center', padding: 40, color: '#6b7280' }}>Chargement...</p>
+          <div className="loading-state">Chargement du journal...</div>
         ) : filtered.length === 0 ? (
-          <p style={{ textAlign: 'center', padding: 40, color: '#6b7280' }}>Aucune entrée</p>
+          <div className="empty-state">
+            <div className="empty-state-title">Aucune entrée d'audit</div>
+            <div className="empty-state-desc">Les opérations effectuées sur la plateforme apparaîtront ici.</div>
+          </div>
         ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Utilisateur</th>
-                  <th>Rôle</th>
-                  <th>Action</th>
-                  <th>Entité</th>
-                  <th>Détails</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(l => {
-                  let details = '';
-                  try { const d = JSON.parse(l.details || '{}'); details = Object.entries(d).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(', '); } catch {}
-                  return (
-                    <tr key={l.id}>
-                      <td style={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }}>{formatDateTime(l.created_at)}</td>
-                      <td><strong>{l.user_name}</strong></td>
-                      <td><span className="badge badge-gray">{l.user_role}</span></td>
-                      <td style={{ fontWeight: 500 }}>{l.action}</td>
-                      <td style={{ fontSize: '0.8rem', color: '#6b7280' }}>{l.entity_type}{l.entity_id ? ` #${l.entity_id.slice(0, 8)}` : ''}</td>
-                      <td style={{ fontSize: '0.75rem', color: '#6b7280', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>{details}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="audit-timeline">
+            {filtered.map(l => {
+              const isImportant = importantActions.includes(l.action);
+              let detail = '';
+              try {
+                const d = JSON.parse(l.details || '{}');
+                if (l.action === 'STATUS_CHANGED') detail = `${d.from} → ${d.to}`;
+                else if (l.action === 'DECISION_MADE' || l.action === 'DECISION_OVERRIDE') detail = `Décision: ${d.decision}${d.amount ? ` — ${d.amount.toLocaleString('fr-FR')} FCFA` : ''}`;
+                else if (l.action === 'EVIDENCE_ADDED') detail = `${d.category} — Niveau ${d.level}`;
+                else if (l.action === 'RULES_EVALUATED') detail = `Préqualification: ${d.prequalification}`;
+              } catch {}
+
+              return (
+                <div key={l.id} className={`audit-event ${isImportant ? 'important' : ''}`}>
+                  <div className="audit-time">{formatDateTime(l.created_at)}</div>
+                  <div className="audit-actor">{l.user_name} <span className="badge badge-neutral" style={{ marginLeft: 6 }}>{l.user_role}</span></div>
+                  <div className="audit-action">
+                    {ACTION_LABELS[l.action] || l.action}
+                    {detail && <span style={{ marginLeft: 8, color: 'var(--c-500)' }}>— {detail}</span>}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

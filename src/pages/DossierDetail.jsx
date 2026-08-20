@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
-import { formatCFA, formatDate, formatDateTime, STATUS_LABELS, VERIFICATION_LEVELS, MONTHS, prequalLabel, prequalColor } from '../lib/format';
+import { formatCFA, formatDate, formatDateTime, STATUS_LABELS, MONTHS, prequalLabel, prequalColor } from '../lib/format';
+import { EVIDENCE_LEVELS } from '../lib/tokens';
 import { isOnline, addToSyncQueue, saveEvidenceOffline } from '../lib/offline';
-import { ArrowLeft, Plus, Play, FileText, AlertTriangle, CheckCircle, XCircle, WifiOff, Download } from 'lucide-react';
+import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff } from 'lucide-react';
 
 const TABS = ['Résumé', 'Preuves', 'Cash-flow', 'Stress test', 'Préqualification', 'Décision', 'Audit'];
 
@@ -33,94 +34,73 @@ export default function DossierDetail() {
       setStressTests(res.stress_tests || []);
       setRuleEvals(res.rule_evaluations || []);
       setRiskFlags(res.risk_flags || []);
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) { alert(err.message); }
+    finally { setLoading(false); }
   }
 
   async function loadAudit() {
-    try {
-      const res = await api.getDossierAudit(id);
-      setAuditLogs(res.logs || []);
-    } catch {}
+    try { const res = await api.getDossierAudit(id); setAuditLogs(res.logs || []); } catch {}
   }
 
   async function checkBic() {
     if (!dossier?.applicant_id_number) return alert('N° d\'identité requis');
-    try {
-      const res = await api.checkBic(dossier.applicant_id_number);
-      setBicData(res);
-    } catch (err) { alert(err.message); }
+    try { const res = await api.checkBic(dossier.applicant_id_number); setBicData(res); } catch (err) { alert(err.message); }
   }
 
   async function runStressTest() {
-    try {
-      const res = await api.runStressTest(id);
-      setStressTests(res.stress_tests || []);
-    } catch (err) { alert(err.message); }
+    try { const res = await api.runStressTest(id); setStressTests(res.stress_tests || []); } catch (err) { alert(err.message); }
   }
 
   async function evaluateRules() {
-    try {
-      const res = await api.evaluateRules(id);
-      setRuleEvals(res.evaluations || []);
-      await loadDossier();
-    } catch (err) { alert(err.message); }
+    try { await api.evaluateRules(id); await loadDossier(); } catch (err) { alert(err.message); }
   }
 
   async function advanceStatus(newStatus) {
-    try {
-      await api.updateStatus(id, newStatus);
-      await loadDossier();
-    } catch (err) { alert(err.message); }
+    try { await api.updateStatus(id, newStatus); await loadDossier(); } catch (err) { alert(err.message); }
   }
 
   useEffect(() => { if (tab === 'Audit') loadAudit(); }, [tab]);
 
-  if (loading) return <p style={{ textAlign: 'center', padding: 40 }}>Chargement...</p>;
-  if (!dossier) return <p style={{ textAlign: 'center', padding: 40 }}>Dossier introuvable</p>;
+  if (loading) return <div className="loading-state">Chargement du dossier...</div>;
+  if (!dossier) return <div className="empty-state"><div className="empty-state-title">Dossier introuvable</div></div>;
 
-  const workflowSteps = ['draft', 'submitted', 'verification', 'review', 'committee', 'decided', 'exported', 'disbursed', 'monitoring', 'closed'];
+  const workflowSteps = ['draft', 'submitted', 'verification', 'review', 'committee', 'decided'];
   const currentIdx = workflowSteps.indexOf(dossier.status);
 
   return (
     <div>
-      <button className="btn btn-sm btn-secondary" style={{ marginBottom: 16 }} onClick={() => navigate('/dossiers')}>
-        <ArrowLeft size={14} /> Retour aux dossiers
+      <button className="btn btn-ghost btn-sm" onClick={() => navigate('/dossiers')} style={{ marginBottom: 12 }}>
+        <ArrowLeft size={14} /> Dossiers
       </button>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+      <div className="flex justify-between items-center" style={{ marginBottom: 16 }}>
         <div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700 }}>{dossier.applicant_name || 'Dossier sans nom'}</h1>
-          <p style={{ fontSize: '0.85rem', color: '#6b7280' }}>{dossier.applicant_location} — {dossier.activity_type || dossier.sector}</p>
+          <h1 className="page-title">{dossier.applicant_name || 'Dossier'}</h1>
+          <p className="page-subtitle">{dossier.applicant_location} · {dossier.activity_type || dossier.sector} · {formatCFA(dossier.amount_requested)}</p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="flex gap-2">
           {dossier.status === 'draft' && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('submitted')}>Soumettre</button>}
           {dossier.status === 'submitted' && user?.role !== 'AGENT' && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('verification')}>Vérifier</button>}
           {dossier.status === 'verification' && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('review')}>Passer en revue</button>}
-          {dossier.status === 'review' && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('committee')}>Envoyer au comité</button>}
+          {dossier.status === 'review' && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('committee')}>Transmettre au comité</button>}
         </div>
       </div>
 
-      <div className="workflow-steps">
+      <div className="workflow-bar">
         {workflowSteps.map((s, i) => (
-          <span key={s} className={`workflow-step ${i === currentIdx ? 'current' : i < currentIdx ? 'done' : ''}`}>
-            {STATUS_LABELS[s]}
-          </span>
+          <span key={s} className={`workflow-step ${i === currentIdx ? 'current' : i < currentIdx ? 'done' : ''}`}>{STATUS_LABELS[s]}</span>
         ))}
       </div>
 
-      <div className="tabs">
-        {TABS.map(t => <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>{t}</button>)}
+      <div className="tab-list">
+        {TABS.map(t => <button key={t} className={`tab-item ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>{t}</button>)}
       </div>
 
       {tab === 'Résumé' && <SummaryTab dossier={dossier} evidence={evidence} cashflow={cashflow} bicData={bicData} onCheckBic={checkBic} />}
       {tab === 'Preuves' && <EvidenceTab dossierId={id} evidence={evidence} onReload={loadDossier} />}
       {tab === 'Cash-flow' && <CashflowTab dossierId={id} cashflow={cashflow} dossier={dossier} onReload={loadDossier} />}
-      {tab === 'Stress test' && <StressTab stressTests={stressTests} onRun={runStressTest} dossier={dossier} />}
-      {tab === 'Préqualification' && <PrequalTab dossier={dossier} ruleEvals={ruleEvals} riskFlags={riskFlags} onEvaluate={evaluateRules} />}
+      {tab === 'Stress test' && <StressTab stressTests={stressTests} onRun={runStressTest} />}
+      {tab === 'Préqualification' && <PrequalTab dossier={dossier} ruleEvals={ruleEvals} onEvaluate={evaluateRules} />}
       {tab === 'Décision' && <DecisionTab dossier={dossier} onReload={loadDossier} />}
       {tab === 'Audit' && <AuditTab logs={auditLogs} />}
     </div>
@@ -130,91 +110,86 @@ export default function DossierDetail() {
 function SummaryTab({ dossier, evidence, cashflow, bicData, onCheckBic }) {
   const totalRevenue = cashflow.reduce((s, e) => s + (e.revenue || 0), 0);
   const totalExpenses = cashflow.reduce((s, e) => s + (e.expenses || 0), 0);
+  const totalDebt = cashflow.reduce((s, e) => s + (e.debt_payments || 0), 0);
 
   return (
     <div className="grid-2">
-      <div className="card">
-        <div className="memo-section">
-          <div className="memo-section-title">Identité</div>
+      <div className="surface">
+        <Section title="Identité">
           <p><strong>{dossier.applicant_name}</strong></p>
-          <p>{dossier.applicant_phone} — {dossier.applicant_id_number}</p>
-          <p>{dossier.applicant_location}</p>
-        </div>
-        <div className="memo-section">
-          <div className="memo-section-title">Activité</div>
-          <p>{dossier.sector} — {dossier.activity_type}</p>
-          <p>{dossier.years_experience} ans d'expérience — {dossier.surface_ha} ha</p>
-          <p>Cycle: {dossier.production_cycle}</p>
-        </div>
-        <div className="memo-section">
-          <div className="memo-section-title">Crédit demandé</div>
-          <p style={{ fontSize: '1.25rem', fontWeight: 700 }}>{formatCFA(dossier.amount_requested)}</p>
-          <p>{dossier.credit_purpose}</p>
-          <p>Durée: {dossier.duration_months} mois — {dossier.desired_schedule}</p>
-        </div>
-        <div className="memo-section">
-          <div className="memo-section-title">Garanties</div>
-          <p>Épargne: {formatCFA(dossier.savings_amount)}</p>
-          <p>Type: {dossier.guarantee_type}</p>
-          <p>{dossier.group_guarantee}</p>
-        </div>
+          <p className="text-sm text-muted">{dossier.applicant_phone} · {dossier.applicant_id_number}</p>
+          <p className="text-sm">{dossier.applicant_location}</p>
+        </Section>
+        <Section title="Activité">
+          <p>{dossier.sector} · {dossier.activity_type}</p>
+          <p className="text-sm text-muted">{dossier.years_experience} ans · {dossier.surface_ha} ha · Cycle: {dossier.production_cycle}</p>
+        </Section>
+        <Section title="Demande de crédit">
+          <p style={{ fontSize: 'var(--fs-xl)', fontWeight: 700 }}>{formatCFA(dossier.amount_requested)}</p>
+          <p className="text-sm">{dossier.credit_purpose}</p>
+          <p className="text-sm text-muted">{dossier.duration_months} mois · {dossier.desired_schedule}</p>
+        </Section>
+        <Section title="Garanties">
+          <p className="text-sm">Épargne: {formatCFA(dossier.savings_amount)} · {dossier.guarantee_type}</p>
+          {dossier.group_guarantee && <p className="text-sm text-muted">{dossier.group_guarantee}</p>}
+        </Section>
+        {dossier.agent_note && (
+          <Section title="Note de l'agent">
+            <p className="text-sm">{dossier.agent_note}</p>
+          </Section>
+        )}
       </div>
 
       <div>
         {dossier.prequalification && (
-          <div className={`prequal-result ${prequalColor(dossier.prequalification)}`} style={{ marginBottom: 16 }}>
-            <div className="prequal-label">{prequalLabel(dossier.prequalification)}</div>
-            <div style={{ fontSize: '0.8rem' }}>
-              Evidence: <strong>{dossier.evidence_confidence || '—'}</strong> | Capacité: <strong>{dossier.repayment_capacity || '—'}</strong>
+          <div className={`prequal-panel ${prequalColor(dossier.prequalification) === 'green' ? 'success' : prequalColor(dossier.prequalification) === 'amber' ? 'warning' : 'error'}`}>
+            <div className="prequal-title">{prequalLabel(dossier.prequalification)}</div>
+            <div className="prequal-dimensions">
+              <div><div className="prequal-dim-label">Confiance preuves</div><div className="prequal-dim-value">{dossier.evidence_confidence || '—'}</div></div>
+              <div><div className="prequal-dim-label">Capacité remboursement</div><div className="prequal-dim-value">{dossier.repayment_capacity || '—'}</div></div>
+              <div><div className="prequal-dim-label">Preuves au dossier</div><div className="prequal-dim-value">{evidence.length}</div></div>
             </div>
           </div>
         )}
 
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div className="memo-section-title">Cash-flow annuel</div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-            <div><span style={{ color: '#6b7280', fontSize: '0.8rem' }}>Revenus</span><br /><strong style={{ color: '#38a169' }}>{formatCFA(totalRevenue)}</strong></div>
-            <div><span style={{ color: '#6b7280', fontSize: '0.8rem' }}>Charges</span><br /><strong style={{ color: '#dc2626' }}>{formatCFA(totalExpenses)}</strong></div>
-            <div><span style={{ color: '#6b7280', fontSize: '0.8rem' }}>Net</span><br /><strong>{formatCFA(totalRevenue - totalExpenses)}</strong></div>
-          </div>
+        <div className="surface mb-4">
+          <Section title="Cash-flow annuel">
+            <div className="grid-3" style={{ gap: 12 }}>
+              <div><div className="text-xs text-muted">Revenus</div><div className="font-bold text-success">{formatCFA(totalRevenue)}</div></div>
+              <div><div className="text-xs text-muted">Charges + dettes</div><div className="font-bold text-error">{formatCFA(totalExpenses + totalDebt)}</div></div>
+              <div><div className="text-xs text-muted">Flux net</div><div className="font-bold">{formatCFA(totalRevenue - totalExpenses - totalDebt)}</div></div>
+            </div>
+          </Section>
         </div>
 
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div className="memo-section-title">Preuves ({evidence.length})</div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            {['A', 'B', 'C', 'D'].map(l => {
-              const count = evidence.filter(e => e.verification_level === l).length;
-              return <span key={l} className="badge" style={{ background: VERIFICATION_LEVELS[l].color, color: VERIFICATION_LEVELS[l].textColor }}>{l}: {count}</span>;
-            })}
-          </div>
-        </div>
-
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div className="memo-section-title" style={{ margin: 0 }}>BIC — Données simulées</div>
-            <button className="btn btn-sm btn-secondary" onClick={onCheckBic}>Consulter</button>
+        <div className="surface mb-4">
+          <div className="flex justify-between items-center">
+            <div className="text-xs font-semibold text-muted" style={{ textTransform: 'uppercase', letterSpacing: '.4px' }}>BIC — Données simulées</div>
+            <button className="btn btn-secondary btn-sm" onClick={onCheckBic}>Consulter</button>
           </div>
           {bicData && (
             <div style={{ marginTop: 12 }}>
               {bicData.summary.total_records === 0 ? (
-                <p style={{ color: '#38a169', fontSize: '0.85rem' }}>Aucun crédit existant trouvé</p>
+                <p className="text-sm text-success">Aucun crédit existant trouvé</p>
               ) : (
                 <div>
-                  <p style={{ fontSize: '0.85rem' }}><strong>{bicData.summary.total_records}</strong> crédit(s) — Encours: <strong>{formatCFA(bicData.summary.total_outstanding)}</strong></p>
-                  {bicData.summary.has_late_payments && <p style={{ color: '#dc2626', fontSize: '0.85rem' }}>Retard de paiement détecté ({bicData.summary.max_days_late} jours)</p>}
+                  <p className="text-sm"><strong>{bicData.summary.total_records}</strong> crédit(s) · Encours: <strong>{formatCFA(bicData.summary.total_outstanding)}</strong></p>
+                  {bicData.summary.has_late_payments && <p className="text-sm text-error">Retard de paiement détecté ({bicData.summary.max_days_late} jours)</p>}
                 </div>
               )}
             </div>
           )}
         </div>
-
-        {dossier.agent_note && (
-          <div className="card">
-            <div className="memo-section-title">Note de l'agent</div>
-            <p style={{ fontSize: '0.85rem', marginTop: 8 }}>{dossier.agent_note}</p>
-          </div>
-        )}
       </div>
+    </div>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <div style={{ marginBottom: 20, paddingBottom: 16, borderBottom: '1px solid var(--c-100)' }}>
+      <div className="text-xs font-semibold text-muted" style={{ textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 8 }}>{title}</div>
+      {children}
     </div>
   );
 }
@@ -226,73 +201,65 @@ function EvidenceTab({ dossierId, evidence, onReload }) {
   async function handleAdd() {
     try {
       const data = { dossier_id: dossierId, ...form, amount: form.amount ? Number(form.amount) : null };
-      if (isOnline()) {
-        await api.addEvidence(data);
-      } else {
-        const id = crypto.randomUUID();
-        await saveEvidenceOffline({ id, ...data });
-        await addToSyncQueue({ operation: 'create', entity_type: 'evidence', entity_id: id, payload: data });
-      }
+      if (isOnline()) { await api.addEvidence(data); }
+      else { const id = crypto.randomUUID(); await saveEvidenceOffline({ id, ...data }); await addToSyncQueue({ operation: 'create', entity_type: 'evidence', entity_id: id, payload: data }); }
       setAdding(false);
       setForm({ category: 'VENTE', label: '', amount: '', source: '', source_detail: '', verification_level: 'D', evidence_date: '' });
       onReload();
     } catch (err) { alert(err.message); }
   }
 
+  const levelColors = { A: { bg: '#d1fae5', text: '#065f46' }, B: { bg: '#dbeafe', text: '#1e40af' }, C: { bg: '#fef3c7', text: '#92400e' }, D: { bg: '#f3f4f6', text: '#374151' } };
+
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h2 style={{ fontSize: '1.1rem', fontWeight: 600 }}>Evidence Ledger ({evidence.length} pièce(s))</h2>
-        <button className="btn btn-sm btn-primary" onClick={() => setAdding(!adding)}><Plus size={14} /> Ajouter</button>
+      <div className="flex justify-between items-center mb-4">
+        <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600 }}>Preuves au dossier ({evidence.length})</h2>
+        <button className="btn btn-primary btn-sm" onClick={() => setAdding(!adding)}><Plus size={14} /> Ajouter une preuve</button>
       </div>
 
       {adding && (
-        <div className="card" style={{ marginBottom: 16 }}>
+        <div className="surface mb-4">
           <div className="grid-2">
-            <div className="form-group">
-              <label className="form-label">Catégorie</label>
-              <select className="form-input form-select" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+            <div className="field">
+              <label className="field-label">Catégorie</label>
+              <select className="input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
                 <option value="VENTE">Vente</option>
                 <option value="LIVRAISON">Livraison</option>
                 <option value="HISTORIQUE_IMF">Historique IMF</option>
                 <option value="EPARGNE">Épargne</option>
                 <option value="VISITE_TERRAIN">Visite terrain</option>
                 <option value="DOCUMENT">Document</option>
-                <option value="MOBILE_MONEY">Mobile Money (simulé)</option>
-                <option value="BIC">BIC</option>
               </select>
             </div>
-            <div className="form-group">
-              <label className="form-label">Niveau de vérification</label>
-              <select className="form-input form-select" value={form.verification_level} onChange={e => setForm(f => ({ ...f, verification_level: e.target.value }))}>
-                <option value="A">A — Vérifié auprès de la source</option>
-                <option value="B">B — Tiers fiable</option>
-                <option value="C">C — Document fourni non vérifié</option>
-                <option value="D">D — Déclaration du demandeur</option>
+            <div className="field">
+              <label className="field-label">Niveau de vérification</label>
+              <select className="input" value={form.verification_level} onChange={e => setForm(f => ({ ...f, verification_level: e.target.value }))}>
+                {Object.entries(EVIDENCE_LEVELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select>
             </div>
-            <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-              <label className="form-label">Libellé *</label>
-              <input className="form-input" value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} placeholder="Ex: Vente tomates Coopérative Notto" />
+            <div className="field" style={{ gridColumn: '1 / -1' }}>
+              <label className="field-label">Libellé *</label>
+              <input className="input" value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} />
             </div>
-            <div className="form-group">
-              <label className="form-label">Montant (FCFA)</label>
-              <input className="form-input" type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
+            <div className="field">
+              <label className="field-label">Montant (FCFA)</label>
+              <input className="input" type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
             </div>
-            <div className="form-group">
-              <label className="form-label">Date de la preuve</label>
-              <input className="form-input" type="date" value={form.evidence_date} onChange={e => setForm(f => ({ ...f, evidence_date: e.target.value }))} />
+            <div className="field">
+              <label className="field-label">Date</label>
+              <input className="input" type="date" value={form.evidence_date} onChange={e => setForm(f => ({ ...f, evidence_date: e.target.value }))} />
             </div>
-            <div className="form-group">
-              <label className="form-label">Source *</label>
-              <input className="form-input" value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} placeholder="Ex: Coopérative, Système IMF..." />
+            <div className="field">
+              <label className="field-label">Source *</label>
+              <input className="input" value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} />
             </div>
-            <div className="form-group">
-              <label className="form-label">Détail source</label>
-              <input className="form-input" value={form.source_detail} onChange={e => setForm(f => ({ ...f, source_detail: e.target.value }))} />
+            <div className="field">
+              <label className="field-label">Détail source</label>
+              <input className="input" value={form.source_detail} onChange={e => setForm(f => ({ ...f, source_detail: e.target.value }))} />
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <div className="flex gap-2" style={{ marginTop: 12 }}>
             <button className="btn btn-primary btn-sm" onClick={handleAdd} disabled={!form.label || !form.source}>Enregistrer</button>
             <button className="btn btn-secondary btn-sm" onClick={() => setAdding(false)}>Annuler</button>
           </div>
@@ -300,20 +267,20 @@ function EvidenceTab({ dossierId, evidence, onReload }) {
       )}
 
       {evidence.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: 40, color: '#6b7280' }}>Aucune preuve au dossier</div>
+        <div className="surface"><div className="empty-state"><div className="empty-state-title">Aucune preuve au dossier</div><div className="empty-state-desc">Ajoutez des preuves pour renforcer le dossier de crédit.</div></div></div>
       ) : (
         evidence.map(e => (
-          <div key={e.id} className="evidence-item">
-            <div className="evidence-level" style={{ background: VERIFICATION_LEVELS[e.verification_level]?.color, color: VERIFICATION_LEVELS[e.verification_level]?.textColor }}>
+          <div key={e.id} className="evidence-card">
+            <div className="evidence-level-badge" style={{ background: levelColors[e.verification_level]?.bg, color: levelColors[e.verification_level]?.text }}>
               {e.verification_level}
             </div>
-            <div className="evidence-content">
-              <div className="evidence-label">{e.label}</div>
+            <div className="evidence-body">
+              <div className="evidence-title">{e.label}</div>
               <div className="evidence-meta">
-                {e.category} — {e.source} — {formatDate(e.evidence_date)}
-                {e.amount && <> — <strong>{formatCFA(e.amount)}</strong></>}
+                {e.category} · {e.source} · {formatDate(e.evidence_date)}
+                {e.amount && <span className="evidence-amount" style={{ marginLeft: 8 }}>{formatCFA(e.amount)}</span>}
               </div>
-              <div className="evidence-meta">{VERIFICATION_LEVELS[e.verification_level]?.label}</div>
+              <div className="evidence-meta" style={{ marginTop: 4 }}>{EVIDENCE_LEVELS[e.verification_level]}</div>
             </div>
           </div>
         ))
@@ -329,105 +296,89 @@ function CashflowTab({ dossierId, cashflow, dossier, onReload }) {
   );
 
   async function handleSave() {
-    try {
-      await api.saveCashflow(dossierId, entries);
-      setEditing(false);
-      onReload();
-    } catch (err) { alert(err.message); }
+    try { await api.saveCashflow(dossierId, entries); setEditing(false); onReload(); } catch (err) { alert(err.message); }
   }
 
   const totalRevenue = entries.reduce((s, e) => s + (e.revenue || 0), 0);
   const totalExpenses = entries.reduce((s, e) => s + (e.expenses || 0), 0);
   const totalDebt = entries.reduce((s, e) => s + (e.debt_payments || 0), 0);
-  const netFlow = totalRevenue - totalExpenses - totalDebt;
   const monthlyPayment = dossier.amount_requested && dossier.duration_months ? Math.ceil(dossier.amount_requested / dossier.duration_months) : 0;
-  const maxBar = Math.max(...entries.map(e => Math.max(e.revenue || 0, (e.expenses || 0) + (e.debt_payments || 0))), 1);
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h2 style={{ fontSize: '1.1rem', fontWeight: 600 }}>Cash-flow saisonnier</h2>
-        <button className="btn btn-sm btn-primary" onClick={() => setEditing(!editing)}>{editing ? 'Annuler' : 'Modifier'}</button>
+      <div className="flex justify-between items-center mb-4">
+        <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600 }}>Cash-flow saisonnier</h2>
+        <button className="btn btn-secondary btn-sm" onClick={() => setEditing(!editing)}>{editing ? 'Annuler' : 'Modifier'}</button>
       </div>
 
-      <div className="stats-grid" style={{ marginBottom: 24 }}>
-        <div className="stat-card"><div className="stat-value" style={{ color: '#38a169', fontSize: '1.25rem' }}>{formatCFA(totalRevenue)}</div><div className="stat-label">Revenus annuels</div></div>
-        <div className="stat-card"><div className="stat-value" style={{ color: '#dc2626', fontSize: '1.25rem' }}>{formatCFA(totalExpenses + totalDebt)}</div><div className="stat-label">Charges + dettes</div></div>
-        <div className="stat-card"><div className="stat-value" style={{ fontSize: '1.25rem' }}>{formatCFA(netFlow)}</div><div className="stat-label">Flux net annuel</div></div>
-        <div className="stat-card"><div className="stat-value" style={{ fontSize: '1.25rem' }}>{formatCFA(monthlyPayment)}</div><div className="stat-label">Échéance mensuelle</div></div>
+      <div className="metrics-row">
+        <div className="metric-card"><div className="metric-value" style={{ fontSize: 'var(--fs-xl)', color: 'var(--c-success)' }}>{formatCFA(totalRevenue)}</div><div className="metric-label">Revenus annuels</div></div>
+        <div className="metric-card"><div className="metric-value" style={{ fontSize: 'var(--fs-xl)', color: 'var(--c-error)' }}>{formatCFA(totalExpenses + totalDebt)}</div><div className="metric-label">Charges + dettes</div></div>
+        <div className="metric-card"><div className="metric-value" style={{ fontSize: 'var(--fs-xl)' }}>{formatCFA(totalRevenue - totalExpenses - totalDebt)}</div><div className="metric-label">Flux net</div></div>
+        <div className="metric-card"><div className="metric-value" style={{ fontSize: 'var(--fs-xl)' }}>{formatCFA(monthlyPayment)}</div><div className="metric-label">Échéance mensuelle</div></div>
       </div>
 
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="cashflow-bar">
-          {entries.map((e, i) => {
-            const rev = (e.revenue || 0) / maxBar * 150;
-            const exp = ((e.expenses || 0) + (e.debt_payments || 0)) / maxBar * 150;
-            return (
-              <div key={i} className="cashflow-month">
-                <div style={{ display: 'flex', gap: 2, alignItems: 'flex-end', height: 150 }}>
-                  <div className="cashflow-bar-positive" style={{ height: rev }} title={`Revenus: ${formatCFA(e.revenue)}`}></div>
-                  <div className="cashflow-bar-negative" style={{ height: exp }} title={`Charges: ${formatCFA((e.expenses || 0) + (e.debt_payments || 0))}`}></div>
-                </div>
-                <div className="cashflow-month-label">{MONTHS[i]}</div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {editing && (
-        <div className="card">
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Mois</th><th>Revenus</th><th>Charges</th><th>Dettes</th><th>Net</th></tr></thead>
-              <tbody>
-                {entries.map((e, i) => (
-                  <tr key={i}>
-                    <td><strong>{MONTHS[i]}</strong></td>
-                    <td><input type="number" className="form-input" style={{ width: 120 }} value={e.revenue} onChange={ev => { const n = [...entries]; n[i] = { ...n[i], revenue: Number(ev.target.value) }; setEntries(n); }} /></td>
-                    <td><input type="number" className="form-input" style={{ width: 120 }} value={e.expenses} onChange={ev => { const n = [...entries]; n[i] = { ...n[i], expenses: Number(ev.target.value) }; setEntries(n); }} /></td>
-                    <td><input type="number" className="form-input" style={{ width: 120 }} value={e.debt_payments} onChange={ev => { const n = [...entries]; n[i] = { ...n[i], debt_payments: Number(ev.target.value) }; setEntries(n); }} /></td>
-                    <td style={{ fontWeight: 600, color: (e.revenue - e.expenses - e.debt_payments) >= 0 ? '#38a169' : '#dc2626' }}>{formatCFA(e.revenue - e.expenses - (e.debt_payments || 0))}</td>
+      <div className="surface" style={{ padding: 0 }}>
+        <div className="table-container">
+          <table className="cashflow-table">
+            <thead><tr><th style={{ textAlign: 'left' }}>Mois</th><th>Revenus</th><th>Charges</th><th>Dettes</th><th>Flux net</th></tr></thead>
+            <tbody>
+              {entries.map((e, i) => {
+                const net = (e.revenue || 0) - (e.expenses || 0) - (e.debt_payments || 0);
+                const isPressure = net < 0;
+                return (
+                  <tr key={i} className={isPressure ? 'cashflow-pressure' : ''}>
+                    <td style={{ fontWeight: 500 }}>{MONTHS[i]}</td>
+                    {editing ? (
+                      <>
+                        <td><input type="number" className="input" style={{ width: 100, textAlign: 'right', padding: '4px 8px' }} value={e.revenue} onChange={ev => { const n = [...entries]; n[i] = { ...n[i], revenue: Number(ev.target.value) }; setEntries(n); }} /></td>
+                        <td><input type="number" className="input" style={{ width: 100, textAlign: 'right', padding: '4px 8px' }} value={e.expenses} onChange={ev => { const n = [...entries]; n[i] = { ...n[i], expenses: Number(ev.target.value) }; setEntries(n); }} /></td>
+                        <td><input type="number" className="input" style={{ width: 100, textAlign: 'right', padding: '4px 8px' }} value={e.debt_payments} onChange={ev => { const n = [...entries]; n[i] = { ...n[i], debt_payments: Number(ev.target.value) }; setEntries(n); }} /></td>
+                      </>
+                    ) : (
+                      <>
+                        <td>{formatCFA(e.revenue)}</td>
+                        <td>{formatCFA(e.expenses)}</td>
+                        <td>{formatCFA(e.debt_payments)}</td>
+                      </>
+                    )}
+                    <td className={net >= 0 ? 'cashflow-positive' : 'cashflow-negative'} style={{ fontWeight: 600 }}>{formatCFA(net)}</td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={handleSave}>Enregistrer le cash-flow</button>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
-      )}
+        {editing && (
+          <div style={{ padding: 16, borderTop: '1px solid var(--c-200)' }}>
+            <button className="btn btn-primary" onClick={handleSave}>Enregistrer le cash-flow</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-function StressTab({ stressTests, onRun, dossier }) {
+function StressTab({ stressTests, onRun }) {
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h2 style={{ fontSize: '1.1rem', fontWeight: 600 }}>Stress tests</h2>
-        <button className="btn btn-sm btn-primary" onClick={onRun}><Play size={14} /> Lancer les scénarios</button>
+      <div className="flex justify-between items-center mb-4">
+        <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600 }}>Scénarios de stress</h2>
+        <button className="btn btn-primary btn-sm" onClick={onRun}><Play size={14} /> Lancer les scénarios</button>
       </div>
 
       {stressTests.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: 40, color: '#6b7280' }}>Aucun stress test effectué. Cliquez sur "Lancer les scénarios".</div>
+        <div className="surface"><div className="empty-state"><div className="empty-state-title">Aucun stress test effectué</div><div className="empty-state-desc">Exécutez les scénarios pour évaluer la résilience du cash-flow.</div></div></div>
       ) : (
         <div style={{ display: 'grid', gap: 12 }}>
           {stressTests.map(s => (
-            <div key={s.id || s.scenario} className="card" style={{ borderLeft: `4px solid ${s.can_repay ? '#38a169' : '#dc2626'}` }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <strong>{s.description}</strong>
-                  <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 4 }}>Revenus ajustés: {Math.round(s.revenue_adjustment * 100)}%</p>
-                </div>
-                <span className={`badge ${s.can_repay ? 'badge-green' : 'badge-red'}`}>
-                  {s.can_repay ? 'Capacité OK' : 'Insuffisant'}
-                </span>
+            <div key={s.id || s.scenario} className={`flag-item ${s.can_repay ? '' : 'critical'}`} style={{ borderLeftWidth: 4 }}>
+              <div style={{ flex: 1 }}>
+                <div className="flag-title">{s.description}</div>
+                <div className="flag-desc">Revenus ajustés: {Math.round(s.revenue_adjustment * 100)}% · Capacité mensuelle: {formatCFA(s.monthly_capacity)} · Marge: {s.margin_percent}%</div>
+                <div className="text-sm" style={{ marginTop: 6, fontStyle: 'italic', color: s.can_repay ? 'var(--c-success)' : 'var(--c-error)' }}>{s.recommendation}</div>
               </div>
-              <div style={{ marginTop: 12, display: 'flex', gap: 24, fontSize: '0.85rem' }}>
-                <span>Capacité mensuelle: <strong>{formatCFA(s.monthly_capacity)}</strong></span>
-                <span>Marge: <strong>{s.margin_percent}%</strong></span>
-              </div>
-              <p style={{ marginTop: 8, fontSize: '0.8rem', color: s.can_repay ? '#166534' : '#991b1b', fontStyle: 'italic' }}>{s.recommendation}</p>
+              <span className={`badge ${s.can_repay ? 'badge-success' : 'badge-error'}`}>{s.can_repay ? 'OK' : 'Insuffisant'}</span>
             </div>
           ))}
         </div>
@@ -436,20 +387,21 @@ function StressTab({ stressTests, onRun, dossier }) {
   );
 }
 
-function PrequalTab({ dossier, ruleEvals, riskFlags, onEvaluate }) {
+function PrequalTab({ dossier, ruleEvals, onEvaluate }) {
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h2 style={{ fontSize: '1.1rem', fontWeight: 600 }}>Préqualification</h2>
-        <button className="btn btn-sm btn-primary" onClick={onEvaluate}><Play size={14} /> Évaluer les règles</button>
+      <div className="flex justify-between items-center mb-4">
+        <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600 }}>Préqualification</h2>
+        <button className="btn btn-primary btn-sm" onClick={onEvaluate}><Play size={14} /> Évaluer les règles</button>
       </div>
 
       {dossier.prequalification && (
-        <div className={`prequal-result ${prequalColor(dossier.prequalification)}`}>
-          <div className="prequal-label">{prequalLabel(dossier.prequalification)}</div>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 24, marginTop: 12, fontSize: '0.85rem' }}>
-            <span>Evidence Confidence: <strong>{dossier.evidence_confidence}</strong></span>
-            <span>Repayment Capacity: <strong>{dossier.repayment_capacity}</strong></span>
+        <div className={`prequal-panel ${prequalColor(dossier.prequalification) === 'green' ? 'success' : prequalColor(dossier.prequalification) === 'amber' ? 'warning' : 'error'}`}>
+          <div className="prequal-title">{prequalLabel(dossier.prequalification)}</div>
+          <div className="prequal-dimensions">
+            <div><div className="prequal-dim-label">Confiance dans les preuves</div><div className="prequal-dim-value">{dossier.evidence_confidence || '—'}</div></div>
+            <div><div className="prequal-dim-label">Capacité de remboursement</div><div className="prequal-dim-value">{dossier.repayment_capacity || '—'}</div></div>
+            <div><div className="prequal-dim-label">Règles déclenchées</div><div className="prequal-dim-value">{ruleEvals.filter(e => e.triggered).length}</div></div>
           </div>
           {dossier.prequalification_reasons && (
             <ul className="prequal-reasons">
@@ -459,19 +411,17 @@ function PrequalTab({ dossier, ruleEvals, riskFlags, onEvaluate }) {
         </div>
       )}
 
-      <h3 style={{ fontSize: '1rem', fontWeight: 600, marginTop: 24, marginBottom: 12 }}>Évaluation des règles</h3>
-      {ruleEvals.length === 0 ? (
-        <p style={{ color: '#6b7280' }}>Les règles n'ont pas encore été évaluées.</p>
-      ) : (
-        <div style={{ display: 'grid', gap: 8 }}>
+      {ruleEvals.length > 0 && (
+        <div className="surface">
+          <div className="surface-title">Évaluation des règles</div>
           {ruleEvals.map(e => (
-            <div key={e.id} className="card" style={{ padding: 12, display: 'flex', alignItems: 'center', gap: 12, borderLeft: `3px solid ${e.triggered ? (e.result === 'NON_ELIGIBLE' ? '#dc2626' : '#d97706') : '#38a169'}` }}>
-              {e.triggered ? (e.result === 'NON_ELIGIBLE' ? <XCircle size={18} color="#dc2626" /> : <AlertTriangle size={18} color="#d97706" />) : <CheckCircle size={18} color="#38a169" />}
+            <div key={e.id} className={`flag-item ${e.triggered ? (e.result === 'NON_ELIGIBLE' ? 'critical' : 'high') : ''}`} style={{ borderLeftWidth: e.triggered ? 3 : 0 }}>
+              {e.triggered ? (e.result === 'NON_ELIGIBLE' ? <XCircle size={16} color="var(--c-error)" /> : <AlertTriangle size={16} color="var(--c-warning)" />) : <CheckCircle size={16} color="var(--c-success)" />}
               <div style={{ flex: 1 }}>
-                <strong style={{ fontSize: '0.85rem' }}>{e.rule_code || e.code} — {e.rule_name || e.name}</strong>
-                {e.triggered && <p style={{ fontSize: '0.8rem', color: '#6b7280', marginTop: 2 }}>{e.explanation}</p>}
+                <div className="flag-title">{e.rule_code || e.code} — {e.rule_name || e.name}</div>
+                {e.triggered && <div className="flag-desc">{e.explanation}</div>}
               </div>
-              {e.triggered && <span className={`badge ${e.result === 'NON_ELIGIBLE' ? 'badge-red' : 'badge-amber'}`}>{e.result === 'NON_ELIGIBLE' ? 'Non éligible' : 'Revue requise'}</span>}
+              {e.triggered && <span className={`badge ${e.result === 'NON_ELIGIBLE' ? 'badge-error' : 'badge-warning'}`}>{e.result === 'NON_ELIGIBLE' ? 'Non éligible' : 'Revue requise'}</span>}
             </div>
           ))}
         </div>
@@ -484,94 +434,101 @@ function DecisionTab({ dossier, onReload }) {
   const user = getUser();
   const canDecide = ['COMITE', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(user?.role);
   const [form, setForm] = useState({ decision: 'approved', amount: dossier.amount_requested || '', duration: dossier.duration_months || '', schedule: '', motif: '' });
+  const [confirming, setConfirming] = useState(false);
 
   async function handleDecide() {
-    if (!form.motif) return alert('Le motif est obligatoire');
-    try {
-      await api.decideDossier(dossier.id, form);
-      onReload();
-    } catch (err) { alert(err.message); }
+    try { await api.decideDossier(dossier.id, form); onReload(); } catch (err) { alert(err.message); }
   }
 
   if (dossier.decision) {
     const isOverride = dossier.decision_amount && dossier.decision_amount !== dossier.amount_requested;
     return (
-      <div>
-        <h2 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: 16 }}>Décision du comité</h2>
-        <div className="card">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-            {dossier.decision === 'approved' ? <CheckCircle size={24} color="#38a169" /> : <XCircle size={24} color="#dc2626" />}
-            <span style={{ fontSize: '1.25rem', fontWeight: 700 }}>{dossier.decision === 'approved' ? 'APPROUVÉ' : dossier.decision === 'refused' ? 'REFUSÉ' : dossier.decision === 'complement' ? 'COMPLÉMENT REQUIS' : 'MODIFIÉ'}</span>
-            {isOverride && <span className="badge badge-amber">Override humain</span>}
-          </div>
-          {dossier.decision_amount && (
-            <p>Montant accordé: <strong>{formatCFA(dossier.decision_amount)}</strong> {isOverride && <span style={{ color: '#d97706' }}>(demandé: {formatCFA(dossier.amount_requested)})</span>}</p>
-          )}
-          {dossier.decision_duration && <p>Durée: <strong>{dossier.decision_duration} mois</strong></p>}
-          <p style={{ marginTop: 12 }}><strong>Motif:</strong> {dossier.decision_motif}</p>
-          <p style={{ marginTop: 8, fontSize: '0.8rem', color: '#6b7280' }}>Décidé le {formatDateTime(dossier.decided_at)}</p>
+      <div className="surface">
+        <div className="flex items-center gap-3 mb-4">
+          {dossier.decision === 'approved' || dossier.decision === 'modified' ? <CheckCircle size={22} color="var(--c-success)" /> : <XCircle size={22} color="var(--c-error)" />}
+          <span style={{ fontSize: 'var(--fs-xl)', fontWeight: 700 }}>
+            {dossier.decision === 'approved' ? 'Approuvé' : dossier.decision === 'refused' ? 'Refusé' : dossier.decision === 'complement' ? 'Complément requis' : 'Approuvé avec modification'}
+          </span>
+          {isOverride && <span className="badge badge-warning">Override humain</span>}
         </div>
+        {dossier.decision_amount && <p>Montant accordé: <strong>{formatCFA(dossier.decision_amount)}</strong> {isOverride && <span className="text-sm text-muted">(demandé: {formatCFA(dossier.amount_requested)})</span>}</p>}
+        {dossier.decision_duration && <p>Durée: <strong>{dossier.decision_duration} mois</strong></p>}
+        <p style={{ marginTop: 12 }}><strong>Motif:</strong> {dossier.decision_motif}</p>
+        <p className="text-xs text-muted" style={{ marginTop: 8 }}>Décidé le {formatDateTime(dossier.decided_at)}</p>
       </div>
     );
   }
 
-  if (!canDecide) {
-    return <div className="card" style={{ textAlign: 'center', padding: 40, color: '#6b7280' }}>En attente de la décision du comité</div>;
-  }
+  if (!canDecide) return <div className="surface"><div className="empty-state"><div className="empty-state-title">En attente de décision</div><div className="empty-state-desc">Le comité de crédit examinera ce dossier.</div></div></div>;
 
   return (
-    <div>
-      <h2 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: 16 }}>Décision du comité</h2>
-      <div className="card">
-        <div className="grid-2">
-          <div className="form-group">
-            <label className="form-label">Décision</label>
-            <select className="form-input form-select" value={form.decision} onChange={e => setForm(f => ({ ...f, decision: e.target.value }))}>
-              <option value="approved">Approuver</option>
-              <option value="refused">Refuser</option>
-              <option value="complement">Demander complément</option>
-              <option value="modified">Approuver avec modification</option>
-            </select>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Montant accordé (FCFA)</label>
-            <input className="form-input" type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: Number(e.target.value) }))} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Durée (mois)</label>
-            <input className="form-input" type="number" value={form.duration} onChange={e => setForm(f => ({ ...f, duration: Number(e.target.value) }))} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Calendrier</label>
-            <input className="form-input" value={form.schedule} onChange={e => setForm(f => ({ ...f, schedule: e.target.value }))} placeholder="Ex: Saisonnier mars-juin" />
-          </div>
-          <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-            <label className="form-label">Motif (obligatoire) *</label>
-            <textarea className="form-input" rows={3} value={form.motif} onChange={e => setForm(f => ({ ...f, motif: e.target.value }))} placeholder="Justification de la décision..." />
-          </div>
+    <div className="decision-panel">
+      <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, marginBottom: 20 }}>Décision du comité</h2>
+      <div className="grid-2">
+        <div className="field">
+          <label className="field-label">Décision</label>
+          <select className="input" value={form.decision} onChange={e => setForm(f => ({ ...f, decision: e.target.value }))}>
+            <option value="approved">Approuver</option>
+            <option value="modified">Approuver avec modification</option>
+            <option value="complement">Demander complément</option>
+            <option value="refused">Refuser</option>
+          </select>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={handleDecide}>Valider la décision</button>
+        <div className="field">
+          <label className="field-label">Montant accordé (FCFA)</label>
+          <input className="input" type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: Number(e.target.value) }))} />
+        </div>
+        <div className="field">
+          <label className="field-label">Durée (mois)</label>
+          <input className="input" type="number" value={form.duration} onChange={e => setForm(f => ({ ...f, duration: Number(e.target.value) }))} />
+        </div>
+        <div className="field">
+          <label className="field-label">Calendrier</label>
+          <input className="input" value={form.schedule} onChange={e => setForm(f => ({ ...f, schedule: e.target.value }))} />
+        </div>
+        <div className="field" style={{ gridColumn: '1 / -1' }}>
+          <label className="field-label">Motif de la décision *</label>
+          <textarea className="input" rows={3} value={form.motif} onChange={e => setForm(f => ({ ...f, motif: e.target.value }))} />
+          <div className="field-hint">Le motif est obligatoire et sera enregistré dans le journal d'audit</div>
+        </div>
+      </div>
+
+      {confirming && (
+        <div className="decision-confirmation">
+          {form.amount != dossier.amount_requested && (
+            <p><strong>Vous accordez {formatCFA(form.amount)} au lieu des {formatCFA(dossier.amount_requested)} demandés.</strong></p>
+          )}
+          <p>Cette décision sera enregistrée{form.amount != dossier.amount_requested ? ' comme override humain' : ''}.</p>
+        </div>
+      )}
+
+      <div className="flex gap-3 mt-4">
+        {!confirming ? (
+          <button className="btn btn-primary" onClick={() => { if (!form.motif) return alert('Le motif est obligatoire'); setConfirming(true); }}>Valider la décision</button>
+        ) : (
+          <>
+            <button className="btn btn-primary" onClick={handleDecide}>Confirmer définitivement</button>
+            <button className="btn btn-secondary" onClick={() => setConfirming(false)}>Annuler</button>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
 function AuditTab({ logs }) {
-  if (logs.length === 0) return <p style={{ color: '#6b7280', textAlign: 'center', padding: 40 }}>Aucune entrée d'audit</p>;
+  if (logs.length === 0) return <div className="surface"><div className="empty-state"><div className="empty-state-title">Aucune entrée d'audit</div></div></div>;
 
   return (
-    <div>
-      <h2 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: 16 }}>Journal d'audit</h2>
-      <div className="card">
-        <div style={{ display: 'grid', gap: 0 }}>
-          {logs.map(l => (
-            <div key={l.id} style={{ padding: '10px 0', borderBottom: '1px solid #f3f4f6', display: 'flex', gap: 16, fontSize: '0.85rem' }}>
-              <span style={{ color: '#6b7280', minWidth: 130 }}>{formatDateTime(l.created_at)}</span>
-              <span style={{ fontWeight: 600, minWidth: 120 }}>{l.user_name}</span>
-              <span style={{ flex: 1 }}>{l.action} {l.entity_type && `(${l.entity_type})`}</span>
-            </div>
-          ))}
-        </div>
+    <div className="surface">
+      <div className="audit-timeline">
+        {logs.map(l => (
+          <div key={l.id} className="audit-event">
+            <div className="audit-time">{formatDateTime(l.created_at)}</div>
+            <div className="audit-actor">{l.user_name} <span className="badge badge-neutral" style={{ marginLeft: 4 }}>{l.user_role}</span></div>
+            <div className="audit-action">{l.action}</div>
+          </div>
+        ))}
       </div>
     </div>
   );

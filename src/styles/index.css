@@ -106,7 +106,7 @@ img { max-width: 100%; display: block; }
 }
 
 .nav-brand { padding: var(--sp-6) var(--sp-5) var(--sp-3); }
-.nav-brand-name { font-size: var(--fs-lg); font-weight: var(--fw-bold); color: var(--c-primary-400); letter-spacing: -.3px; }
+.nav-brand-name { font-size: var(--fs-lg); font-weight: var(--fw-bold); color: var(--c-white); letter-spacing: -.3px; }
 .nav-brand-desc {
   font-size: var(--fs-xs); color: var(--c-500); margin-top: var(--sp-1);
   text-transform: uppercase; letter-spacing: .4px; font-weight: var(--fw-medium);

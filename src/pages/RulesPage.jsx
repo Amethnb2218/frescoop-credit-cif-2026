@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
-import { Scale, CheckCircle, AlertTriangle, XCircle } from 'lucide-react';
+import { CheckCircle, AlertTriangle, XCircle } from 'lucide-react';
 
 export default function RulesPage() {
   const [rules, setRules] = useState([]);
@@ -10,44 +10,47 @@ export default function RulesPage() {
     api.getRules().then(res => setRules(res.rules || [])).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
-  const severityColor = { low: '#6b7280', medium: '#d97706', high: '#dc2626', critical: '#7c2d12' };
-  const resultIcon = { PREQUALIFIE: <CheckCircle size={16} color="#38a169" />, REVUE_REQUISE: <AlertTriangle size={16} color="#d97706" />, NON_ELIGIBLE: <XCircle size={16} color="#dc2626" /> };
-
   return (
     <div>
-      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: 24 }}>Moteur de règles</h1>
-      <p style={{ color: '#6b7280', marginBottom: 24, fontSize: '0.85rem' }}>
-        Ces règles définissent les conditions de préqualification. Chaque règle produit un résultat explicable.
-      </p>
+      <div className="page-header">
+        <h1 className="page-title">Moteur de règles</h1>
+        <p className="page-subtitle">Règles métier appliquées lors de la préqualification des dossiers</p>
+      </div>
 
       {loading ? (
-        <p style={{ textAlign: 'center', padding: 40, color: '#6b7280' }}>Chargement...</p>
+        <div className="loading-state">Chargement des règles...</div>
       ) : (
-        <div style={{ display: 'grid', gap: 12 }}>
-          {rules.map(r => (
-            <div key={r.id} className="card" style={{ padding: 16, borderLeft: `4px solid ${severityColor[r.severity] || '#6b7280'}` }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    {resultIcon[r.result]}
-                    <strong style={{ fontSize: '0.9rem' }}>{r.code}</strong>
-                    <span style={{ color: '#6b7280', fontSize: '0.85rem' }}>— {r.name}</span>
-                  </div>
-                  <p style={{ fontSize: '0.8rem', color: '#4b5563', marginTop: 6 }}>{r.description}</p>
-                </div>
-                <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                  <span className={`badge ${r.result === 'NON_ELIGIBLE' ? 'badge-red' : r.result === 'REVUE_REQUISE' ? 'badge-amber' : 'badge-green'}`}>
-                    {r.result === 'NON_ELIGIBLE' ? 'Non éligible' : r.result === 'REVUE_REQUISE' ? 'Revue requise' : 'Préqualifié'}
-                  </span>
-                  <span className="badge badge-gray">{r.severity}</span>
-                </div>
-              </div>
-              <div style={{ marginTop: 8, fontSize: '0.75rem', color: '#9ca3af' }}>
-                Condition: <code style={{ background: '#f3f4f6', padding: '2px 6px', borderRadius: 4 }}>{r.condition_expr}</code>
-                {' '}— Version {r.version} — {r.active ? 'Active' : 'Inactive'}
-              </div>
-            </div>
-          ))}
+        <div className="surface" style={{ padding: 0 }}>
+          <div className="table-container">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Nom</th>
+                  <th>Description</th>
+                  <th>Résultat</th>
+                  <th>Sévérité</th>
+                  <th>Statut</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rules.map(r => (
+                  <tr key={r.id}>
+                    <td><span className="font-mono">{r.code}</span></td>
+                    <td className="table-cell-primary">{r.name}</td>
+                    <td style={{ maxWidth: 300 }}>{r.description}</td>
+                    <td>
+                      <span className={`badge ${r.result === 'NON_ELIGIBLE' ? 'badge-error' : r.result === 'REVUE_REQUISE' ? 'badge-warning' : 'badge-success'}`}>
+                        {r.result === 'NON_ELIGIBLE' ? 'Non éligible' : r.result === 'REVUE_REQUISE' ? 'Revue requise' : 'Préqualifié'}
+                      </span>
+                    </td>
+                    <td><span className={`badge ${r.severity === 'critical' ? 'badge-error' : r.severity === 'high' ? 'badge-warning' : 'badge-neutral'}`}>{r.severity}</span></td>
+                    <td>{r.active ? <span className="badge badge-success">Active</span> : <span className="badge badge-neutral">Inactive</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
