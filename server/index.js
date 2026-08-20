@@ -12,6 +12,7 @@ import rulesRoutes from './routes/rules.js';
 import syncRoutes from './routes/sync.js';
 import bicRoutes from './routes/bic.js';
 import auditRoutes from './routes/audit.js';
+import memoRoutes from './routes/memo.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -31,6 +32,7 @@ app.use('/api/rules', rulesRoutes);
 app.use('/api/sync', syncRoutes);
 app.use('/api/bic', bicRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/memo', memoRoutes);
 
 const distPath = join(__dirname, '..', 'dist');
 app.use(express.static(distPath));
