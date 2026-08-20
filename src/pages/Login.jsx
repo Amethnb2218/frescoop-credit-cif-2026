@@ -48,17 +48,6 @@ export default function Login() {
           </button>
         </form>
 
-        <div style={{ marginTop: 24, padding: 16, background: '#f0faf5', borderRadius: 8, fontSize: '0.75rem', color: '#374151' }}>
-          <strong>DONNÉES DE DÉMONSTRATION</strong><br />
-          <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
-            <span>Agent: agent@frescoop.demo</span>
-            <span>Superviseur: superviseur@frescoop.demo</span>
-            <span>Comité: comite@frescoop.demo</span>
-            <span>Risk Manager: risk@frescoop.demo</span>
-            <span>Auditeur: auditeur@frescoop.demo</span>
-            <span style={{ marginTop: 4 }}>Mot de passe: <strong>demo2026</strong></span>
-          </div>
-        </div>
       </div>
     </div>
   );
