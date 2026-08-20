@@ -1,0 +1,12 @@
+{
+  "name": "FresCoop — Copilote Crédit Agricole",
+  "short_name": "FresCoop",
+  "description": "Copilote offline-first de l'agent de crédit agricole",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f9fafb",
+  "theme_color": "#1a5c3a",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

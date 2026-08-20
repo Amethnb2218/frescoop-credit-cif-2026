@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: frescoop-cif
+    runtime: node
+    region: frankfurt
+    plan: free
+    rootDir: freshcoopfinal
+    buildCommand: npm install && npm run build
+    startCommand: node server/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TOKEN_SECRET
+        generateValue: true
+      - key: PORT
+        value: "10000"
+      - key: FRESCOOP_HOST
+        value: "0.0.0.0"
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
