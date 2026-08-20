@@ -48,7 +48,7 @@ export default function Dashboard() {
             {pendingSync > 0 && <span style={{ marginLeft: 12, color: '#d97706' }}>{pendingSync} opération(s) en attente de sync</span>}
           </p>
         </div>
-        {(user?.role === 'AGENT' || user?.role === 'SUPERVISEUR' || user?.role === 'ADMIN') && (
+        {(['AGENT', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(user?.role)) && (
           <Link to="/dossiers/new" className="btn btn-primary"><Plus size={16} /> Nouveau dossier</Link>
         )}
       </div>
@@ -72,7 +72,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {(user?.role === 'COMITE' || user?.role === 'SUPERVISEUR' || user?.role === 'ADMIN') && (
+      {(['COMITE', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(user?.role)) && (
         <div className="card" style={{ marginBottom: 24 }}>
           <div className="card-header">
             <h2 className="card-title">Préqualification des dossiers actifs</h2>

@@ -35,7 +35,7 @@ export default function Login() {
 
           <div className="form-group">
             <label className="form-label">Email</label>
-            <input type="email" className="form-input" value={email} onChange={e => setEmail(e.target.value)} placeholder="agent@frescoop.demo" required />
+            <input type="email" className="form-input" value={email} onChange={e => setEmail(e.target.value)} placeholder="votre@email.com" required />
           </div>
 
           <div className="form-group">

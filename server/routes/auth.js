@@ -58,7 +58,7 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Champs obligatoires manquants' });
     }
 
-    const validRoles = ['AGENT', 'SUPERVISEUR', 'COMITE', 'RISK_MANAGER', 'ADMIN', 'AUDITEUR'];
+    const validRoles = ['SUPERADMIN', 'AGENT', 'SUPERVISEUR', 'COMITE', 'RISK_MANAGER', 'ADMIN', 'AUDITEUR'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({ error: 'Rôle invalide' });
     }

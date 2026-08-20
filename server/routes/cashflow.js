@@ -18,7 +18,7 @@ router.get('/dossier/:dossierId', authMiddleware, tenantGuard, async (req, res) 
   }
 });
 
-router.post('/dossier/:dossierId', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR', 'ADMIN'), async (req, res) => {
+router.post('/dossier/:dossierId', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
     const db = getDb();
     const { dossierId } = req.params;

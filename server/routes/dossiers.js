@@ -78,7 +78,7 @@ router.get('/:id', authMiddleware, tenantGuard, async (req, res) => {
   }
 });
 
-router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR', 'ADMIN'), async (req, res) => {
+router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
     const db = getDb();
     const id = req.body.id || uuid();
@@ -203,7 +203,7 @@ router.put('/:id/status', authMiddleware, tenantGuard, async (req, res) => {
   }
 });
 
-router.post('/:id/decide', authMiddleware, tenantGuard, requireRole('COMITE', 'SUPERVISEUR', 'ADMIN'), async (req, res) => {
+router.post('/:id/decide', authMiddleware, tenantGuard, requireRole('COMITE', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
     const db = getDb();
     const { id } = req.params;

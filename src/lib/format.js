@@ -40,6 +40,7 @@ export const STATUS_COLORS = {
 };
 
 export const ROLE_LABELS = {
+  SUPERADMIN: 'Super Administrateur',
   AGENT: 'Agent de crédit',
   SUPERVISEUR: 'Superviseur',
   COMITE: 'Comité de crédit',

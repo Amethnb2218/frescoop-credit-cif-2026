@@ -26,7 +26,7 @@ export async function logAudit(tenantId, userId, userName, userRole, action, ent
   } catch {}
 }
 
-router.get('/', authMiddleware, tenantGuard, requireRole('ADMIN', 'AUDITEUR', 'RISK_MANAGER', 'SUPERVISEUR'), async (req, res) => {
+router.get('/', authMiddleware, tenantGuard, requireRole('ADMIN', 'AUDITEUR', 'RISK_MANAGER', 'SUPERVISEUR', 'SUPERADMIN'), async (req, res) => {
   try {
     const db = getDb();
     const { entity_type, entity_id, user_id, action, limit = 100, offset = 0 } = req.query;

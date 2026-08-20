@@ -18,7 +18,7 @@ router.get('/dossier/:dossierId', authMiddleware, tenantGuard, async (req, res) 
   }
 });
 
-router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR', 'ADMIN'), async (req, res) => {
+router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
     const db = getDb();
     const data = req.body;
@@ -61,7 +61,7 @@ router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR'
   }
 });
 
-router.put('/:id/verify', authMiddleware, tenantGuard, requireRole('SUPERVISEUR', 'RISK_MANAGER', 'ADMIN'), async (req, res) => {
+router.put('/:id/verify', authMiddleware, tenantGuard, requireRole('SUPERVISEUR', 'RISK_MANAGER', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
     const db = getDb();
     const { verification_level, note } = req.body;

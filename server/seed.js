@@ -17,6 +17,7 @@ export async function seedIfEmpty() {
   });
 
   const users = [
+    { id: uuid(), name: 'FresCoop SuperAdmin', email: 'superadmin@frescoop.demo', role: 'SUPERADMIN', phone: '+221770000001', agency: 'Global' },
     { id: uuid(), name: 'Moussa Diallo', email: 'agent@frescoop.demo', role: 'AGENT', phone: '+221771234567', agency: 'Agence Thiès' },
     { id: uuid(), name: 'Fatou Ndiaye', email: 'superviseur@frescoop.demo', role: 'SUPERVISEUR', phone: '+221772345678', agency: 'Agence Thiès' },
     { id: uuid(), name: 'Ibrahima Sow', email: 'comite@frescoop.demo', role: 'COMITE', phone: '+221773456789', agency: 'Siège Dakar' },

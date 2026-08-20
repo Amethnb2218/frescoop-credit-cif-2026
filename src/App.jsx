@@ -25,8 +25,8 @@ function Sidebar() {
   const links = [
     { to: '/', icon: Home, label: 'Tableau de bord' },
     { to: '/dossiers', icon: FileText, label: 'Dossiers' },
-    { to: '/rules', icon: Scale, label: 'Règles', roles: ['ADMIN', 'RISK_MANAGER', 'SUPERVISEUR'] },
-    { to: '/audit', icon: BookOpen, label: 'Journal d\'audit', roles: ['ADMIN', 'AUDITEUR', 'RISK_MANAGER', 'SUPERVISEUR'] },
+    { to: '/rules', icon: Scale, label: 'Règles', roles: ['SUPERADMIN', 'ADMIN', 'RISK_MANAGER', 'SUPERVISEUR'] },
+    { to: '/audit', icon: BookOpen, label: 'Journal d\'audit', roles: ['SUPERADMIN', 'ADMIN', 'AUDITEUR', 'RISK_MANAGER', 'SUPERVISEUR'] },
   ];
 
   const visibleLinks = links.filter(l => !l.roles || l.roles.includes(user?.role));

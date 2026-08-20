@@ -39,7 +39,7 @@ export async function initDb() {
       email TEXT NOT NULL,
       password_hash TEXT NOT NULL,
       name TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('AGENT','SUPERVISEUR','COMITE','RISK_MANAGER','ADMIN','AUDITEUR')),
+      role TEXT NOT NULL CHECK(role IN ('SUPERADMIN','AGENT','SUPERVISEUR','COMITE','RISK_MANAGER','ADMIN','AUDITEUR')),
       phone TEXT,
       agency TEXT,
       active INTEGER DEFAULT 1,

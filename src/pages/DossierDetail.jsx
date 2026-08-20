@@ -482,7 +482,7 @@ function PrequalTab({ dossier, ruleEvals, riskFlags, onEvaluate }) {
 
 function DecisionTab({ dossier, onReload }) {
   const user = getUser();
-  const canDecide = ['COMITE', 'SUPERVISEUR', 'ADMIN'].includes(user?.role);
+  const canDecide = ['COMITE', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(user?.role);
   const [form, setForm] = useState({ decision: 'approved', amount: dossier.amount_requested || '', duration: dossier.duration_months || '', schedule: '', motif: '' });
 
   async function handleDecide() {
