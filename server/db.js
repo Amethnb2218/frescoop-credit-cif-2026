@@ -54,7 +54,7 @@ export async function initDb() {
       tenant_id TEXT NOT NULL REFERENCES tenants(id),
       local_id TEXT,
       agent_id TEXT NOT NULL REFERENCES users(id),
-      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','submitted','verification','review','committee','decided','exported','disbursed','monitoring','closed')),
+      status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','incomplete','submitted','verification','review','review_required','prequalified','committee','committee_ready','decided','exported','disbursed','monitoring','closed','cancelled')),
 
       -- Identity
       applicant_name TEXT,
@@ -240,6 +240,65 @@ export async function initDb() {
       old_value TEXT,
       new_value TEXT,
       ip_address TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Credit products
+    CREATE TABLE IF NOT EXISTS credit_products (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      code TEXT NOT NULL,
+      name TEXT NOT NULL,
+      min_amount INTEGER DEFAULT 0,
+      max_amount INTEGER,
+      min_duration INTEGER DEFAULT 1,
+      max_duration INTEGER,
+      max_rate REAL,
+      eligible_sectors TEXT DEFAULT '[]',
+      active INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(tenant_id, code)
+    );
+
+    -- Field visits
+    CREATE TABLE IF NOT EXISTS field_visits (
+      id TEXT PRIMARY KEY,
+      dossier_id TEXT NOT NULL REFERENCES dossiers(id),
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      agent_id TEXT NOT NULL REFERENCES users(id),
+      visit_date TEXT NOT NULL,
+      gps_lat REAL,
+      gps_lon REAL,
+      observations TEXT,
+      photos_count INTEGER DEFAULT 0,
+      activity_confirmed INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Consent records
+    CREATE TABLE IF NOT EXISTS consent_records (
+      id TEXT PRIMARY KEY,
+      dossier_id TEXT NOT NULL REFERENCES dossiers(id),
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      applicant_name TEXT,
+      consent_type TEXT NOT NULL,
+      consent_given INTEGER NOT NULL DEFAULT 0,
+      consent_date TEXT,
+      consent_method TEXT,
+      witness TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Fraud checks
+    CREATE TABLE IF NOT EXISTS fraud_checks (
+      id TEXT PRIMARY KEY,
+      dossier_id TEXT NOT NULL REFERENCES dossiers(id),
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      check_type TEXT NOT NULL,
+      result TEXT NOT NULL CHECK(result IN ('pass','flag','alert')),
+      details TEXT DEFAULT '{}',
+      severity TEXT DEFAULT 'low' CHECK(severity IN ('low','medium','high','critical')),
       created_at TEXT DEFAULT (datetime('now'))
     );
 

@@ -168,15 +168,21 @@ router.put('/:id/status', authMiddleware, tenantGuard, async (req, res) => {
     const { status } = req.body;
 
     const validTransitions = {
-      draft: ['submitted'],
-      submitted: ['verification', 'draft'],
-      verification: ['review', 'submitted'],
-      review: ['committee', 'verification'],
-      committee: ['decided', 'review'],
-      decided: ['exported', 'committee'],
+      draft: ['incomplete', 'submitted', 'cancelled'],
+      incomplete: ['draft', 'submitted', 'cancelled'],
+      submitted: ['verification', 'draft', 'cancelled'],
+      verification: ['review', 'review_required', 'submitted', 'cancelled'],
+      review: ['committee', 'verification', 'cancelled'],
+      review_required: ['verification', 'committee_ready', 'committee', 'cancelled'],
+      prequalified: ['committee_ready', 'committee', 'cancelled'],
+      committee_ready: ['decided', 'review', 'cancelled'],
+      committee: ['decided', 'review', 'cancelled'],
+      decided: ['exported', 'committee', 'cancelled'],
       exported: ['disbursed'],
       disbursed: ['monitoring'],
       monitoring: ['closed'],
+      closed: [],
+      cancelled: [],
     };
 
     const existing = await db.execute({

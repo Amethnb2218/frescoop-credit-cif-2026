@@ -226,6 +226,35 @@ export async function seedIfEmpty() {
     });
   }
 
-  console.log('[FresCoop] Seed terminé: 1 IMF, 6 utilisateurs, 4 dossiers démo, 10 règles');
+  // Credit Products
+  await db.execute({
+    sql: `INSERT INTO credit_products (id, tenant_id, code, name, min_amount, max_amount, min_duration, max_duration, max_rate, eligible_sectors)
+          VALUES (?, ?, 'AGRI-INTRANT', 'Crédit intrants agricoles', 100000, 3000000, 4, 12, 15, ?)`,
+    args: [uuid(), tenantId, JSON.stringify(['Agriculture', 'Élevage'])],
+  });
+  await db.execute({
+    sql: `INSERT INTO credit_products (id, tenant_id, code, name, min_amount, max_amount, min_duration, max_duration, max_rate, eligible_sectors)
+          VALUES (?, ?, 'COM-EQUIP', 'Crédit équipement commerce', 200000, 5000000, 6, 24, 18, ?)`,
+    args: [uuid(), tenantId, JSON.stringify(['Commerce agricole', 'Transformation'])],
+  });
+
+  // Consent records for dossier A
+  const consentTypes = ['data_collection', 'bic_check', 'credit_check'];
+  for (const ct of consentTypes) {
+    await db.execute({
+      sql: `INSERT INTO consent_records (id, dossier_id, tenant_id, applicant_name, consent_type, consent_given, consent_date, consent_method, witness)
+            VALUES (?, ?, ?, 'Awa Faye', ?, 1, '2026-08-10', 'verbal', 'Moussa Diallo')`,
+      args: [uuid(), dossierA, tenantId, ct],
+    });
+  }
+
+  // Field visit for dossier A
+  await db.execute({
+    sql: `INSERT INTO field_visits (id, dossier_id, tenant_id, agent_id, visit_date, gps_lat, gps_lon, observations, photos_count, activity_confirmed)
+          VALUES (?, ?, ?, ?, '2026-08-12', 14.7645, -16.9358, 'Parcelle de 2.5 ha confirmée. Tomates en pleine production. Système irrigation fonctionnel. Coopérative voisine confirmée.', 3, 1)`,
+    args: [uuid(), dossierA, tenantId, agentId],
+  });
+
+  console.log('[FresCoop] Seed terminé: 1 IMF, 7 utilisateurs, 4 dossiers démo, 10 règles, 2 produits crédit');
   console.log('[FresCoop] Connexion: agent@frescoop.demo / demo2026');
 }

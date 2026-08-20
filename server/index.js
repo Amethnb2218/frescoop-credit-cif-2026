@@ -13,6 +13,12 @@ import syncRoutes from './routes/sync.js';
 import bicRoutes from './routes/bic.js';
 import auditRoutes from './routes/audit.js';
 import memoRoutes from './routes/memo.js';
+import productRoutes from './routes/products.js';
+import visitRoutes from './routes/visits.js';
+import consentRoutes from './routes/consent.js';
+import fraudRoutes from './routes/fraud.js';
+import exportRoutes from './routes/export.js';
+import statsRoutes from './routes/stats.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -33,6 +39,12 @@ app.use('/api/sync', syncRoutes);
 app.use('/api/bic', bicRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/memo', memoRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/visits', visitRoutes);
+app.use('/api/consent', consentRoutes);
+app.use('/api/fraud', fraudRoutes);
+app.use('/api/export', exportRoutes);
+app.use('/api/stats', statsRoutes);
 
 const distPath = join(__dirname, '..', 'dist');
 app.use(express.static(distPath));
