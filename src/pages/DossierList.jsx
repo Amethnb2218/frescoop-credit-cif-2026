@@ -34,7 +34,7 @@ export default function DossierList() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ fontSize: '1.5rem', fontWeight: 700 }}>Dossiers de crédit</h1>
-        {(user?.role === 'AGENT' || user?.role === 'SUPERVISEUR' || user?.role === 'ADMIN') && (
+        {(['AGENT', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(user?.role)) && (
           <Link to="/dossiers/new" className="btn btn-primary"><Plus size={16} /> Nouveau dossier</Link>
         )}
       </div>
