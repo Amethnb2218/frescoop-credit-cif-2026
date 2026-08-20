@@ -112,11 +112,11 @@ export const EVIDENCE_LEVELS = {
 };
 
 export const ROLE_NAV = {
-  SUPERADMIN: ['dashboard', 'dossiers', 'rules', 'audit', 'admin'],
-  ADMIN: ['dashboard', 'dossiers', 'rules', 'audit', 'admin'],
-  RISK_MANAGER: ['dashboard', 'dossiers', 'rules', 'audit'],
+  SUPERADMIN: ['dashboard', 'dossiers', 'rules', 'stats', 'products', 'audit', 'admin'],
+  ADMIN: ['dashboard', 'dossiers', 'rules', 'stats', 'products', 'audit', 'admin'],
+  RISK_MANAGER: ['dashboard', 'dossiers', 'rules', 'stats', 'products', 'audit'],
   COMITE: ['dashboard', 'dossiers', 'decisions'],
-  SUPERVISEUR: ['dashboard', 'dossiers', 'rules', 'audit'],
+  SUPERVISEUR: ['dashboard', 'dossiers', 'rules', 'sync', 'audit'],
   AUDITEUR: ['audit', 'dossiers'],
-  AGENT: ['dashboard', 'dossiers'],
+  AGENT: ['dashboard', 'dossiers', 'sync'],
 };

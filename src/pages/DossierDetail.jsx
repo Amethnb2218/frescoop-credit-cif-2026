@@ -4,9 +4,9 @@ import { api, getUser } from '../lib/api';
 import { formatCFA, formatDate, formatDateTime, STATUS_LABELS, MONTHS, prequalLabel, prequalColor } from '../lib/format';
 import { EVIDENCE_LEVELS } from '../lib/tokens';
 import { isOnline, addToSyncQueue, saveEvidenceOffline } from '../lib/offline';
-import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff } from 'lucide-react';
+import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff, Shield, MapPin, FileCheck } from 'lucide-react';
 
-const TABS = ['Résumé', 'Preuves', 'Cash-flow', 'Stress test', 'Préqualification', 'Décision', 'Audit'];
+const TABS = ['Résumé', 'Preuves', 'Cash-flow', 'Stress test', 'Préqualification', 'Contrôles', 'Décision', 'Audit'];
 
 export default function DossierDetail() {
   const { id } = useParams();
@@ -101,6 +101,7 @@ export default function DossierDetail() {
       {tab === 'Cash-flow' && <CashflowTab dossierId={id} cashflow={cashflow} dossier={dossier} onReload={loadDossier} />}
       {tab === 'Stress test' && <StressTab stressTests={stressTests} onRun={runStressTest} />}
       {tab === 'Préqualification' && <PrequalTab dossier={dossier} ruleEvals={ruleEvals} onEvaluate={evaluateRules} />}
+      {tab === 'Contrôles' && <ControlsTab dossierId={id} dossier={dossier} />}
       {tab === 'Décision' && <DecisionTab dossier={dossier} onReload={loadDossier} />}
       {tab === 'Audit' && <AuditTab logs={auditLogs} />}
     </div>
@@ -426,6 +427,170 @@ function PrequalTab({ dossier, ruleEvals, onEvaluate }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function ControlsTab({ dossierId, dossier }) {
+  const [fraudChecks, setFraudChecks] = useState([]);
+  const [visits, setVisits] = useState([]);
+  const [consents, setConsents] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [addingVisit, setAddingVisit] = useState(false);
+  const [visitForm, setVisitForm] = useState({ observations: '', activity_confirmed: true });
+  const [addingConsent, setAddingConsent] = useState(false);
+  const [consentForm, setConsentForm] = useState({ consent_type: 'data_collection', consent_given: true, consent_method: 'verbal' });
+
+  useEffect(() => { loadControls(); }, []);
+
+  async function loadControls() {
+    try {
+      const [f, v, c] = await Promise.all([
+        api.getFraudChecks(dossierId),
+        api.getVisits(dossierId),
+        api.getConsents(dossierId),
+      ]);
+      setFraudChecks(f.checks || []);
+      setVisits(v.visits || []);
+      setConsents(c.consents || []);
+    } catch {}
+  }
+
+  async function runFraud() {
+    setLoading(true);
+    try {
+      const res = await api.runFraudCheck(dossierId);
+      setFraudChecks(res.checks || []);
+    } catch (err) { alert(err.message); }
+    finally { setLoading(false); }
+  }
+
+  async function saveVisit() {
+    try {
+      await api.createVisit({ dossier_id: dossierId, ...visitForm });
+      setAddingVisit(false);
+      loadControls();
+    } catch (err) { alert(err.message); }
+  }
+
+  async function saveConsent() {
+    try {
+      await api.createConsent({ dossier_id: dossierId, applicant_name: dossier.applicant_name, ...consentForm });
+      setAddingConsent(false);
+      loadControls();
+    } catch (err) { alert(err.message); }
+  }
+
+  const severityLabel = { clean: 'badge-success', warning: 'badge-warning', critical: 'badge-error' };
+
+  return (
+    <div>
+      {/* Fraud checks */}
+      <div className="surface mb-4">
+        <div className="surface-header">
+          <div className="surface-title" style={{ margin: 0 }}>Contrôles de cohérence</div>
+          <button className="btn btn-primary btn-sm" onClick={runFraud} disabled={loading}>
+            <Shield size={13} /> {loading ? 'Vérification...' : 'Lancer les contrôles'}
+          </button>
+        </div>
+        {fraudChecks.length === 0 ? (
+          <p className="text-sm text-muted">Aucun contrôle effectué. Cliquez sur « Lancer les contrôles » pour vérifier la cohérence du dossier.</p>
+        ) : (
+          <div style={{ display: 'grid', gap: 6 }}>
+            {fraudChecks.map((c, i) => (
+              <div key={i} className={`flag-item ${c.result === 'critical' ? 'critical' : c.result === 'warning' ? 'high' : 'medium'}`}>
+                <div style={{ flex: 1 }}>
+                  <div className="flag-title">{c.check_type.replace(/_/g, ' ')}</div>
+                  <div className="flag-desc">{c.details}</div>
+                </div>
+                <span className={`badge ${severityLabel[c.result] || 'badge-neutral'}`}>{c.result === 'clean' ? 'OK' : c.result}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Field visits */}
+      <div className="surface mb-4">
+        <div className="surface-header">
+          <div className="surface-title" style={{ margin: 0 }}>Visites terrain ({visits.length})</div>
+          <button className="btn btn-secondary btn-sm" onClick={() => setAddingVisit(!addingVisit)}><MapPin size={13} /> Ajouter</button>
+        </div>
+        {addingVisit && (
+          <div style={{ marginBottom: 12, padding: 12, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>
+            <div className="field">
+              <label className="field-label">Observations</label>
+              <textarea className="input" rows={3} value={visitForm.observations} onChange={e => setVisitForm(f => ({ ...f, observations: e.target.value }))} />
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)' }}>
+              <input type="checkbox" checked={visitForm.activity_confirmed} onChange={e => setVisitForm(f => ({ ...f, activity_confirmed: e.target.checked }))} />
+              Activité confirmée sur le terrain
+            </label>
+            <div className="flex gap-2 mt-4">
+              <button className="btn btn-primary btn-sm" onClick={saveVisit}>Enregistrer</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => setAddingVisit(false)}>Annuler</button>
+            </div>
+          </div>
+        )}
+        {visits.length === 0 && !addingVisit ? (
+          <p className="text-sm text-muted">Aucune visite terrain enregistrée.</p>
+        ) : (
+          visits.map((v, i) => (
+            <div key={i} style={{ padding: '8px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}>
+              <div className="flex justify-between">
+                <span className="font-semibold">{formatDate(v.visit_date || v.created_at)}</span>
+                <span className={`badge ${v.activity_confirmed ? 'badge-success' : 'badge-warning'}`}>{v.activity_confirmed ? 'Activité confirmée' : 'Non confirmée'}</span>
+              </div>
+              {v.observations && <p className="text-muted" style={{ marginTop: 2 }}>{v.observations}</p>}
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Consents */}
+      <div className="surface">
+        <div className="surface-header">
+          <div className="surface-title" style={{ margin: 0 }}>Consentements ({consents.length})</div>
+          <button className="btn btn-secondary btn-sm" onClick={() => setAddingConsent(!addingConsent)}><FileCheck size={13} /> Enregistrer</button>
+        </div>
+        {addingConsent && (
+          <div style={{ marginBottom: 12, padding: 12, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>
+            <div className="grid-2">
+              <div className="field">
+                <label className="field-label">Type de consentement</label>
+                <select className="input" value={consentForm.consent_type} onChange={e => setConsentForm(f => ({ ...f, consent_type: e.target.value }))}>
+                  <option value="data_collection">Collecte de données</option>
+                  <option value="bic_check">Consultation BIC</option>
+                  <option value="credit_check">Analyse de crédit</option>
+                  <option value="data_sharing">Partage de données</option>
+                </select>
+              </div>
+              <div className="field">
+                <label className="field-label">Méthode</label>
+                <select className="input" value={consentForm.consent_method} onChange={e => setConsentForm(f => ({ ...f, consent_method: e.target.value }))}>
+                  <option value="verbal">Verbal</option>
+                  <option value="written">Écrit</option>
+                  <option value="sms">SMS</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button className="btn btn-primary btn-sm" onClick={saveConsent}>Enregistrer</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => setAddingConsent(false)}>Annuler</button>
+            </div>
+          </div>
+        )}
+        {consents.length === 0 && !addingConsent ? (
+          <p className="text-sm text-muted">Aucun consentement enregistré.</p>
+        ) : (
+          consents.map((c, i) => (
+            <div key={i} style={{ padding: '6px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)', display: 'flex', justifyContent: 'space-between' }}>
+              <span>{c.consent_type?.replace(/_/g, ' ')} — {c.consent_method}</span>
+              <span className={`badge ${c.consent_given ? 'badge-success' : 'badge-error'}`}>{c.consent_given ? 'Accordé' : 'Refusé'}</span>
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }

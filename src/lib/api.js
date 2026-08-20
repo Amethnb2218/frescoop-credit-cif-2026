@@ -73,4 +73,26 @@ export const api = {
   syncPush: (operations) => request('/api/sync/push', { method: 'POST', body: JSON.stringify({ operations }) }),
   syncPull: (since) => request(`/api/sync/pull${since ? `?since=${since}` : ''}`),
   syncStatus: () => request('/api/sync/status'),
+
+  // Products
+  getProducts: () => request('/api/products'),
+  createProduct: (data) => request('/api/products', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Field visits
+  getVisits: (dossierId) => request(`/api/visits/dossier/${dossierId}`),
+  createVisit: (data) => request('/api/visits', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Consent
+  getConsents: (dossierId) => request(`/api/consent/dossier/${dossierId}`),
+  createConsent: (data) => request('/api/consent', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Fraud checks
+  runFraudCheck: (dossierId) => request(`/api/fraud/check/${dossierId}`, { method: 'POST' }),
+  getFraudChecks: (dossierId) => request(`/api/fraud/dossier/${dossierId}`),
+
+  // Export
+  getMemo: (dossierId) => request(`/api/export/memo/${dossierId}/json`),
+
+  // Stats
+  getStats: () => request('/api/stats'),
 };

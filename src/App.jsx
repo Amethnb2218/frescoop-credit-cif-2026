@@ -4,7 +4,8 @@ import { isLoggedIn, getUser, logout } from './lib/api';
 import { isOnline, onConnectivityChange } from './lib/offline';
 import { ROLE_LABELS } from './lib/format';
 import { ROLE_NAV } from './lib/tokens';
-import { FileText, Home, Shield, Users, BookOpen, Scale, LogOut, WifiOff, Settings, Gavel } from 'lucide-react';
+import { FileText, Home, Shield, Users, BookOpen, Scale, LogOut, WifiOff, Settings, Gavel, BarChart3, Package, RefreshCw } from 'lucide-react';
+import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import DossierList from './pages/DossierList';
@@ -12,6 +13,9 @@ import DossierNew from './pages/DossierNew';
 import DossierDetail from './pages/DossierDetail';
 import AuditLog from './pages/AuditLog';
 import RulesPage from './pages/RulesPage';
+import StatsPage from './pages/StatsPage';
+import ProductsPage from './pages/ProductsPage';
+import SyncPage from './pages/SyncPage';
 
 const NAV_ITEMS = {
   dashboard: { to: '/', icon: Home, label: 'Tableau de bord' },
@@ -19,11 +23,14 @@ const NAV_ITEMS = {
   decisions: { to: '/dossiers?status=committee', icon: Gavel, label: 'Décisions' },
   rules: { to: '/rules', icon: Scale, label: 'Règles' },
   audit: { to: '/audit', icon: BookOpen, label: 'Audit' },
+  stats: { to: '/stats', icon: BarChart3, label: 'Statistiques' },
+  products: { to: '/products', icon: Package, label: 'Produits' },
+  sync: { to: '/sync', icon: RefreshCw, label: 'Synchronisation' },
   admin: { to: '/admin', icon: Settings, label: 'Administration' },
 };
 
 function ProtectedRoute({ children }) {
-  if (!isLoggedIn()) return <Navigate to="/login" replace />;
+  if (!isLoggedIn()) return <Navigate to="/welcome" replace />;
   return children;
 }
 
@@ -83,6 +90,7 @@ export default function App() {
 
   return (
     <Routes>
+      <Route path="/welcome" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="*" element={
         <ProtectedRoute>
@@ -98,6 +106,9 @@ export default function App() {
                   <Route path="/dossiers/:id" element={<DossierDetail />} />
                   <Route path="/rules" element={<RulesPage />} />
                   <Route path="/audit" element={<AuditLog />} />
+                  <Route path="/stats" element={<StatsPage />} />
+                  <Route path="/products" element={<ProductsPage />} />
+                  <Route path="/sync" element={<SyncPage />} />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </div>
