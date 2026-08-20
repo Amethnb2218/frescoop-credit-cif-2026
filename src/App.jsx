@@ -3,7 +3,8 @@ import { useState, useEffect } from 'react';
 import { isLoggedIn, getUser, logout } from './lib/api';
 import { isOnline, onConnectivityChange } from './lib/offline';
 import { ROLE_LABELS } from './lib/format';
-import { FileText, Home, Shield, BarChart3, Users, ClipboardList, LogOut, Wifi, WifiOff, Scale, BookOpen } from 'lucide-react';
+import { ROLE_NAV } from './lib/tokens';
+import { FileText, Home, Shield, Users, BookOpen, Scale, LogOut, WifiOff, Settings, Gavel } from 'lucide-react';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import DossierList from './pages/DossierList';
@@ -12,47 +13,56 @@ import DossierDetail from './pages/DossierDetail';
 import AuditLog from './pages/AuditLog';
 import RulesPage from './pages/RulesPage';
 
+const NAV_ITEMS = {
+  dashboard: { to: '/', icon: Home, label: 'Tableau de bord' },
+  dossiers: { to: '/dossiers', icon: FileText, label: 'Dossiers' },
+  decisions: { to: '/dossiers?status=committee', icon: Gavel, label: 'Décisions' },
+  rules: { to: '/rules', icon: Scale, label: 'Règles' },
+  audit: { to: '/audit', icon: BookOpen, label: 'Audit' },
+  admin: { to: '/admin', icon: Settings, label: 'Administration' },
+};
+
 function ProtectedRoute({ children }) {
   if (!isLoggedIn()) return <Navigate to="/login" replace />;
   return children;
 }
 
-function Sidebar() {
+function Navigation() {
   const location = useLocation();
   const navigate = useNavigate();
   const user = getUser();
-
-  const links = [
-    { to: '/', icon: Home, label: 'Tableau de bord' },
-    { to: '/dossiers', icon: FileText, label: 'Dossiers' },
-    { to: '/rules', icon: Scale, label: 'Règles', roles: ['SUPERADMIN', 'ADMIN', 'RISK_MANAGER', 'SUPERVISEUR'] },
-    { to: '/audit', icon: BookOpen, label: 'Journal d\'audit', roles: ['SUPERADMIN', 'ADMIN', 'AUDITEUR', 'RISK_MANAGER', 'SUPERVISEUR'] },
-  ];
-
-  const visibleLinks = links.filter(l => !l.roles || l.roles.includes(user?.role));
+  const allowedKeys = ROLE_NAV[user?.role] || ['dashboard', 'dossiers'];
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-logo">FresCoop</div>
-      <div className="sidebar-subtitle">Copilote Crédit Agricole</div>
-      <nav className="sidebar-nav">
-        {visibleLinks.map(l => (
-          <Link key={l.to} to={l.to} className={`sidebar-link ${location.pathname === l.to || (l.to !== '/' && location.pathname.startsWith(l.to)) ? 'active' : ''}`}>
-            <l.icon size={18} />
-            {l.label}
-          </Link>
-        ))}
-      </nav>
-      <div className="sidebar-footer">
-        <div style={{ marginBottom: 8 }}>
-          <strong>{user?.name}</strong><br />
-          <span>{ROLE_LABELS[user?.role] || user?.role}</span>
-        </div>
-        <button className="btn btn-sm btn-secondary" style={{ width: '100%' }} onClick={() => { logout(); navigate('/login'); }}>
+    <nav className="nav-sidebar">
+      <div className="nav-brand">
+        <div className="nav-brand-name">FresCoop</div>
+        <div className="nav-brand-desc">Crédit agricole</div>
+      </div>
+
+      <div className="nav-section">
+        <div className="nav-section-title">Navigation</div>
+        {allowedKeys.map(key => {
+          const item = NAV_ITEMS[key];
+          if (!item) return null;
+          const isActive = item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to.split('?')[0]);
+          return (
+            <Link key={key} to={item.to} className={`nav-item ${isActive ? 'active' : ''}`}>
+              <item.icon size={16} />
+              {item.label}
+            </Link>
+          );
+        })}
+      </div>
+
+      <div className="nav-footer">
+        <div className="nav-user-name">{user?.name}</div>
+        <div className="nav-user-role">{ROLE_LABELS[user?.role] || user?.role}</div>
+        <button className="btn btn-ghost btn-sm" style={{ marginTop: 12, width: '100%', justifyContent: 'center', color: '#9ca3af' }} onClick={() => { logout(); navigate('/login'); }}>
           <LogOut size={14} /> Déconnexion
         </button>
       </div>
-    </aside>
+    </nav>
   );
 }
 
@@ -60,8 +70,8 @@ function OfflineBanner({ online }) {
   if (online) return null;
   return (
     <div className="offline-banner">
-      <WifiOff size={16} />
-      MODE HORS CONNEXION — Les données seront synchronisées au retour du réseau
+      <WifiOff size={14} />
+      Hors connexion — Votre travail est enregistré sur cet appareil
     </div>
   );
 }
@@ -69,29 +79,29 @@ function OfflineBanner({ online }) {
 export default function App() {
   const [online, setOnline] = useState(isOnline());
 
-  useEffect(() => {
-    return onConnectivityChange(setOnline);
-  }, []);
+  useEffect(() => onConnectivityChange(setOnline), []);
 
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="*" element={
         <ProtectedRoute>
-          <div className="app-shell">
-            <Sidebar />
+          <div className="app-layout">
+            <Navigation />
             <OfflineBanner online={online} />
-            <main className="main-content">
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/dossiers" element={<DossierList />} />
-                <Route path="/dossiers/new" element={<DossierNew />} />
-                <Route path="/dossiers/:id" element={<DossierDetail />} />
-                <Route path="/rules" element={<RulesPage />} />
-                <Route path="/audit" element={<AuditLog />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </main>
+            <div className="page-content">
+              <div className="page-inner">
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/dossiers" element={<DossierList />} />
+                  <Route path="/dossiers/new" element={<DossierNew />} />
+                  <Route path="/dossiers/:id" element={<DossierDetail />} />
+                  <Route path="/rules" element={<RulesPage />} />
+                  <Route path="/audit" element={<AuditLog />} />
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </div>
+            </div>
           </div>
         </ProtectedRoute>
       } />

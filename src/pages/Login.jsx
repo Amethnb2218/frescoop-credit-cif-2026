@@ -19,7 +19,7 @@ export default function Login() {
       setAuth(res.token, res.user);
       navigate('/');
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Identifiants incorrects. Veuillez réessayer.');
     } finally {
       setLoading(false);
     }
@@ -28,39 +28,37 @@ export default function Login() {
   return (
     <div className="login-page">
       <div className="login-card">
-        <div style={{ textAlign: 'center', marginBottom: 8 }}>
-          <div style={{ width: 48, height: 48, borderRadius: 12, background: 'linear-gradient(135deg, #047857, #10b981)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-            <span style={{ color: '#fff', fontWeight: 800, fontSize: '1.125rem' }}>FC</span>
-          </div>
+        <div className="login-brand">
+          <div className="login-brand-icon">FC</div>
+          <h1 className="login-title">FresCoop</h1>
+          <p className="login-subtitle">Plateforme de scoring microcrédit agricole</p>
         </div>
-        <h1 className="login-title">FresCoop</h1>
-        <p className="login-subtitle">Plateforme de scoring microcrédit agricole</p>
 
         <form onSubmit={handleSubmit}>
           {error && (
-            <div style={{ background: 'var(--red-50)', color: 'var(--red-700)', padding: '10px 14px', borderRadius: 8, fontSize: '0.8125rem', marginBottom: 20, border: '1px solid var(--red-100)' }}>
+            <div style={{ background: 'var(--c-error-light)', color: '#991b1b', padding: '10px 14px', borderRadius: 'var(--r-lg)', fontSize: 'var(--fs-base)', marginBottom: 20, border: '1px solid #fca5a5' }}>
               {error}
             </div>
           )}
 
-          <div className="form-group">
-            <label className="form-label">Adresse email</label>
-            <input type="email" className="form-input" value={email} onChange={e => setEmail(e.target.value)} required autoFocus />
+          <div className="field">
+            <label className="field-label" htmlFor="email">Adresse email</label>
+            <input id="email" type="email" className="input" value={email} onChange={e => setEmail(e.target.value)} required autoFocus autoComplete="email" />
           </div>
 
-          <div className="form-group">
-            <label className="form-label">Mot de passe</label>
-            <input type="password" className="form-input" value={password} onChange={e => setPassword(e.target.value)} required />
+          <div className="field">
+            <label className="field-label" htmlFor="password">Mot de passe</label>
+            <input id="password" type="password" className="input" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password" />
           </div>
 
           <button type="submit" className="btn btn-primary btn-lg" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }} disabled={loading}>
             <LogIn size={16} />
-            {loading ? 'Connexion...' : 'Se connecter'}
+            {loading ? 'Connexion en cours...' : 'Se connecter'}
           </button>
         </form>
 
-        <p style={{ marginTop: 24, textAlign: 'center', fontSize: '0.6875rem', color: 'var(--gray-400)' }}>
-          CIF DigiCoop-WA+ 2026 — Thématique 02
+        <p style={{ marginTop: 32, textAlign: 'center', fontSize: 'var(--fs-xs)', color: 'var(--c-400)' }}>
+          CIF DigiCoop-WA+ 2026
         </p>
       </div>
     </div>
