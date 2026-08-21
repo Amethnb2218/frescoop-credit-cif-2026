@@ -117,7 +117,7 @@ export const ROLE_NAV = {
   SUPPORT: ['dashboard', 'dossiers', 'stats', 'audit', 'admin'],
   RISK_MANAGER: ['dashboard', 'dossiers', 'rules', 'stats', 'products', 'audit'],
   COMITE: ['dashboard', 'dossiers', 'decisions'],
-  SUPERVISEUR: ['dashboard', 'dossiers', 'rules', 'sync', 'audit'],
+  SUPERVISEUR: ['dashboard', 'dossiers', 'rules', 'stats'],
   AUDITEUR: ['dashboard', 'audit', 'dossiers', 'stats'],
   AGENT: ['dashboard', 'dossiers', 'sync'],
 };

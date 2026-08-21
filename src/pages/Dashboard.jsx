@@ -125,12 +125,16 @@ export default function Dashboard() {
               <div className="metric-label">Total dossiers</div>
             </div>
             <div className="metric-card">
-              <div className="metric-value" style={{ color: 'var(--c-warning)' }}>{stats.pending}</div>
-              <div className="metric-label">En instruction</div>
+              {(() => {
+                const scored = dossiers.filter(d => d.prequalification_score != null);
+                const avg = scored.length > 0 ? Math.round(scored.reduce((s, d) => s + d.prequalification_score, 0) / scored.length) : null;
+                const color = avg == null ? 'var(--c-400)' : avg > 70 ? 'var(--c-success)' : avg >= 40 ? 'var(--c-warning)' : 'var(--c-error)';
+                return (<><div className="metric-value" style={{ color }}>{avg != null ? `${avg}/100` : '—'}</div><div className="metric-label">Score moyen</div></>);
+              })()}
             </div>
             <div className="metric-card">
-              <div className="metric-value" style={{ color: 'var(--c-warning)' }}>{stats.committee}</div>
-              <div className="metric-label">En attente comité</div>
+              <div className="metric-value" style={{ color: 'var(--c-warning)' }}>{stats.pending}</div>
+              <div className="metric-label">En instruction</div>
             </div>
             <div className="metric-card">
               <div className="metric-value" style={{ color: 'var(--c-success)' }}>{stats.decided}</div>

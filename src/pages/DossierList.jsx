@@ -79,7 +79,7 @@ export default function DossierList() {
                 <tr>
                   <th>Demandeur</th>
                   <th>Montant</th>
-                  <th>Durée</th>
+                  <th>Score</th>
                   <th>Statut</th>
                   <th>Préqualification</th>
                   <th>Dernière mise à jour</th>
@@ -94,7 +94,13 @@ export default function DossierList() {
                       <div className="table-cell-secondary">{d.applicant_location || '—'} {d.activity_type ? `· ${d.activity_type}` : ''}</div>
                     </td>
                     <td style={{ fontWeight: 600 }}>{formatCFA(d.amount_requested)}</td>
-                    <td>{d.duration_months ? `${d.duration_months} mois` : '—'}</td>
+                    <td>
+                      {d.prequalification_score != null ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', background: d.prequalification_score > 70 ? '#ecfdf5' : d.prequalification_score >= 40 ? '#fffbeb' : '#fef2f2', border: `2px solid ${d.prequalification_score > 70 ? '#059669' : d.prequalification_score >= 40 ? '#d97706' : '#dc2626'}`, fontSize: 11, fontWeight: 700, color: d.prequalification_score > 70 ? '#059669' : d.prequalification_score >= 40 ? '#d97706' : '#dc2626' }}>
+                          {d.prequalification_score}
+                        </span>
+                      ) : <span className="text-xs text-muted">—</span>}
+                    </td>
                     <td>
                       <span className={`badge badge-${d.status === 'draft' ? 'neutral' : ['decided','exported','disbursed','closed'].includes(d.status) ? 'success' : 'warning'}`}>
                         {STATUS_LABELS[d.status]}

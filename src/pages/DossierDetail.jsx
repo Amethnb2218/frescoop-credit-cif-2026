@@ -104,16 +104,31 @@ export default function DossierDetail() {
         <ArrowLeft size={14} /> Dossiers
       </button>
 
-      <div className="flex justify-between items-center" style={{ marginBottom: 16 }}>
-        <div>
-          <h1 className="page-title">{dossier.applicant_name || 'Dossier'}</h1>
-          <p className="page-subtitle">{dossier.applicant_location} · {dossier.activity_type || dossier.sector} · {formatCFA(dossier.amount_requested)}</p>
+      <div className="flex justify-between items-center" style={{ marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <ScoreCircle score={dossier.prequalification_score} />
+          <div>
+            <h1 className="page-title">{dossier.applicant_name || 'Dossier'}</h1>
+            <p className="page-subtitle">{dossier.applicant_location} · {dossier.activity_type || dossier.sector} · {formatCFA(dossier.amount_requested)}</p>
+          </div>
         </div>
         <div className="flex gap-2">
           {ns && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus(ns)}>{nextLabel[ns]}</button>}
           {dossier.status === 'committee' && ['COMITE', 'ADMIN', 'SUPERADMIN'].includes(role) && !dossier.decision && <button className="btn btn-primary btn-sm" onClick={() => setTab('Décision')}>Prendre une décision</button>}
         </div>
       </div>
+
+      {dossier.prequalification_score != null && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '10px 16px', background: '#f9fafb', borderRadius: 'var(--radius-md)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid var(--c-border-light)' }}>
+          <span style={{ fontWeight: 600, color: 'var(--c-text)' }}>Score: <span style={{ color: dossier.prequalification_score > 70 ? '#059669' : dossier.prequalification_score >= 40 ? '#d97706' : '#dc2626', fontSize: 'var(--fs-md)' }}>{dossier.prequalification_score}/100</span></span>
+          <span style={{ color: 'var(--c-500)' }}>|</span>
+          <span>Confiance preuves: <strong>{dossier.evidence_confidence || '—'}</strong></span>
+          <span style={{ color: 'var(--c-500)' }}>|</span>
+          <span>Capacité: <strong>{dossier.repayment_capacity || '—'}</strong></span>
+          <span style={{ color: 'var(--c-500)' }}>|</span>
+          <span>{evidence.filter(e => ['A', 'B'].includes(e.verification_level)).length} preuves vérifiées</span>
+        </div>
+      )}
 
       <div className="workflow-bar">
         {workflowSteps.map((s, i) => (

@@ -40,21 +40,37 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Problem section */}
+      {/* Avant/Après section */}
       <section style={{ background: '#f8faf9', padding: '56px 48px' }}>
         <div style={{ maxWidth: 900, margin: '0 auto' }}>
           <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1a2332', textAlign: 'center', marginBottom: 8 }}>
-            Le problème que nous résolvons
+            Impact mesurable
           </h2>
           <p style={{ textAlign: 'center', color: '#5a6577', fontSize: 14, maxWidth: 600, margin: '0 auto 32px', lineHeight: 1.6 }}>
-            L'agent de crédit doit transformer une réalité agricole fragmentée — déclarations, papier, visites, coopératives, espèces — en un dossier exploitable. Aujourd'hui, cela génère ressaisie, pertes de temps et subjectivité.
+            L'instruction d'un microcrédit agricole prend aujourd'hui 5 jours en moyenne. FresCoop réduit ce délai à 2 heures grâce au scoring automatisé.
           </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-            <ProblemCard number="70%" label="du temps d'instruction" desc="passé à collecter et ressaisir des informations fragmentées" />
-            <ProblemCard number="45%" label="des dossiers incomplets" desc="retournés pour pièces manquantes au premier passage" />
-            <ProblemCard number="0%" label="de traçabilité" desc="sur les modifications et décisions prises hors système" />
+            <ProblemCard number="5 jours" label="Avant FresCoop" desc="Instruction manuelle, subjective, sans traçabilité ni structure" />
+            <ProblemCard number="2 heures" label="Avec FresCoop" desc="Scoring automatisé, preuves classées, décision tracée et explicable" />
+            <ProblemCard number="95%" label="Réduction du délai" desc="De la collecte terrain au score final, tout est structuré et instantané" />
           </div>
-          <p style={{ textAlign: 'center', fontSize: 11, color: '#8b95a5', marginTop: 16 }}>DONNÉES DE DÉMONSTRATION — Estimations sectorielles à valider en pilote</p>
+        </div>
+      </section>
+
+      {/* Comment fonctionne le scoring */}
+      <section style={{ padding: '56px 48px', background: '#fff' }}>
+        <div style={{ maxWidth: 900, margin: '0 auto' }}>
+          <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1a2332', textAlign: 'center', marginBottom: 8 }}>
+            Comment fonctionne le scoring
+          </h2>
+          <p style={{ textAlign: 'center', color: '#5a6577', fontSize: 13, marginBottom: 32 }}>
+            Un score 0-100, explicable, calculé à partir de données vérifiables — pas une boîte noire
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
+            <ScoringStep n="1" title="Collecte structurée" desc="L'agent classe chaque preuve selon sa fiabilité : A (vérifiée), B (tiers fiable), C (document), D (déclaration). Plus les preuves sont solides, plus le score monte." color="#059669" />
+            <ScoringStep n="2" title="Analyse saisonnière" desc="Le cash-flow est modélisé mois par mois. Des stress tests simulent une baisse de revenus de 20-40% pour évaluer la résilience." color="#2563eb" />
+            <ScoringStep n="3" title="Score explicable" desc="Le moteur de règles produit un score 0-100 avec les raisons. Le comité voit pourquoi ce score — pas de décision opaque." color="#7c3aed" />
+          </div>
         </div>
       </section>
 
@@ -171,6 +187,16 @@ function WorkflowStep({ n, title, desc }) {
       <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'rgba(255,255,255,.15)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, marginBottom: 6 }}>{n}</div>
       <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
       <div style={{ fontSize: 11, color: '#a8d4c0', marginTop: 2 }}>{desc}</div>
+    </div>
+  );
+}
+
+function ScoringStep({ n, title, desc, color }) {
+  return (
+    <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, padding: 20, textAlign: 'center' }}>
+      <div style={{ width: 36, height: 36, borderRadius: '50%', background: `${color}15`, color, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 700, marginBottom: 12, border: `2px solid ${color}` }}>{n}</div>
+      <div style={{ fontWeight: 600, fontSize: 14, color: '#1a2332', marginBottom: 8 }}>{title}</div>
+      <div style={{ fontSize: 12, color: '#5a6577', lineHeight: 1.6 }}>{desc}</div>
     </div>
   );
 }
