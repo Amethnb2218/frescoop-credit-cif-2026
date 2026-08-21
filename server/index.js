@@ -60,8 +60,9 @@ async function start() {
   await initDb();
   console.log('[FresCoop] Base de données initialisée');
 
-  const { seedIfEmpty } = await import('./seed.js');
+  const { seedIfEmpty, ensureAdminAccounts } = await import('./seed.js');
   await seedIfEmpty();
+  await ensureAdminAccounts();
 
   app.listen(PORT, HOST, () => {
     console.log(`[FresCoop] Serveur démarré sur http://${HOST}:${PORT}`);

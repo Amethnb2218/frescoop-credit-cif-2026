@@ -1,6 +1,30 @@
 import { getDb, uuid } from './db.js';
 import { hashPassword } from './auth.js';
 
+export async function ensureAdminAccounts() {
+  const db = getDb();
+  const tenantRes = await db.execute('SELECT id FROM tenants LIMIT 1');
+  if (tenantRes.rows.length === 0) return;
+  const tenantId = tenantRes.rows[0].id;
+
+  const admins = [
+    { name: 'Seydina Limamou Laye', email: 'seydinalimamoulaye@gmail.com', role: 'ADMIN', phone: '+221770000010', agency: 'Siège Dakar', password: 'passer123' },
+    { name: 'Cherif Hane', email: 'cherifhane@gmail.com', role: 'ADMIN', phone: '+221770000011', agency: 'Siège Dakar', password: 'passer123' },
+    { name: 'Ameth Sall', email: 'amethsl2218@gmail.com', role: 'ADMIN', phone: '+221770000012', agency: 'Siège Dakar', password: 'passer123' },
+  ];
+
+  for (const a of admins) {
+    const existing = await db.execute({ sql: 'SELECT id FROM users WHERE email = ?', args: [a.email] });
+    if (existing.rows.length === 0) {
+      await db.execute({
+        sql: 'INSERT INTO users (id, tenant_id, email, password_hash, name, role, phone, agency) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        args: [uuid(), tenantId, a.email, hashPassword(a.password), a.name, a.role, a.phone, a.agency],
+      });
+      console.log(`[FresCoop] Compte admin créé: ${a.email}`);
+    }
+  }
+}
+
 export async function seedIfEmpty() {
   const db = getDb();
   const check = await db.execute('SELECT COUNT(*) as count FROM tenants');
