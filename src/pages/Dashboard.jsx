@@ -11,7 +11,7 @@ function DemoGuide() {
   function dismiss() { localStorage.setItem('frescoop_demo_dismissed', '1'); setDismissed(true); }
   return (
     <div style={{ background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)', border: '1px solid #a7f3d0', borderRadius: 'var(--radius-md)', padding: '14px 18px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 14 }}>
-      <div style={{ fontSize: 24, flexShrink: 0 }}>🎯</div>
+      <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#1b6b52', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>i</div>
       <div style={{ flex: 1 }}>
         <div style={{ fontWeight: 600, fontSize: 'var(--fs-13)', color: '#065f46' }}>Découvrez FresCoop</div>
         <div style={{ fontSize: 'var(--fs-12)', color: '#047857', marginTop: 2 }}>Ouvrez le dossier « Awa Faye » pour explorer une instruction complète de crédit agricole avec preuves, cash-flow saisonnier et préqualification.</div>
