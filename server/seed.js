@@ -17,20 +17,23 @@ export async function seedIfEmpty() {
   });
 
   const users = [
-    { id: uuid(), name: 'FresCoop SuperAdmin', email: 'superadmin@frescoop.demo', role: 'SUPERADMIN', phone: '+221770000001', agency: 'Global' },
-    { id: uuid(), name: 'Moussa Diallo', email: 'agent@frescoop.demo', role: 'AGENT', phone: '+221771234567', agency: 'Agence Thiès' },
-    { id: uuid(), name: 'Fatou Ndiaye', email: 'superviseur@frescoop.demo', role: 'SUPERVISEUR', phone: '+221772345678', agency: 'Agence Thiès' },
-    { id: uuid(), name: 'Ibrahima Sow', email: 'comite@frescoop.demo', role: 'COMITE', phone: '+221773456789', agency: 'Siège Dakar' },
-    { id: uuid(), name: 'Aminata Ba', email: 'risk@frescoop.demo', role: 'RISK_MANAGER', phone: '+221774567890', agency: 'Siège Dakar' },
-    { id: uuid(), name: 'Admin FresCoop', email: 'admin@frescoop.demo', role: 'ADMIN', phone: '+221770000000', agency: 'Siège Dakar' },
-    { id: uuid(), name: 'Oumar Sy', email: 'auditeur@frescoop.demo', role: 'AUDITEUR', phone: '+221775678901', agency: 'Siège Dakar' },
+    { id: uuid(), name: 'FresCoop SuperAdmin', email: 'superadmin@frescoop.demo', role: 'SUPERADMIN', phone: '+221770000001', agency: 'Global', password: 'demo2026' },
+    { id: uuid(), name: 'Moussa Diallo', email: 'agent@frescoop.demo', role: 'AGENT', phone: '+221771234567', agency: 'Agence Thiès', password: 'demo2026' },
+    { id: uuid(), name: 'Fatou Ndiaye', email: 'superviseur@frescoop.demo', role: 'SUPERVISEUR', phone: '+221772345678', agency: 'Agence Thiès', password: 'demo2026' },
+    { id: uuid(), name: 'Ibrahima Sow', email: 'comite@frescoop.demo', role: 'COMITE', phone: '+221773456789', agency: 'Siège Dakar', password: 'demo2026' },
+    { id: uuid(), name: 'Aminata Ba', email: 'risk@frescoop.demo', role: 'RISK_MANAGER', phone: '+221774567890', agency: 'Siège Dakar', password: 'demo2026' },
+    { id: uuid(), name: 'Admin FresCoop', email: 'admin@frescoop.demo', role: 'ADMIN', phone: '+221770000000', agency: 'Siège Dakar', password: 'demo2026' },
+    { id: uuid(), name: 'Oumar Sy', email: 'auditeur@frescoop.demo', role: 'AUDITEUR', phone: '+221775678901', agency: 'Siège Dakar', password: 'demo2026' },
+    { id: uuid(), name: 'Seydina Limamou Laye', email: 'seydinalimamoulaye@gmail.com', role: 'ADMIN', phone: '+221770000010', agency: 'Siège Dakar', password: 'passer123' },
+    { id: uuid(), name: 'Cherif Hane', email: 'cherifhane@gmail.com', role: 'ADMIN', phone: '+221770000011', agency: 'Siège Dakar', password: 'passer123' },
+    { id: uuid(), name: 'Ameth Sall', email: 'amethsl2218@gmail.com', role: 'ADMIN', phone: '+221770000012', agency: 'Siège Dakar', password: 'passer123' },
   ];
 
   for (const u of users) {
     await db.execute({
       sql: `INSERT INTO users (id, tenant_id, email, password_hash, name, role, phone, agency)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [u.id, tenantId, u.email, hashPassword('demo2026'), u.name, u.role, u.phone, u.agency],
+      args: [u.id, tenantId, u.email, hashPassword(u.password), u.name, u.role, u.phone, u.agency],
     });
   }
 
