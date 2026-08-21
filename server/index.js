@@ -54,7 +54,7 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 4174;
-const HOST = process.env.FRESCOOP_HOST || '127.0.0.1';
+const HOST = process.env.FRESCOOP_HOST || '0.0.0.0';
 
 async function start() {
   await initDb();
