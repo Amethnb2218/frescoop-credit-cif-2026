@@ -329,25 +329,25 @@ export async function initDb() {
     const tableInfo = await client.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'");
     const sql = tableInfo.rows[0]?.sql || '';
     if (sql && !sql.includes('JURY')) {
-      await client.executeMultiple(`
-        CREATE TABLE IF NOT EXISTS users_migrated (
-          id TEXT PRIMARY KEY,
-          tenant_id TEXT NOT NULL REFERENCES tenants(id),
-          email TEXT NOT NULL,
-          password_hash TEXT NOT NULL,
-          name TEXT NOT NULL,
-          role TEXT NOT NULL CHECK(role IN ('SUPERADMIN','AGENT','SUPERVISEUR','COMITE','RISK_MANAGER','ADMIN','AUDITEUR','SUPPORT','JURY')),
-          phone TEXT,
-          agency TEXT,
-          active INTEGER DEFAULT 1,
-          created_at TEXT DEFAULT (datetime('now')),
-          updated_at TEXT DEFAULT (datetime('now')),
-          UNIQUE(tenant_id, email)
-        );
-        INSERT OR IGNORE INTO users_migrated SELECT id, tenant_id, email, password_hash, name, role, phone, agency, active, created_at, updated_at FROM users;
-        DROP TABLE users;
-        ALTER TABLE users_migrated RENAME TO users;
-      `);
+      await client.execute('PRAGMA foreign_keys = OFF');
+      await client.execute(`CREATE TABLE IF NOT EXISTS users_new (
+        id TEXT PRIMARY KEY,
+        tenant_id TEXT NOT NULL,
+        email TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL CHECK(role IN ('SUPERADMIN','AGENT','SUPERVISEUR','COMITE','RISK_MANAGER','ADMIN','AUDITEUR','SUPPORT','JURY')),
+        phone TEXT,
+        agency TEXT,
+        active INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(tenant_id, email)
+      )`);
+      await client.execute('INSERT OR IGNORE INTO users_new SELECT id, tenant_id, email, password_hash, name, role, phone, agency, active, created_at, updated_at FROM users');
+      await client.execute('DROP TABLE users');
+      await client.execute('ALTER TABLE users_new RENAME TO users');
+      await client.execute('PRAGMA foreign_keys = ON');
       console.log('[FresCoop] Migration: rôles JURY/SUPPORT ajoutés');
     }
   } catch (e) { console.log('[FresCoop] Migration roles skipped:', e.message); }

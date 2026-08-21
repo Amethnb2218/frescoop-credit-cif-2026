@@ -18,14 +18,16 @@ export async function ensureAdminAccounts() {
   ];
 
   for (const a of admins) {
-    const existing = await db.execute({ sql: 'SELECT id FROM users WHERE email = ?', args: [a.email] });
-    if (existing.rows.length === 0) {
-      await db.execute({
-        sql: 'INSERT INTO users (id, tenant_id, email, password_hash, name, role, phone, agency) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        args: [uuid(), tenantId, a.email, hashPassword(a.pwd), a.name, a.role, a.phone, a.agency],
-      });
-      console.log(`[FresCoop] Compte admin créé: ${a.email}`);
-    }
+    try {
+      const existing = await db.execute({ sql: 'SELECT id FROM users WHERE email = ?', args: [a.email] });
+      if (existing.rows.length === 0) {
+        await db.execute({
+          sql: 'INSERT INTO users (id, tenant_id, email, password_hash, name, role, phone, agency) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          args: [uuid(), tenantId, a.email, hashPassword(a.pwd), a.name, a.role, a.phone, a.agency],
+        });
+        console.log(`[FresCoop] Compte créé: ${a.email} (${a.role})`);
+      }
+    } catch (e) { console.log(`[FresCoop] Skip ${a.email}: ${e.message}`); }
   }
 }
 
