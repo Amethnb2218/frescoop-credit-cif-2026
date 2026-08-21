@@ -117,6 +117,6 @@ export const ROLE_NAV = {
   RISK_MANAGER: ['dashboard', 'dossiers', 'rules', 'stats', 'products', 'audit'],
   COMITE: ['dashboard', 'dossiers', 'decisions'],
   SUPERVISEUR: ['dashboard', 'dossiers', 'rules', 'sync', 'audit'],
-  AUDITEUR: ['audit', 'dossiers'],
+  AUDITEUR: ['dashboard', 'audit', 'dossiers', 'stats'],
   AGENT: ['dashboard', 'dossiers', 'sync'],
 };

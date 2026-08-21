@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
 import { isOnline, saveDossierOffline, addToSyncQueue } from '../lib/offline';
 import { formatCFA } from '../lib/format';
-import { Save, WifiOff, ArrowLeft, ArrowRight, Check } from 'lucide-react';
+import { Save, WifiOff, ArrowLeft, ArrowRight, Check, MapPin } from 'lucide-react';
 
 const STEPS = [
   { key: 'demande', label: 'Demande' },
@@ -18,18 +18,51 @@ const STEPS = [
   { key: 'soumission', label: 'Soumission' },
 ];
 
+const LOCATIONS = [
+  'Dakar', 'Thiès', 'Saint-Louis', 'Kaolack', 'Ziguinchor', 'Tambacounda',
+  'Kolda', 'Matam', 'Fatick', 'Kaffrine', 'Kédougou', 'Sédhiou', 'Diourbel', 'Louga',
+  'Rufisque', 'Mbour', 'Tivaouane', 'Podor', 'Dagana', 'Richard-Toll',
+  'Nioro du Rip', 'Koungheul', 'Vélingara', 'Bignona', 'Oussouye',
+  'Foundiougne', 'Gossas', 'Mbacké', 'Bambey', 'Linguère', 'Kébémer',
+  'Birkilane', 'Malem-Hodar', 'Koumpentoum', 'Goudiry', 'Bakel',
+  'Ranérou', 'Saraya', 'Salémata', 'Médina Yoro Foulah', 'Bounkiling',
+];
+
+const ACTIVITY_TYPES = [
+  'Riziculture', 'Maraîchage', 'Céréales (mil, sorgho, maïs)', 'Arachide',
+  'Arboriculture fruitière', 'Horticulture', 'Aviculture', 'Élevage bovin',
+  'Élevage ovin/caprin', 'Apiculture', 'Pêche artisanale', 'Aquaculture',
+  'Transformation céréales', 'Transformation fruits/légumes', 'Production laitière',
+  'Commerce de bétail', 'Commerce de céréales', 'Semences et intrants',
+  'Embouche bovine', 'Embouche ovine',
+];
+
+const MONTHS = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+
+const GUARANTEE_TYPES = [
+  { value: 'Caution solidaire', label: 'Caution solidaire (groupe de 5-10 membres)' },
+  { value: 'Nantissement récolte', label: 'Nantissement de récolte (stock warrant)' },
+  { value: 'Nantissement équipement', label: 'Nantissement d\'équipement agricole' },
+  { value: 'Épargne bloquée', label: 'Épargne bloquée (% du crédit)' },
+  { value: 'Hypothèque terrain', label: 'Hypothèque sur terrain titré' },
+  { value: 'Gage matériel', label: 'Gage sur matériel roulant' },
+  { value: 'Caution personnelle', label: 'Caution personnelle d\'un tiers' },
+  { value: 'Mixte', label: 'Combinaison de garanties' },
+];
+
 export default function DossierNew() {
   const navigate = useNavigate();
   const user = getUser();
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({
     amount_requested: '', credit_purpose: '', duration_months: '', desired_schedule: '',
     applicant_name: '', applicant_phone: '', applicant_id_number: '', applicant_location: '', applicant_activity: '',
-    sector: 'Agriculture', activity_type: '', years_experience: '', surface_ha: '', production_cycle: '',
+    sector: 'Agriculture', activity_type: '', years_experience: '', surface_ha: '', production_cycle_start: '', production_cycle_end: '', production_cycle: '',
     revenue_agriculture: '', revenue_commerce: '', revenue_other: '', revenue_frequency: 'mensuel', main_buyer: '',
     expenses_agriculture: '', expenses_household: '', expenses_other: '',
-    existing_debt_institution: '', existing_debt_amount: '', existing_debt_monthly: '', existing_debt_status: 'en_cours',
+    existing_debt_institution: '', existing_debt_amount: '', existing_debt_monthly: '', existing_debt_status: 'aucun',
     savings_amount: '', guarantee_type: '', group_guarantee: '', other_guarantees: '',
     agent_note: '',
   });
@@ -38,8 +71,11 @@ export default function DossierNew() {
   function num(v) { return v ? Number(v) : null; }
 
   async function handleSave() {
-    setSaving(true);
+    setSaving(true); setError('');
     try {
+      const cycle = form.production_cycle_start && form.production_cycle_end
+        ? `${MONTHS[form.production_cycle_start]} - ${MONTHS[form.production_cycle_end]}`
+        : form.production_cycle;
       const data = {
         applicant_name: form.applicant_name,
         applicant_phone: form.applicant_phone,
@@ -50,7 +86,7 @@ export default function DossierNew() {
         activity_type: form.activity_type,
         years_experience: num(form.years_experience),
         surface_ha: num(form.surface_ha),
-        production_cycle: form.production_cycle,
+        production_cycle: cycle,
         amount_requested: num(form.amount_requested),
         credit_purpose: form.credit_purpose,
         duration_months: num(form.duration_months),
@@ -70,7 +106,7 @@ export default function DossierNew() {
         await addToSyncQueue({ operation: 'create', entity_type: 'dossier', entity_id: id, payload: data });
         navigate('/dossiers');
       }
-    } catch (err) { alert(err.message); }
+    } catch (err) { setError(err.message); }
     finally { setSaving(false); }
   }
 
@@ -96,6 +132,8 @@ export default function DossierNew() {
         ))}
       </div>
 
+      {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '10px 14px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
+
       <div className="surface">
         {step === 0 && <StepDemande form={form} update={update} />}
         {step === 1 && <StepIdentite form={form} update={update} />}
@@ -106,7 +144,7 @@ export default function DossierNew() {
         {step === 6 && <StepGaranties form={form} update={update} />}
         {step === 7 && <StepPreuves />}
         {step === 8 && <StepAnalyse form={form} />}
-        {step === 9 && <StepSoumission form={form} update={update} saving={saving} onSave={handleSave} />}
+        {step === 9 && <StepSoumission form={form} update={update} saving={saving} onSave={handleSave} setStep={setStep} />}
 
         {step < 9 && (
           <div className="flex justify-between items-center" style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--c-border)' }}>
@@ -119,6 +157,69 @@ export default function DossierNew() {
   );
 }
 
+function AutocompleteInput({ value, onChange, suggestions, placeholder, hint }) {
+  const [open, setOpen] = useState(false);
+  const [filtered, setFiltered] = useState([]);
+  const ref = useRef(null);
+
+  function handleChange(v) {
+    onChange(v);
+    if (v.length >= 1) {
+      const f = suggestions.filter(s => s.toLowerCase().includes(v.toLowerCase()));
+      setFiltered(f.slice(0, 8));
+      setOpen(f.length > 0);
+    } else {
+      setOpen(false);
+    }
+  }
+
+  function select(s) {
+    onChange(s);
+    setOpen(false);
+  }
+
+  return (
+    <div style={{ position: 'relative' }} ref={ref}>
+      <input
+        className="input"
+        value={value}
+        onChange={e => handleChange(e.target.value)}
+        onFocus={() => { if (value.length >= 1) handleChange(value); }}
+        onBlur={() => setTimeout(() => setOpen(false), 200)}
+        placeholder={placeholder}
+      />
+      {hint && <div className="field-hint">{hint}</div>}
+      {open && filtered.length > 0 && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: '#fff', border: '1px solid var(--c-border)', borderRadius: 'var(--radius)', boxShadow: '0 4px 12px rgba(0,0,0,.1)', maxHeight: 200, overflowY: 'auto' }}>
+          {filtered.map(s => (
+            <div key={s} onMouseDown={() => select(s)} style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 'var(--fs-12)', borderBottom: '1px solid var(--c-border-light)' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--c-bg)'}
+              onMouseLeave={e => e.currentTarget.style.background = '#fff'}>
+              {s}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NeantField({ label, value, onChange, type = 'number', hint }) {
+  const isNeant = value === '0' || value === 'neant';
+  return (
+    <div className="field">
+      <label className="field-label">{label}</label>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <input className="input" type={type} min="0" value={isNeant ? '0' : value} onChange={e => onChange(e.target.value)} style={{ flex: 1 }} disabled={value === 'neant'} />
+        <button type="button" className={`btn btn-sm ${value === 'neant' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => onChange(value === 'neant' ? '' : 'neant')} style={{ whiteSpace: 'nowrap', fontSize: 11 }}>
+          Néant
+        </button>
+      </div>
+      {hint && <div className="field-hint">{hint}</div>}
+    </div>
+  );
+}
+
 function StepDemande({ form, update }) {
   return (
     <div>
@@ -126,16 +227,15 @@ function StepDemande({ form, update }) {
       <div className="grid-2">
         <div className="field">
           <label className="field-label">Montant demandé (FCFA) *</label>
-          <input className="input" type="number" min="0" step="10000" value={form.amount_requested} onChange={e => update('amount_requested', e.target.value)} />
+          <input className="input" type="number" min="0" step="10000" value={form.amount_requested} onChange={e => update('amount_requested', e.target.value)} placeholder="Ex: 500000" />
         </div>
         <div className="field">
           <label className="field-label">Durée souhaitée (mois) *</label>
-          <input className="input" type="number" min="1" max="60" value={form.duration_months} onChange={e => update('duration_months', e.target.value)} />
+          <input className="input" type="number" min="1" max="60" value={form.duration_months} onChange={e => update('duration_months', e.target.value)} placeholder="Ex: 12" />
         </div>
         <div className="field" style={{ gridColumn: '1 / -1' }}>
           <label className="field-label">Objet du crédit *</label>
-          <textarea className="input" rows={3} value={form.credit_purpose} onChange={e => update('credit_purpose', e.target.value)} />
-          <div className="field-hint">Décrivez précisément l'utilisation prévue du financement</div>
+          <textarea className="input" rows={3} value={form.credit_purpose} onChange={e => update('credit_purpose', e.target.value)} placeholder="Décrivez précisément l'utilisation prévue du financement" />
         </div>
         <div className="field" style={{ gridColumn: '1 / -1' }}>
           <label className="field-label">Calendrier de remboursement souhaité</label>
@@ -153,30 +253,49 @@ function StepDemande({ form, update }) {
 }
 
 function StepIdentite({ form, update }) {
+  function getGPS() {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          const lat = pos.coords.latitude.toFixed(4);
+          const lon = pos.coords.longitude.toFixed(4);
+          update('applicant_location', `${form.applicant_location ? form.applicant_location + ' ' : ''}(${lat}, ${lon})`);
+        },
+        () => {}
+      );
+    }
+  }
+
   return (
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Identité du demandeur</h2>
       <div className="grid-2">
         <div className="field">
           <label className="field-label">Nom complet *</label>
-          <input className="input" value={form.applicant_name} onChange={e => update('applicant_name', e.target.value)} />
+          <input className="input" value={form.applicant_name} onChange={e => update('applicant_name', e.target.value)} placeholder="Prénom et nom" />
         </div>
         <div className="field">
           <label className="field-label">Téléphone</label>
-          <input className="input" type="tel" value={form.applicant_phone} onChange={e => update('applicant_phone', e.target.value)} />
+          <input className="input" type="tel" value={form.applicant_phone} onChange={e => update('applicant_phone', e.target.value)} placeholder="77 xxx xx xx" />
         </div>
         <div className="field">
           <label className="field-label">N° pièce d'identité</label>
-          <input className="input" value={form.applicant_id_number} onChange={e => update('applicant_id_number', e.target.value)} />
+          <input className="input" value={form.applicant_id_number} onChange={e => update('applicant_id_number', e.target.value)} placeholder="CNI ou passeport" />
         </div>
         <div className="field">
           <label className="field-label">Localisation</label>
-          <input className="input" value={form.applicant_location} onChange={e => update('applicant_location', e.target.value)} />
-          <div className="field-hint">Village, commune, région</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <div style={{ flex: 1 }}>
+              <AutocompleteInput value={form.applicant_location} onChange={v => update('applicant_location', v)} suggestions={LOCATIONS} placeholder="Commencez à taper..." hint="Village, commune, région" />
+            </div>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={getGPS} title="Localisation GPS actuelle" style={{ height: 36, padding: '0 8px' }}>
+              <MapPin size={14} />
+            </button>
+          </div>
         </div>
         <div className="field" style={{ gridColumn: '1 / -1' }}>
           <label className="field-label">Activité principale déclarée</label>
-          <input className="input" value={form.applicant_activity} onChange={e => update('applicant_activity', e.target.value)} />
+          <input className="input" value={form.applicant_activity} onChange={e => update('applicant_activity', e.target.value)} placeholder="Agriculteur, éleveur, commerçant..." />
         </div>
       </div>
     </div>
@@ -200,21 +319,34 @@ function StepActivite({ form, update }) {
         </div>
         <div className="field">
           <label className="field-label">Type d'activité</label>
-          <input className="input" value={form.activity_type} onChange={e => update('activity_type', e.target.value)} />
-          <div className="field-hint">Maraîchage, Riziculture, Aviculture...</div>
+          <AutocompleteInput value={form.activity_type} onChange={v => update('activity_type', v)} suggestions={ACTIVITY_TYPES} placeholder="Commencez à taper..." hint="Ex: Maraîchage, Riziculture, Aviculture" />
         </div>
         <div className="field">
           <label className="field-label">Années d'expérience</label>
-          <input className="input" type="number" min="0" value={form.years_experience} onChange={e => update('years_experience', e.target.value)} />
+          <input className="input" type="number" min="0" value={form.years_experience} onChange={e => update('years_experience', e.target.value)} placeholder="Ex: 5" />
         </div>
         <div className="field">
           <label className="field-label">Superficie exploitée (ha)</label>
-          <input className="input" type="number" step="0.1" min="0" value={form.surface_ha} onChange={e => update('surface_ha', e.target.value)} />
+          <input className="input" type="number" step="0.1" min="0" value={form.surface_ha} onChange={e => update('surface_ha', e.target.value)} placeholder="Ex: 2.5" />
         </div>
         <div className="field" style={{ gridColumn: '1 / -1' }}>
           <label className="field-label">Cycle de production</label>
-          <input className="input" value={form.production_cycle} onChange={e => update('production_cycle', e.target.value)} />
-          <div className="field-hint">Oct-Mars (6 mois), Continu, Juil-Déc...</div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <select className="input" value={form.production_cycle_start} onChange={e => update('production_cycle_start', e.target.value)} style={{ flex: 1 }}>
+              <option value="">Mois de début</option>
+              {MONTHS.map((m, i) => <option key={i} value={i}>{m}</option>)}
+            </select>
+            <span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', fontWeight: 500 }}>à</span>
+            <select className="input" value={form.production_cycle_end} onChange={e => update('production_cycle_end', e.target.value)} style={{ flex: 1 }}>
+              <option value="">Mois de fin</option>
+              {MONTHS.map((m, i) => <option key={i} value={i}>{m}</option>)}
+            </select>
+          </div>
+          <div className="field-hint">
+            {form.production_cycle_start !== '' && form.production_cycle_end !== '' &&
+              `${MONTHS[form.production_cycle_start]} → ${MONTHS[form.production_cycle_end]} (${((Number(form.production_cycle_end) - Number(form.production_cycle_start) + 12) % 12) + 1} mois)`
+            }
+          </div>
         </div>
       </div>
     </div>
@@ -226,18 +358,9 @@ function StepRevenus({ form, update }) {
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Sources de revenus</h2>
       <div className="grid-2">
-        <div className="field">
-          <label className="field-label">Revenus agriculture (FCFA / période)</label>
-          <input className="input" type="number" min="0" value={form.revenue_agriculture} onChange={e => update('revenue_agriculture', e.target.value)} />
-        </div>
-        <div className="field">
-          <label className="field-label">Revenus commerce (FCFA / période)</label>
-          <input className="input" type="number" min="0" value={form.revenue_commerce} onChange={e => update('revenue_commerce', e.target.value)} />
-        </div>
-        <div className="field">
-          <label className="field-label">Autres revenus (FCFA / période)</label>
-          <input className="input" type="number" min="0" value={form.revenue_other} onChange={e => update('revenue_other', e.target.value)} />
-        </div>
+        <NeantField label="Revenus agriculture (FCFA / période)" value={form.revenue_agriculture} onChange={v => update('revenue_agriculture', v)} hint="Mettre Néant si pas de revenus agricoles" />
+        <NeantField label="Revenus commerce (FCFA / période)" value={form.revenue_commerce} onChange={v => update('revenue_commerce', v)} hint="Mettre Néant si pas de commerce" />
+        <NeantField label="Autres revenus (FCFA / période)" value={form.revenue_other} onChange={v => update('revenue_other', v)} hint="Transferts, pension, etc." />
         <div className="field">
           <label className="field-label">Fréquence des revenus</label>
           <select className="input" value={form.revenue_frequency} onChange={e => update('revenue_frequency', e.target.value)}>
@@ -249,8 +372,7 @@ function StepRevenus({ form, update }) {
         </div>
         <div className="field" style={{ gridColumn: '1 / -1' }}>
           <label className="field-label">Acheteur principal</label>
-          <input className="input" value={form.main_buyer} onChange={e => update('main_buyer', e.target.value)} />
-          <div className="field-hint">Coopérative, marché, acheteur B2B, consommateur direct...</div>
+          <input className="input" value={form.main_buyer} onChange={e => update('main_buyer', e.target.value)} placeholder="Coopérative, marché, acheteur B2B..." />
         </div>
       </div>
     </div>
@@ -262,20 +384,10 @@ function StepCharges({ form, update }) {
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Charges mensuelles</h2>
       <div className="grid-2">
-        <div className="field">
-          <label className="field-label">Charges agricoles (FCFA / mois)</label>
-          <input className="input" type="number" min="0" value={form.expenses_agriculture} onChange={e => update('expenses_agriculture', e.target.value)} />
-          <div className="field-hint">Intrants, semences, main-d'oeuvre, transport</div>
-        </div>
-        <div className="field">
-          <label className="field-label">Charges du ménage (FCFA / mois)</label>
-          <input className="input" type="number" min="0" value={form.expenses_household} onChange={e => update('expenses_household', e.target.value)} />
-          <div className="field-hint">Alimentation, santé, éducation, logement</div>
-        </div>
+        <NeantField label="Charges agricoles (FCFA / mois)" value={form.expenses_agriculture} onChange={v => update('expenses_agriculture', v)} hint="Intrants, semences, main-d'oeuvre, transport" />
+        <NeantField label="Charges du ménage (FCFA / mois)" value={form.expenses_household} onChange={v => update('expenses_household', v)} hint="Alimentation, santé, éducation, logement" />
         <div className="field" style={{ gridColumn: '1 / -1' }}>
-          <label className="field-label">Autres charges (FCFA / mois)</label>
-          <input className="input" type="number" min="0" value={form.expenses_other} onChange={e => update('expenses_other', e.target.value)} />
-          <div className="field-hint">Cotisations, loyers, obligations sociales...</div>
+          <NeantField label="Autres charges (FCFA / mois)" value={form.expenses_other} onChange={v => update('expenses_other', v)} hint="Cotisations, loyers, obligations sociales" />
         </div>
       </div>
     </div>
@@ -283,34 +395,41 @@ function StepCharges({ form, update }) {
 }
 
 function StepDettes({ form, update }) {
+  const hasDebt = form.existing_debt_status !== 'aucun';
   return (
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Dettes existantes</h2>
-      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Renseignez le crédit en cours le plus important. Les autres seront ajoutés après création du dossier.</p>
-      <div className="grid-2">
-        <div className="field">
-          <label className="field-label">Institution créancière</label>
-          <input className="input" value={form.existing_debt_institution} onChange={e => update('existing_debt_institution', e.target.value)} />
-          <div className="field-hint">IMF, banque, tontine, particulier...</div>
-        </div>
-        <div className="field">
-          <label className="field-label">Montant restant dû (FCFA)</label>
-          <input className="input" type="number" min="0" value={form.existing_debt_amount} onChange={e => update('existing_debt_amount', e.target.value)} />
-        </div>
-        <div className="field">
-          <label className="field-label">Échéance mensuelle (FCFA)</label>
-          <input className="input" type="number" min="0" value={form.existing_debt_monthly} onChange={e => update('existing_debt_monthly', e.target.value)} />
-        </div>
-        <div className="field">
-          <label className="field-label">Statut du crédit</label>
-          <select className="input" value={form.existing_debt_status} onChange={e => update('existing_debt_status', e.target.value)}>
-            <option value="en_cours">En cours (à jour)</option>
-            <option value="retard">En retard</option>
-            <option value="termine">Terminé</option>
-            <option value="aucun">Aucune dette</option>
-          </select>
+      <div className="field" style={{ marginBottom: 16 }}>
+        <label className="field-label">Avez-vous des crédits en cours ?</label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" className={`btn btn-sm ${hasDebt ? 'btn-primary' : 'btn-ghost'}`} onClick={() => update('existing_debt_status', 'en_cours')}>Oui</button>
+          <button type="button" className={`btn btn-sm ${!hasDebt ? 'btn-primary' : 'btn-ghost'}`} onClick={() => { update('existing_debt_status', 'aucun'); update('existing_debt_amount', ''); update('existing_debt_monthly', ''); update('existing_debt_institution', ''); }}>Non, aucune dette</button>
         </div>
       </div>
+      {hasDebt && (
+        <div className="grid-2">
+          <div className="field">
+            <label className="field-label">Institution créancière</label>
+            <input className="input" value={form.existing_debt_institution} onChange={e => update('existing_debt_institution', e.target.value)} placeholder="IMF, banque, tontine, particulier" />
+          </div>
+          <div className="field">
+            <label className="field-label">Montant restant dû (FCFA)</label>
+            <input className="input" type="number" min="0" value={form.existing_debt_amount} onChange={e => update('existing_debt_amount', e.target.value)} />
+          </div>
+          <div className="field">
+            <label className="field-label">Échéance mensuelle (FCFA)</label>
+            <input className="input" type="number" min="0" value={form.existing_debt_monthly} onChange={e => update('existing_debt_monthly', e.target.value)} />
+          </div>
+          <div className="field">
+            <label className="field-label">Statut du crédit</label>
+            <select className="input" value={form.existing_debt_status} onChange={e => update('existing_debt_status', e.target.value)}>
+              <option value="en_cours">En cours (à jour)</option>
+              <option value="retard">En retard</option>
+              <option value="termine">Terminé</option>
+            </select>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -320,29 +439,28 @@ function StepGaranties({ form, update }) {
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Épargne et garanties</h2>
       <div className="grid-2">
+        <NeantField label="Épargne disponible (FCFA)" value={form.savings_amount} onChange={v => update('savings_amount', v)} hint="Compte épargne, tontine, etc." />
         <div className="field">
-          <label className="field-label">Épargne disponible (FCFA)</label>
-          <input className="input" type="number" min="0" value={form.savings_amount} onChange={e => update('savings_amount', e.target.value)} />
-        </div>
-        <div className="field">
-          <label className="field-label">Type de garantie</label>
+          <label className="field-label">Type de garantie principale</label>
           <select className="input" value={form.guarantee_type} onChange={e => update('guarantee_type', e.target.value)}>
-            <option value="">Sélectionner</option>
-            <option value="Caution solidaire">Caution solidaire groupe</option>
-            <option value="Nantissement">Nantissement (récolte, équipement)</option>
-            <option value="Épargne bloquée">Épargne bloquée</option>
-            <option value="Mixte">Mixte</option>
+            <option value="">Sélectionner une garantie</option>
+            {GUARANTEE_TYPES.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
           </select>
         </div>
+        {form.guarantee_type === 'Caution solidaire' && (
+          <div className="field" style={{ gridColumn: '1 / -1' }}>
+            <label className="field-label">Groupe de caution solidaire</label>
+            <input className="input" value={form.group_guarantee} onChange={e => update('group_guarantee', e.target.value)} placeholder="Nom du groupe et nombre de membres" />
+          </div>
+        )}
         <div className="field" style={{ gridColumn: '1 / -1' }}>
-          <label className="field-label">Groupe de caution solidaire</label>
-          <input className="input" value={form.group_guarantee} onChange={e => update('group_guarantee', e.target.value)} />
-          <div className="field-hint">Nom du groupe et nombre de membres</div>
+          <label className="field-label">Garanties complémentaires</label>
+          <textarea className="input" rows={2} value={form.other_guarantees} onChange={e => update('other_guarantees', e.target.value)} placeholder="Autres biens, sûretés ou engagements de tiers" />
         </div>
-        <div className="field" style={{ gridColumn: '1 / -1' }}>
-          <label className="field-label">Autres garanties</label>
-          <textarea className="input" rows={2} value={form.other_guarantees} onChange={e => update('other_guarantees', e.target.value)} />
-        </div>
+      </div>
+
+      <div style={{ marginTop: 16, padding: 12, background: '#f0fdf4', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-11)', color: '#166534', border: '1px solid #bbf7d0' }}>
+        <strong>Conseil :</strong> La caution solidaire et le nantissement de récolte sont les garanties les plus courantes en crédit agricole. Une combinaison de garanties renforce le dossier.
       </div>
     </div>
   );
@@ -353,8 +471,7 @@ function StepPreuves() {
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Preuves à collecter</h2>
       <p className="text-sm text-muted" style={{ marginBottom: 16 }}>
-        Après création du dossier, vous pourrez associer des preuves à chaque fait déclaré.
-        Voici les pièces recommandées pour renforcer le dossier :
+        Après création du dossier, vous pourrez associer des preuves à chaque fait déclaré via l'onglet Preuves et la visite terrain.
       </p>
       <div style={{ display: 'grid', gap: 8 }}>
         <EvidenceGuidance level="A" label="Historique IMF" desc="Crédits précédents, remboursements, épargne — vérifiable dans le système" />
@@ -364,7 +481,7 @@ function StepPreuves() {
         <EvidenceGuidance level="D" label="Déclarations" desc="Revenus, charges, activité déclarés par le demandeur" />
       </div>
       <div style={{ marginTop: 16, padding: 12, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)', color: 'var(--c-text-secondary)' }}>
-        Une visite terrain est recommandée pour confirmer l'activité déclarée et observer le contexte de production.
+        <strong>Documents recommandés lors de la visite terrain :</strong> Photo du terrain, CNI du demandeur, carte de membre coopérative, fiche RIT, reçus de vente.
       </div>
     </div>
   );
@@ -385,17 +502,17 @@ function EvidenceGuidance({ level, label, desc }) {
 }
 
 function StepAnalyse({ form }) {
-  const revAgri = Number(form.revenue_agriculture) || 0;
-  const revCommerce = Number(form.revenue_commerce) || 0;
-  const revOther = Number(form.revenue_other) || 0;
+  const revAgri = form.revenue_agriculture === 'neant' ? 0 : Number(form.revenue_agriculture) || 0;
+  const revCommerce = form.revenue_commerce === 'neant' ? 0 : Number(form.revenue_commerce) || 0;
+  const revOther = form.revenue_other === 'neant' ? 0 : Number(form.revenue_other) || 0;
   const totalRevPeriod = revAgri + revCommerce + revOther;
 
   const multiplier = form.revenue_frequency === 'mensuel' ? 12 : form.revenue_frequency === 'trimestriel' ? 4 : form.revenue_frequency === 'hebdomadaire' ? 52 : 1;
   const totalRevAnnuel = totalRevPeriod * multiplier;
 
-  const expAgri = Number(form.expenses_agriculture) || 0;
-  const expHousehold = Number(form.expenses_household) || 0;
-  const expOther = Number(form.expenses_other) || 0;
+  const expAgri = form.expenses_agriculture === 'neant' ? 0 : Number(form.expenses_agriculture) || 0;
+  const expHousehold = form.expenses_household === 'neant' ? 0 : Number(form.expenses_household) || 0;
+  const expOther = form.expenses_other === 'neant' ? 0 : Number(form.expenses_other) || 0;
   const totalExpMensuel = expAgri + expHousehold + expOther;
   const totalExpAnnuel = totalExpMensuel * 12;
 
@@ -409,9 +526,9 @@ function StepAnalyse({ form }) {
 
   return (
     <div>
-      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Analyse préliminaire</h2>
+      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 8 }}>Analyse préliminaire</h2>
       <p className="text-sm text-muted" style={{ marginBottom: 16 }}>
-        Résumé calculé à partir des informations saisies. L'analyse complète sera effectuée après soumission du dossier.
+        Résumé calculé automatiquement à partir des informations que vous avez saisies dans les étapes précédentes.
       </p>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
@@ -456,7 +573,7 @@ function SummaryLine({ label, value, color }) {
   );
 }
 
-function StepSoumission({ form, update, saving, onSave }) {
+function StepSoumission({ form, update, saving, onSave, setStep }) {
   const canSubmit = form.applicant_name && form.amount_requested && form.credit_purpose;
 
   return (
@@ -476,12 +593,11 @@ function StepSoumission({ form, update, saving, onSave }) {
 
       <div className="field">
         <label className="field-label">Note de l'agent</label>
-        <textarea className="input" rows={4} value={form.agent_note} onChange={e => update('agent_note', e.target.value)} />
-        <div className="field-hint">Observations terrain, contexte, points d'attention pour le superviseur</div>
+        <textarea className="input" rows={4} value={form.agent_note} onChange={e => update('agent_note', e.target.value)} placeholder="Observations terrain, contexte, points d'attention pour le superviseur..." />
       </div>
 
       <div className="flex justify-between items-center" style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--c-border)' }}>
-        <button className="btn btn-secondary" onClick={() => {}}>
+        <button className="btn btn-secondary" onClick={() => setStep(8)}>
           <ArrowLeft size={14} /> Revenir en arrière
         </button>
         <button className="btn btn-primary btn-lg" onClick={onSave} disabled={saving || !canSubmit}>

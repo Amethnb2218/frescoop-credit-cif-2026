@@ -7,9 +7,11 @@ import { isOnline, addToSyncQueue, saveEvidenceOffline } from '../lib/offline';
 import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff, Shield, MapPin, FileCheck } from 'lucide-react';
 
 function getTabsForRole(role) {
-  if (role === 'COMITE') return ['Résumé', 'Préqualification', 'Décision', 'Audit'];
+  if (role === 'COMITE') return ['Mémo décision', 'Décision'];
   if (role === 'AUDITEUR') return ['Résumé', 'Preuves', 'Cash-flow', 'Préqualification', 'Audit'];
   if (role === 'RISK_MANAGER') return ['Résumé', 'Preuves', 'Cash-flow', 'Stress test', 'Préqualification', 'Contrôles', 'Audit'];
+  if (role === 'SUPERVISEUR') return ['Résumé', 'Preuves', 'Cash-flow', 'Stress test', 'Préqualification', 'Contrôles', 'Audit'];
+  if (role === 'AGENT') return ['Résumé', 'Preuves', 'Cash-flow', 'Contrôles'];
   return ['Résumé', 'Preuves', 'Cash-flow', 'Stress test', 'Préqualification', 'Contrôles', 'Décision', 'Audit'];
 }
 
@@ -24,11 +26,18 @@ export default function DossierDetail() {
   const [ruleEvals, setRuleEvals] = useState([]);
   const [riskFlags, setRiskFlags] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
-  const [tab, setTab] = useState('Résumé');
+  const [tab, setTab] = useState(null);
   const [loading, setLoading] = useState(true);
   const [bicData, setBicData] = useState(null);
 
   useEffect(() => { loadDossier(); }, [id]);
+
+  useEffect(() => {
+    if (!tab && user?.role) {
+      const tabs = getTabsForRole(user.role);
+      setTab(tabs[0]);
+    }
+  }, [user?.role]);
 
   async function loadDossier() {
     try {
@@ -39,7 +48,7 @@ export default function DossierDetail() {
       setStressTests(res.stress_tests || []);
       setRuleEvals(res.rule_evaluations || []);
       setRiskFlags(res.risk_flags || []);
-    } catch (err) { alert(err.message); }
+    } catch (err) {}
     finally { setLoading(false); }
   }
 
@@ -48,20 +57,20 @@ export default function DossierDetail() {
   }
 
   async function checkBic() {
-    if (!dossier?.applicant_id_number) return alert('N° d\'identité requis');
-    try { const res = await api.checkBic(dossier.applicant_id_number); setBicData(res); } catch (err) { alert(err.message); }
+    if (!dossier?.applicant_id_number) return;
+    try { const res = await api.checkBic(dossier.applicant_id_number); setBicData(res); } catch {}
   }
 
   async function runStressTest() {
-    try { const res = await api.runStressTest(id); setStressTests(res.stress_tests || []); } catch (err) { alert(err.message); }
+    try { const res = await api.runStressTest(id); setStressTests(res.stress_tests || []); } catch {}
   }
 
   async function evaluateRules() {
-    try { await api.evaluateRules(id); await loadDossier(); } catch (err) { alert(err.message); }
+    try { await api.evaluateRules(id); await loadDossier(); } catch {}
   }
 
   async function advanceStatus(newStatus) {
-    try { await api.updateStatus(id, newStatus); await loadDossier(); } catch (err) { alert(err.message); }
+    try { await api.updateStatus(id, newStatus); await loadDossier(); } catch {}
   }
 
   useEffect(() => { if (tab === 'Audit') loadAudit(); }, [tab]);
@@ -71,6 +80,22 @@ export default function DossierDetail() {
 
   const workflowSteps = ['draft', 'submitted', 'verification', 'review', 'committee', 'decided'];
   const currentIdx = workflowSteps.indexOf(dossier.status);
+  const role = user?.role;
+
+  const canAdvance = (targetStatus) => {
+    if (targetStatus === 'submitted' && dossier.status === 'draft') return ['AGENT', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(role);
+    if (['verification', 'review', 'committee'].includes(targetStatus)) return ['SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(role);
+    return false;
+  };
+
+  const nextStatus = () => {
+    const next = workflowSteps[currentIdx + 1];
+    if (!next || next === 'decided') return null;
+    return canAdvance(next) ? next : null;
+  };
+
+  const ns = nextStatus();
+  const nextLabel = { submitted: 'Soumettre', verification: 'Lancer vérification', review: 'Passer en revue', committee: 'Transmettre au comité' };
 
   return (
     <div>
@@ -84,11 +109,8 @@ export default function DossierDetail() {
           <p className="page-subtitle">{dossier.applicant_location} · {dossier.activity_type || dossier.sector} · {formatCFA(dossier.amount_requested)}</p>
         </div>
         <div className="flex gap-2">
-          {dossier.status === 'draft' && ['AGENT','SUPERVISEUR','ADMIN','SUPERADMIN'].includes(user?.role) && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('submitted')}>Soumettre</button>}
-          {dossier.status === 'submitted' && ['SUPERVISEUR','ADMIN','SUPERADMIN'].includes(user?.role) && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('verification')}>Vérifier</button>}
-          {dossier.status === 'verification' && ['SUPERVISEUR','ADMIN','SUPERADMIN'].includes(user?.role) && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('review')}>Passer en revue</button>}
-          {dossier.status === 'review' && ['SUPERVISEUR','ADMIN','SUPERADMIN'].includes(user?.role) && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('committee')}>Transmettre au comité</button>}
-          {dossier.status === 'committee' && ['COMITE','ADMIN','SUPERADMIN'].includes(user?.role) && !dossier.decision && <button className="btn btn-primary btn-sm" onClick={() => setTab('Décision')}>Prendre une décision</button>}
+          {ns && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus(ns)}>{nextLabel[ns]}</button>}
+          {dossier.status === 'committee' && ['COMITE', 'ADMIN', 'SUPERADMIN'].includes(role) && !dossier.decision && <button className="btn btn-primary btn-sm" onClick={() => setTab('Décision')}>Prendre une décision</button>}
         </div>
       </div>
 
@@ -99,10 +121,11 @@ export default function DossierDetail() {
       </div>
 
       <div className="tab-list">
-        {getTabsForRole(user?.role).map(t => <button key={t} className={`tab-item ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>{t}</button>)}
+        {getTabsForRole(role).map(t => <button key={t} className={`tab-item ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>{t}</button>)}
       </div>
 
       {tab === 'Résumé' && <SummaryTab dossier={dossier} evidence={evidence} cashflow={cashflow} bicData={bicData} onCheckBic={checkBic} />}
+      {tab === 'Mémo décision' && <MemoTab dossier={dossier} evidence={evidence} cashflow={cashflow} ruleEvals={ruleEvals} />}
       {tab === 'Preuves' && <EvidenceTab dossierId={id} evidence={evidence} onReload={loadDossier} />}
       {tab === 'Cash-flow' && <CashflowTab dossierId={id} cashflow={cashflow} dossier={dossier} onReload={loadDossier} />}
       {tab === 'Stress test' && <StressTab stressTests={stressTests} onRun={runStressTest} />}
@@ -110,6 +133,110 @@ export default function DossierDetail() {
       {tab === 'Contrôles' && <ControlsTab dossierId={id} dossier={dossier} />}
       {tab === 'Décision' && <DecisionTab dossier={dossier} onReload={loadDossier} />}
       {tab === 'Audit' && <AuditTab logs={auditLogs} />}
+    </div>
+  );
+}
+
+function MemoTab({ dossier, evidence, cashflow, ruleEvals }) {
+  const totalRevenue = cashflow.reduce((s, e) => s + (e.revenue || 0), 0);
+  const totalExpenses = cashflow.reduce((s, e) => s + (e.expenses || 0), 0);
+  const totalDebt = cashflow.reduce((s, e) => s + (e.debt_payments || 0), 0);
+  const fluxNet = totalRevenue - totalExpenses - totalDebt;
+  const highEvidence = evidence.filter(e => ['A', 'B'].includes(e.verification_level));
+
+  return (
+    <div>
+      <div style={{ background: '#fff', border: '1px solid var(--c-border)', borderRadius: 'var(--radius-md)', padding: 24 }}>
+        <div style={{ textAlign: 'center', marginBottom: 24, paddingBottom: 16, borderBottom: '2px solid var(--c-primary)' }}>
+          <h2 style={{ fontSize: 'var(--fs-xl)', fontWeight: 700, color: 'var(--c-primary)' }}>Mémo de crédit</h2>
+          <p style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', marginTop: 4 }}>{dossier.applicant_name} — {formatCFA(dossier.amount_requested)}</p>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+          <div>
+            <MemoSection title="Demandeur">
+              <p><strong>{dossier.applicant_name}</strong></p>
+              <p>{dossier.applicant_location} · {dossier.applicant_phone}</p>
+              <p>{dossier.sector} · {dossier.activity_type} · {dossier.years_experience} ans</p>
+            </MemoSection>
+          </div>
+          <div>
+            <MemoSection title="Demande">
+              <p>Montant : <strong>{formatCFA(dossier.amount_requested)}</strong></p>
+              <p>Durée : {dossier.duration_months} mois · {dossier.desired_schedule}</p>
+              <p>Objet : {dossier.credit_purpose}</p>
+            </MemoSection>
+          </div>
+        </div>
+
+        <MemoSection title="Capacité financière">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginTop: 8 }}>
+            <div style={{ textAlign: 'center', padding: 10, background: '#ecfdf5', borderRadius: 'var(--radius)' }}>
+              <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, color: '#059669' }}>{formatCFA(totalRevenue)}</div>
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Revenus annuels</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: 10, background: '#fef2f2', borderRadius: 'var(--radius)' }}>
+              <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, color: '#dc2626' }}>{formatCFA(totalExpenses + totalDebt)}</div>
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Charges + dettes</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: 10, background: fluxNet >= 0 ? '#ecfdf5' : '#fef2f2', borderRadius: 'var(--radius)' }}>
+              <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, color: fluxNet >= 0 ? '#059669' : '#dc2626' }}>{formatCFA(fluxNet)}</div>
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Flux net annuel</div>
+            </div>
+            <div style={{ textAlign: 'center', padding: 10, background: '#f3f4f6', borderRadius: 'var(--radius)' }}>
+              <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700 }}>{formatCFA(dossier.savings_amount || 0)}</div>
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Épargne</div>
+            </div>
+          </div>
+        </MemoSection>
+
+        <MemoSection title="Garanties">
+          <p>{dossier.guarantee_type || 'Non renseigné'} {dossier.group_guarantee && `· ${dossier.group_guarantee}`}</p>
+          {dossier.other_guarantees && <p style={{ marginTop: 4 }}>{dossier.other_guarantees}</p>}
+        </MemoSection>
+
+        <MemoSection title={`Preuves (${evidence.length} pièces dont ${highEvidence.length} vérifiées A/B)`}>
+          {evidence.length > 0 ? (
+            <div style={{ display: 'grid', gap: 4, marginTop: 4 }}>
+              {evidence.slice(0, 6).map(e => (
+                <div key={e.id} style={{ fontSize: 'var(--fs-12)', display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span style={{ width: 20, height: 20, borderRadius: 3, background: e.verification_level === 'A' ? '#d1fae5' : e.verification_level === 'B' ? '#dbeafe' : '#f3f4f6', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700 }}>{e.verification_level}</span>
+                  <span>{e.label}</span>
+                  {e.amount && <span style={{ color: 'var(--c-500)' }}>{formatCFA(e.amount)}</span>}
+                </div>
+              ))}
+            </div>
+          ) : <p className="text-muted">Aucune preuve au dossier</p>}
+        </MemoSection>
+
+        {dossier.prequalification && (
+          <MemoSection title="Préqualification">
+            <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+              <span style={{ padding: '4px 10px', borderRadius: 'var(--radius)', fontWeight: 600, fontSize: 'var(--fs-12)', background: prequalColor(dossier.prequalification) === 'green' ? '#d1fae5' : prequalColor(dossier.prequalification) === 'amber' ? '#fef3c7' : '#fee2e2', color: prequalColor(dossier.prequalification) === 'green' ? '#065f46' : prequalColor(dossier.prequalification) === 'amber' ? '#92400e' : '#991b1b' }}>
+                {prequalLabel(dossier.prequalification)}
+              </span>
+              <span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)' }}>
+                Confiance: {dossier.evidence_confidence || '—'} · Capacité: {dossier.repayment_capacity || '—'}
+              </span>
+            </div>
+          </MemoSection>
+        )}
+
+        {dossier.agent_note && (
+          <MemoSection title="Note de l'agent">
+            <p style={{ fontStyle: 'italic' }}>{dossier.agent_note}</p>
+          </MemoSection>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MemoSection({ title, children }) {
+  return (
+    <div style={{ marginBottom: 20, paddingBottom: 16, borderBottom: '1px solid #e5e7eb' }}>
+      <div style={{ fontSize: 'var(--fs-xs)', fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>{title}</div>
+      <div style={{ fontSize: 'var(--fs-12)', lineHeight: 1.6 }}>{children}</div>
     </div>
   );
 }
@@ -169,6 +296,19 @@ function SummaryTab({ dossier, evidence, cashflow, bicData, onCheckBic }) {
           </Section>
         </div>
 
+        {dossier.decision && (
+          <div className="surface mb-4" style={{ borderLeft: `4px solid ${dossier.decision === 'approved' || dossier.decision === 'modified' ? '#059669' : dossier.decision === 'refused' ? '#dc2626' : '#d97706'}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              {dossier.decision === 'approved' || dossier.decision === 'modified' ? <CheckCircle size={18} color="#059669" /> : dossier.decision === 'refused' ? <XCircle size={18} color="#dc2626" /> : <AlertTriangle size={18} color="#d97706" />}
+              <strong style={{ fontSize: 'var(--fs-md)' }}>
+                {dossier.decision === 'approved' ? 'Approuvé' : dossier.decision === 'refused' ? 'Refusé' : dossier.decision === 'complement' ? 'Complément requis' : 'Approuvé avec modification'}
+              </strong>
+            </div>
+            {dossier.decision_amount && <p style={{ fontSize: 'var(--fs-12)' }}>Montant accordé : <strong>{formatCFA(dossier.decision_amount)}</strong></p>}
+            {dossier.decision_motif && <p style={{ fontSize: 'var(--fs-12)', marginTop: 4, color: 'var(--c-600)' }}>{dossier.decision_motif}</p>}
+          </div>
+        )}
+
         <div className="surface mb-4">
           <div className="flex justify-between items-center">
             <div className="text-xs font-semibold text-muted" style={{ textTransform: 'uppercase', letterSpacing: '.4px' }}>BIC — Données simulées</div>
@@ -204,8 +344,10 @@ function Section({ title, children }) {
 function EvidenceTab({ dossierId, evidence, onReload }) {
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ category: 'VENTE', label: '', amount: '', source: '', source_detail: '', verification_level: 'D', evidence_date: '' });
+  const [error, setError] = useState('');
 
   async function handleAdd() {
+    setError('');
     try {
       const data = { dossier_id: dossierId, ...form, amount: form.amount ? Number(form.amount) : null };
       if (isOnline()) { await api.addEvidence(data); }
@@ -213,7 +355,7 @@ function EvidenceTab({ dossierId, evidence, onReload }) {
       setAdding(false);
       setForm({ category: 'VENTE', label: '', amount: '', source: '', source_detail: '', verification_level: 'D', evidence_date: '' });
       onReload();
-    } catch (err) { alert(err.message); }
+    } catch (err) { setError(err.message); }
   }
 
   const levelColors = { A: { bg: '#d1fae5', text: '#065f46' }, B: { bg: '#dbeafe', text: '#1e40af' }, C: { bg: '#fef3c7', text: '#92400e' }, D: { bg: '#f3f4f6', text: '#374151' } };
@@ -224,6 +366,8 @@ function EvidenceTab({ dossierId, evidence, onReload }) {
         <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600 }}>Preuves au dossier ({evidence.length})</h2>
         <button className="btn btn-primary btn-sm" onClick={() => setAdding(!adding)}><Plus size={14} /> Ajouter une preuve</button>
       </div>
+
+      {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '8px 12px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
 
       {adding && (
         <div className="surface mb-4">
@@ -236,7 +380,8 @@ function EvidenceTab({ dossierId, evidence, onReload }) {
                 <option value="HISTORIQUE_IMF">Historique IMF</option>
                 <option value="EPARGNE">Épargne</option>
                 <option value="VISITE_TERRAIN">Visite terrain</option>
-                <option value="DOCUMENT">Document</option>
+                <option value="DOCUMENT">Document (CNI, carte membre, etc.)</option>
+                <option value="PHOTO">Photo terrain / activité</option>
               </select>
             </div>
             <div className="field">
@@ -247,7 +392,7 @@ function EvidenceTab({ dossierId, evidence, onReload }) {
             </div>
             <div className="field" style={{ gridColumn: '1 / -1' }}>
               <label className="field-label">Libellé *</label>
-              <input className="input" value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} />
+              <input className="input" value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} placeholder="Ex: Photo CNI recto, Attestation coopérative Kaffrine..." />
             </div>
             <div className="field">
               <label className="field-label">Montant (FCFA)</label>
@@ -259,14 +404,17 @@ function EvidenceTab({ dossierId, evidence, onReload }) {
             </div>
             <div className="field">
               <label className="field-label">Source *</label>
-              <input className="input" value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} />
+              <input className="input" value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} placeholder="Agent, coopérative, système..." />
             </div>
             <div className="field">
               <label className="field-label">Détail source</label>
-              <input className="input" value={form.source_detail} onChange={e => setForm(f => ({ ...f, source_detail: e.target.value }))} />
+              <input className="input" value={form.source_detail} onChange={e => setForm(f => ({ ...f, source_detail: e.target.value }))} placeholder="Référence, n° de document..." />
             </div>
           </div>
-          <div className="flex gap-2" style={{ marginTop: 12 }}>
+          <div style={{ padding: 10, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius)', marginTop: 12, marginBottom: 12, fontSize: 'var(--fs-11)', color: '#92400e' }}>
+            <strong>Fichiers :</strong> Les pièces jointes (photos, PDF) sont enregistrées comme référence textuelle. Dans un déploiement réel, un module d'upload sera connecté.
+          </div>
+          <div className="flex gap-2">
             <button className="btn btn-primary btn-sm" onClick={handleAdd} disabled={!form.label || !form.source}>Enregistrer</button>
             <button className="btn btn-secondary btn-sm" onClick={() => setAdding(false)}>Annuler</button>
           </div>
@@ -298,12 +446,14 @@ function EvidenceTab({ dossierId, evidence, onReload }) {
 
 function CashflowTab({ dossierId, cashflow, dossier, onReload }) {
   const [editing, setEditing] = useState(false);
+  const [error, setError] = useState('');
   const [entries, setEntries] = useState(
     cashflow.length > 0 ? cashflow : Array.from({ length: 12 }, (_, i) => ({ month: i + 1, year: 2026, revenue: 0, expenses: 0, debt_payments: 0 }))
   );
 
   async function handleSave() {
-    try { await api.saveCashflow(dossierId, entries); setEditing(false); onReload(); } catch (err) { alert(err.message); }
+    setError('');
+    try { await api.saveCashflow(dossierId, entries); setEditing(false); onReload(); } catch (err) { setError(err.message); }
   }
 
   const totalRevenue = entries.reduce((s, e) => s + (e.revenue || 0), 0);
@@ -317,6 +467,8 @@ function CashflowTab({ dossierId, cashflow, dossier, onReload }) {
         <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600 }}>Cash-flow saisonnier</h2>
         <button className="btn btn-secondary btn-sm" onClick={() => setEditing(!editing)}>{editing ? 'Annuler' : 'Modifier'}</button>
       </div>
+
+      {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '8px 12px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
 
       <div className="metrics-row">
         <div className="metric-card"><div className="metric-value" style={{ fontSize: 'var(--fs-xl)', color: 'var(--c-success)' }}>{formatCFA(totalRevenue)}</div><div className="metric-label">Revenus annuels</div></div>
@@ -444,7 +596,7 @@ function ControlsTab({ dossierId, dossier }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [addingVisit, setAddingVisit] = useState(false);
-  const [visitForm, setVisitForm] = useState({ observations: '', activity_confirmed: true, surface_observed: '', gps_lat: '', gps_lon: '' });
+  const [visitForm, setVisitForm] = useState({ observations: '', activity_confirmed: true, surface_observed: '', gps_lat: '', gps_lon: '', documents_collected: [] });
   const [addingConsent, setAddingConsent] = useState(false);
   const [consentForm, setConsentForm] = useState({ consent_type: 'data_collection', consent_given: true, consent_method: 'verbal' });
 
@@ -475,9 +627,20 @@ function ControlsTab({ dossierId, dossier }) {
   async function saveVisit() {
     setError('');
     try {
-      await api.createVisit({ dossier_id: dossierId, ...visitForm });
+      const payload = {
+        dossier_id: dossierId,
+        observations: visitForm.observations,
+        activity_confirmed: visitForm.activity_confirmed,
+        surface_observed: visitForm.surface_observed ? Number(visitForm.surface_observed) : null,
+        gps_lat: visitForm.gps_lat ? Number(visitForm.gps_lat) : null,
+        gps_lon: visitForm.gps_lon ? Number(visitForm.gps_lon) : null,
+      };
+      if (visitForm.documents_collected.length > 0) {
+        payload.observations = `${payload.observations}\n\nDocuments collectés : ${visitForm.documents_collected.join(', ')}`;
+      }
+      await api.createVisit(payload);
       setAddingVisit(false);
-      setVisitForm({ observations: '', activity_confirmed: true, surface_observed: '', gps_lat: '', gps_lon: '' });
+      setVisitForm({ observations: '', activity_confirmed: true, surface_observed: '', gps_lat: '', gps_lon: '', documents_collected: [] });
       loadControls();
     } catch (err) { setError(err.message); }
   }
@@ -491,6 +654,15 @@ function ControlsTab({ dossierId, dossier }) {
     }
   }
 
+  function toggleDoc(doc) {
+    setVisitForm(f => ({
+      ...f,
+      documents_collected: f.documents_collected.includes(doc)
+        ? f.documents_collected.filter(d => d !== doc)
+        : [...f.documents_collected, doc]
+    }));
+  }
+
   async function saveConsent() {
     setError('');
     try {
@@ -501,12 +673,12 @@ function ControlsTab({ dossierId, dossier }) {
   }
 
   const severityLabel = { clean: 'badge-success', warning: 'badge-warning', critical: 'badge-error' };
+  const DOCS_CHECKLIST = ['Photo terrain', 'Photo CNI', 'Carte membre coopérative', 'Fiche RIT', 'Reçus de vente', 'Attestation coopérative', 'Relevé mobile money'];
 
   return (
     <div>
-      {error && <div style={{ background: 'var(--c-danger-bg)', color: 'var(--c-danger)', padding: '8px 12px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #e0a0a0' }}>{error}</div>}
+      {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '8px 12px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
 
-      {/* Fraud checks */}
       <div className="surface mb-4">
         <div className="surface-header">
           <div className="surface-title" style={{ margin: 0 }}>Contrôles de cohérence</div>
@@ -531,40 +703,52 @@ function ControlsTab({ dossierId, dossier }) {
         )}
       </div>
 
-      {/* Field visits */}
       <div className="surface mb-4">
         <div className="surface-header">
           <div className="surface-title" style={{ margin: 0 }}>Visites terrain ({visits.length})</div>
-          <button className="btn btn-secondary btn-sm" onClick={() => setAddingVisit(!addingVisit)}><MapPin size={13} /> Ajouter</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => setAddingVisit(!addingVisit)}><MapPin size={13} /> Ajouter visite</button>
         </div>
         {addingVisit && (
           <div style={{ marginBottom: 12, padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', border: '1px solid var(--c-border)' }}>
             <div className="grid-2">
               <div className="field">
                 <label className="field-label">Surface observée (ha)</label>
-                <input className="input" type="number" step="0.1" value={visitForm.surface_observed} onChange={e => setVisitForm(f => ({ ...f, surface_observed: e.target.value }))} />
+                <input className="input" type="number" step="0.1" value={visitForm.surface_observed} onChange={e => setVisitForm(f => ({ ...f, surface_observed: e.target.value }))} placeholder="Ex: 7" />
               </div>
               <div className="field">
                 <label className="field-label">Coordonnées GPS</label>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <input className="input" placeholder="Latitude" value={visitForm.gps_lat} onChange={e => setVisitForm(f => ({ ...f, gps_lat: e.target.value }))} style={{ flex: 1 }} />
                   <input className="input" placeholder="Longitude" value={visitForm.gps_lon} onChange={e => setVisitForm(f => ({ ...f, gps_lon: e.target.value }))} style={{ flex: 1 }} />
-                  <button className="btn btn-secondary btn-sm" onClick={getGPS} type="button" title="Localisation actuelle">GPS</button>
+                  <button className="btn btn-primary btn-sm" onClick={getGPS} type="button" title="Obtenir position actuelle"><MapPin size={13} /></button>
                 </div>
               </div>
             </div>
             <div className="field">
               <label className="field-label">Observations terrain</label>
-              <textarea className="input" rows={3} value={visitForm.observations} onChange={e => setVisitForm(f => ({ ...f, observations: e.target.value }))} placeholder="État de la parcelle, cultures observées, équipements, bâtiments..." />
+              <textarea className="input" rows={3} value={visitForm.observations} onChange={e => setVisitForm(f => ({ ...f, observations: e.target.value }))} placeholder="État de la parcelle, cultures observées, équipements, bâtiments, voisinage..." />
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)', cursor: 'pointer' }}>
-                <input type="checkbox" checked={visitForm.activity_confirmed} onChange={e => setVisitForm(f => ({ ...f, activity_confirmed: e.target.checked }))} />
-                Activité agricole confirmée sur le terrain
-              </label>
+            <div style={{ marginBottom: 12 }}>
+              <label className="field-label">Activité confirmée ?</label>
+              <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                <button type="button" className={`btn btn-sm ${visitForm.activity_confirmed ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setVisitForm(f => ({ ...f, activity_confirmed: true }))}>
+                  <CheckCircle size={13} /> Oui, confirmée
+                </button>
+                <button type="button" className={`btn btn-sm ${!visitForm.activity_confirmed ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setVisitForm(f => ({ ...f, activity_confirmed: false }))}>
+                  <XCircle size={13} /> Non confirmée
+                </button>
+              </div>
             </div>
-            <div style={{ background: '#fff', border: '1px solid var(--c-border)', borderRadius: 'var(--radius)', padding: 10, marginBottom: 12, fontSize: 'var(--fs-11)', color: 'var(--c-text-secondary)' }}>
-              <strong>Documents à joindre après création :</strong> Photo terrain, CNI demandeur, carte membre coopérative, fiche RIT. Ces pièces seront ajoutées via l'onglet Preuves.
+            <div style={{ marginBottom: 12 }}>
+              <label className="field-label">Documents collectés sur le terrain</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                {DOCS_CHECKLIST.map(doc => (
+                  <button key={doc} type="button" onClick={() => toggleDoc(doc)} style={{ padding: '5px 10px', fontSize: 'var(--fs-11)', borderRadius: 'var(--radius)', border: `1px solid ${visitForm.documents_collected.includes(doc) ? '#059669' : 'var(--c-border)'}`, background: visitForm.documents_collected.includes(doc) ? '#ecfdf5' : '#fff', color: visitForm.documents_collected.includes(doc) ? '#065f46' : 'var(--c-text)', cursor: 'pointer', fontWeight: visitForm.documents_collected.includes(doc) ? 600 : 400 }}>
+                    {visitForm.documents_collected.includes(doc) && <span style={{ marginRight: 4 }}>✓</span>}{doc}
+                  </button>
+                ))}
+              </div>
+              <div className="field-hint" style={{ marginTop: 6 }}>Cochez les documents collectés. Les fichiers (photos, PDF) seront ajoutés via l'onglet Preuves.</div>
             </div>
             <div className="flex gap-2">
               <button className="btn btn-primary btn-sm" onClick={saveVisit}>Enregistrer la visite</button>
@@ -576,18 +760,19 @@ function ControlsTab({ dossierId, dossier }) {
           <p className="text-sm text-muted">Aucune visite terrain enregistrée.</p>
         ) : (
           visits.map((v, i) => (
-            <div key={i} style={{ padding: '8px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}>
-              <div className="flex justify-between">
+            <div key={i} style={{ padding: '10px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}>
+              <div className="flex justify-between items-center">
                 <span className="font-semibold">{formatDate(v.visit_date || v.created_at)}</span>
                 <span className={`badge ${v.activity_confirmed ? 'badge-success' : 'badge-warning'}`}>{v.activity_confirmed ? 'Activité confirmée' : 'Non confirmée'}</span>
               </div>
+              {v.surface_observed && <p style={{ marginTop: 2, color: 'var(--c-600)' }}>Surface observée : {v.surface_observed} ha</p>}
               {v.observations && <p className="text-muted" style={{ marginTop: 2 }}>{v.observations}</p>}
+              {v.gps_lat && v.gps_lon && <p style={{ marginTop: 2, fontSize: 'var(--fs-11)', color: 'var(--c-500)' }}>GPS: {v.gps_lat}, {v.gps_lon}</p>}
             </div>
           ))
         )}
       </div>
 
-      {/* Consents */}
       <div className="surface">
         <div className="surface-header">
           <div className="surface-title" style={{ margin: 0 }}>Consentements ({consents.length})</div>
@@ -637,84 +822,132 @@ function ControlsTab({ dossierId, dossier }) {
 
 function DecisionTab({ dossier, onReload }) {
   const user = getUser();
-  const canDecide = ['COMITE', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(user?.role);
-  const [form, setForm] = useState({ decision: 'approved', amount: dossier.amount_requested || '', duration: dossier.duration_months || '', schedule: '', motif: '' });
+  const canDecide = ['COMITE', 'ADMIN', 'SUPERADMIN'].includes(user?.role);
+  const [form, setForm] = useState({ decision: 'approved', amount: dossier.amount_requested || '', duration: dossier.duration_months || '', schedule: dossier.desired_schedule || '', motif: '' });
   const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState('');
 
   async function handleDecide() {
-    try { await api.decideDossier(dossier.id, form); onReload(); } catch (err) { alert(err.message); }
+    setError('');
+    try { await api.decideDossier(dossier.id, form); setConfirming(false); onReload(); } catch (err) { setError(err.message); }
   }
 
   if (dossier.decision) {
     const isOverride = dossier.decision_amount && dossier.decision_amount !== dossier.amount_requested;
     return (
-      <div className="surface">
-        <div className="flex items-center gap-3 mb-4">
-          {dossier.decision === 'approved' || dossier.decision === 'modified' ? <CheckCircle size={22} color="var(--c-success)" /> : <XCircle size={22} color="var(--c-error)" />}
-          <span style={{ fontSize: 'var(--fs-xl)', fontWeight: 700 }}>
-            {dossier.decision === 'approved' ? 'Approuvé' : dossier.decision === 'refused' ? 'Refusé' : dossier.decision === 'complement' ? 'Complément requis' : 'Approuvé avec modification'}
-          </span>
-          {isOverride && <span className="badge badge-warning">Override humain</span>}
+      <div className="surface" style={{ maxWidth: 600 }}>
+        <div style={{ textAlign: 'center', padding: '20px 0', marginBottom: 20, borderBottom: '2px solid var(--c-border)' }}>
+          <div style={{ width: 48, height: 48, borderRadius: '50%', margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: dossier.decision === 'approved' || dossier.decision === 'modified' ? '#ecfdf5' : dossier.decision === 'refused' ? '#fef2f2' : '#fffbeb' }}>
+            {dossier.decision === 'approved' || dossier.decision === 'modified' ? <CheckCircle size={24} color="#059669" /> : dossier.decision === 'refused' ? <XCircle size={24} color="#dc2626" /> : <AlertTriangle size={24} color="#d97706" />}
+          </div>
+          <h3 style={{ fontSize: 'var(--fs-xl)', fontWeight: 700, color: dossier.decision === 'approved' || dossier.decision === 'modified' ? '#059669' : dossier.decision === 'refused' ? '#dc2626' : '#d97706' }}>
+            {dossier.decision === 'approved' ? 'Crédit Approuvé' : dossier.decision === 'refused' ? 'Crédit Refusé' : dossier.decision === 'complement' ? 'Complément Requis' : 'Approuvé avec Modification'}
+          </h3>
+          {isOverride && <span className="badge badge-warning" style={{ marginTop: 8 }}>Override humain</span>}
         </div>
-        {dossier.decision_amount && <p>Montant accordé: <strong>{formatCFA(dossier.decision_amount)}</strong> {isOverride && <span className="text-sm text-muted">(demandé: {formatCFA(dossier.amount_requested)})</span>}</p>}
-        {dossier.decision_duration && <p>Durée: <strong>{dossier.decision_duration} mois</strong></p>}
-        <p style={{ marginTop: 12 }}><strong>Motif:</strong> {dossier.decision_motif}</p>
-        <p className="text-xs text-muted" style={{ marginTop: 8 }}>Décidé le {formatDateTime(dossier.decided_at)}</p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+          {dossier.decision_amount && (
+            <div style={{ padding: 12, background: '#f9fafb', borderRadius: 'var(--radius)' }}>
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginBottom: 2 }}>Montant accordé</div>
+              <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 700 }}>{formatCFA(dossier.decision_amount)}</div>
+              {isOverride && <div style={{ fontSize: 'var(--fs-xs)', color: '#9ca3af', marginTop: 2 }}>Demandé: {formatCFA(dossier.amount_requested)}</div>}
+            </div>
+          )}
+          {dossier.decision_duration && (
+            <div style={{ padding: 12, background: '#f9fafb', borderRadius: 'var(--radius)' }}>
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginBottom: 2 }}>Durée accordée</div>
+              <div style={{ fontSize: 'var(--fs-lg)', fontWeight: 700 }}>{dossier.decision_duration} mois</div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ padding: 14, background: '#f9fafb', borderRadius: 'var(--radius)', marginBottom: 12 }}>
+          <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginBottom: 4, fontWeight: 600 }}>Motif de la décision</div>
+          <p style={{ fontSize: 'var(--fs-12)', lineHeight: 1.6 }}>{dossier.decision_motif}</p>
+        </div>
+
+        <p style={{ fontSize: 'var(--fs-xs)', color: '#9ca3af', textAlign: 'center' }}>Décidé le {formatDateTime(dossier.decided_at)}</p>
       </div>
     );
   }
 
-  if (!canDecide) return <div className="surface"><div className="empty-state"><div className="empty-state-title">En attente de décision</div><div className="empty-state-desc">Le comité de crédit examinera ce dossier.</div></div></div>;
+  if (!canDecide) return (
+    <div className="surface" style={{ textAlign: 'center', padding: 40 }}>
+      <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600, marginBottom: 8 }}>En attente de décision du comité</div>
+      <p style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)' }}>Seul le comité de crédit peut prendre cette décision.</p>
+    </div>
+  );
 
   return (
-    <div className="decision-panel">
-      <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, marginBottom: 20 }}>Décision du comité</h2>
-      <div className="grid-2">
-        <div className="field">
+    <div style={{ maxWidth: 600 }}>
+      <div className="surface">
+        <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, marginBottom: 20 }}>Décision du comité de crédit</h2>
+
+        {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '8px 12px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
+
+        <div className="field" style={{ marginBottom: 16 }}>
           <label className="field-label">Décision</label>
-          <select className="input" value={form.decision} onChange={e => setForm(f => ({ ...f, decision: e.target.value }))}>
-            <option value="approved">Approuver</option>
-            <option value="modified">Approuver avec modification</option>
-            <option value="complement">Demander complément</option>
-            <option value="refused">Refuser</option>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+            {[
+              { v: 'approved', l: 'Approuver', c: '#059669', bg: '#ecfdf5' },
+              { v: 'modified', l: 'Modifier', c: '#d97706', bg: '#fffbeb' },
+              { v: 'complement', l: 'Complément', c: '#2563eb', bg: '#eff6ff' },
+              { v: 'refused', l: 'Refuser', c: '#dc2626', bg: '#fef2f2' },
+            ].map(opt => (
+              <button key={opt.v} type="button" onClick={() => setForm(f => ({ ...f, decision: opt.v }))} style={{ padding: '10px 8px', borderRadius: 'var(--radius)', border: `2px solid ${form.decision === opt.v ? opt.c : 'var(--c-border)'}`, background: form.decision === opt.v ? opt.bg : '#fff', fontSize: 'var(--fs-12)', fontWeight: form.decision === opt.v ? 600 : 400, cursor: 'pointer', textAlign: 'center', color: form.decision === opt.v ? opt.c : 'var(--c-text)' }}>
+                {opt.l}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid-2">
+          <div className="field">
+            <label className="field-label">Montant accordé (FCFA)</label>
+            <input className="input" type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: Number(e.target.value) }))} />
+            {form.amount != dossier.amount_requested && <div className="field-hint" style={{ color: '#d97706' }}>Différent du montant demandé ({formatCFA(dossier.amount_requested)})</div>}
+          </div>
+          <div className="field">
+            <label className="field-label">Durée (mois)</label>
+            <input className="input" type="number" value={form.duration} onChange={e => setForm(f => ({ ...f, duration: Number(e.target.value) }))} />
+          </div>
+        </div>
+
+        <div className="field">
+          <label className="field-label">Calendrier de remboursement</label>
+          <select className="input" value={form.schedule} onChange={e => setForm(f => ({ ...f, schedule: e.target.value }))}>
+            <option value="">Sélectionner</option>
+            <option value="Mensuel classique">Mensuel classique</option>
+            <option value="Saisonnier (post-récolte)">Saisonnier (post-récolte)</option>
+            <option value="Trimestriel">Trimestriel</option>
+            <option value="In fine">In fine</option>
           </select>
         </div>
+
         <div className="field">
-          <label className="field-label">Montant accordé (FCFA)</label>
-          <input className="input" type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: Number(e.target.value) }))} />
-        </div>
-        <div className="field">
-          <label className="field-label">Durée (mois)</label>
-          <input className="input" type="number" value={form.duration} onChange={e => setForm(f => ({ ...f, duration: Number(e.target.value) }))} />
-        </div>
-        <div className="field">
-          <label className="field-label">Calendrier</label>
-          <input className="input" value={form.schedule} onChange={e => setForm(f => ({ ...f, schedule: e.target.value }))} />
-        </div>
-        <div className="field" style={{ gridColumn: '1 / -1' }}>
           <label className="field-label">Motif de la décision *</label>
-          <textarea className="input" rows={3} value={form.motif} onChange={e => setForm(f => ({ ...f, motif: e.target.value }))} />
-          <div className="field-hint">Le motif est obligatoire et sera enregistré dans le journal d'audit</div>
+          <textarea className="input" rows={4} value={form.motif} onChange={e => setForm(f => ({ ...f, motif: e.target.value }))} placeholder="Justification de la décision (obligatoire pour la traçabilité)" />
         </div>
-      </div>
 
-      {confirming && (
-        <div className="decision-confirmation">
-          {form.amount != dossier.amount_requested && (
-            <p><strong>Vous accordez {formatCFA(form.amount)} au lieu des {formatCFA(dossier.amount_requested)} demandés.</strong></p>
-          )}
-          <p>Cette décision sera enregistrée{form.amount != dossier.amount_requested ? ' comme override humain' : ''}.</p>
-        </div>
-      )}
-
-      <div className="flex gap-3 mt-4">
         {!confirming ? (
-          <button className="btn btn-primary" onClick={() => { if (!form.motif) return alert('Le motif est obligatoire'); setConfirming(true); }}>Valider la décision</button>
+          <button className="btn btn-primary" style={{ width: '100%', marginTop: 12 }} onClick={() => { if (!form.motif) { setError('Le motif est obligatoire'); return; } setConfirming(true); }}>
+            Valider la décision
+          </button>
         ) : (
-          <>
-            <button className="btn btn-primary" onClick={handleDecide}>Confirmer définitivement</button>
-            <button className="btn btn-secondary" onClick={() => setConfirming(false)}>Annuler</button>
-          </>
+          <div style={{ marginTop: 16, padding: 16, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-md)' }}>
+            <p style={{ fontSize: 'var(--fs-12)', fontWeight: 600, marginBottom: 8 }}>Confirmer cette décision ?</p>
+            {form.amount != dossier.amount_requested && (
+              <p style={{ fontSize: 'var(--fs-12)', color: '#92400e', marginBottom: 8 }}>
+                Montant modifié : {formatCFA(form.amount)} au lieu de {formatCFA(dossier.amount_requested)} (sera enregistré comme override).
+              </p>
+            )}
+            <p style={{ fontSize: 'var(--fs-11)', color: '#6b7280', marginBottom: 12 }}>Cette action est définitive et sera enregistrée dans le journal d'audit.</p>
+            <div className="flex gap-2">
+              <button className="btn btn-primary btn-sm" onClick={handleDecide}>Confirmer définitivement</button>
+              <button className="btn btn-secondary btn-sm" onClick={() => setConfirming(false)}>Annuler</button>
+            </div>
+          </div>
         )}
       </div>
     </div>

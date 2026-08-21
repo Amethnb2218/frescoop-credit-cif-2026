@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
 import { formatCFA, STATUS_LABELS, prequalLabel, prequalColor } from '../lib/format';
 import { isOnline, getSyncQueue } from '../lib/offline';
-import { Plus, FileText, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
+import { Plus, FileText, AlertTriangle, CheckCircle, Clock, BookOpen } from 'lucide-react';
 
 export default function Dashboard() {
   const [dossiers, setDossiers] = useState([]);

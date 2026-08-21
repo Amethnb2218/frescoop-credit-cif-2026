@@ -14,14 +14,10 @@ export default function Landing() {
         <Link to="/login" className="btn btn-primary">Se connecter</Link>
       </header>
 
-      {/* Hero - full width image banner */}
-      <section style={{ position: 'relative', height: 360, overflow: 'hidden' }}>
-        <img
-          src="https://images.unsplash.com/photo-1574943320219-553eb213f72d?w=1400&h=400&fit=crop&crop=center"
-          alt="Champs agricoles en Afrique de l'Ouest"
-          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-        />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to right, rgba(15,61,46,.85), rgba(15,61,46,.4))' }}></div>
+      {/* Hero - full width gradient banner */}
+      <section style={{ position: 'relative', height: 360, overflow: 'hidden', background: 'linear-gradient(135deg, #0f3d2e 0%, #1b6b52 40%, #2d8a6e 70%, #3da67d 100%)' }}>
+        <div style={{ position: 'absolute', inset: 0, opacity: 0.08, backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 35px, rgba(255,255,255,.5) 35px, rgba(255,255,255,.5) 36px)', backgroundSize: '50px 50px' }}></div>
+        <svg style={{ position: 'absolute', right: 40, bottom: 20, opacity: 0.12 }} width="280" height="280" viewBox="0 0 100 100" fill="none"><path d="M50 10 C50 10 30 30 30 55 C30 75 45 90 50 90 C55 90 70 75 70 55 C70 30 50 10 50 10Z" stroke="#fff" strokeWidth="1.5"/><path d="M50 20 L50 80" stroke="#fff" strokeWidth="0.8"/><path d="M50 40 L35 30" stroke="#fff" strokeWidth="0.8"/><path d="M50 50 L65 40" stroke="#fff" strokeWidth="0.8"/><path d="M50 60 L38 52" stroke="#fff" strokeWidth="0.8"/><path d="M50 70 L62 62" stroke="#fff" strokeWidth="0.8"/><circle cx="20" cy="80" r="8" stroke="#fff" strokeWidth="0.8"/><circle cx="80" cy="75" r="6" stroke="#fff" strokeWidth="0.8"/><path d="M10 85 Q15 70 25 80" stroke="#fff" strokeWidth="0.8"/></svg>
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', padding: '0 48px' }}>
           <div style={{ maxWidth: 560 }}>
             <div style={{ padding: '3px 10px', borderRadius: 4, background: 'rgba(255,255,255,.15)', color: '#fff', fontSize: 11, fontWeight: 600, display: 'inline-block', marginBottom: 16 }}>
