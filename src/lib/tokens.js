@@ -120,4 +120,5 @@ export const ROLE_NAV = {
   SUPERVISEUR: ['dashboard', 'dossiers', 'rules', 'stats'],
   AUDITEUR: ['dashboard', 'audit', 'dossiers', 'stats'],
   AGENT: ['dashboard', 'dossiers', 'sync'],
+  JURY: ['dashboard', 'dossiers', 'stats'],
 };

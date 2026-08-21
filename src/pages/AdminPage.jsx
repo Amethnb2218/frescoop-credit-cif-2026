@@ -72,6 +72,46 @@ function UsersTab() {
     } catch (err) { setError(err.message); }
   }
 
+  async function handleCSVImport(file) {
+    if (!file) return;
+    setError(''); setSuccess('');
+    const text = await file.text();
+    const lines = text.split('\n').filter(l => l.trim());
+    if (lines.length < 2) { setError('Le fichier CSV doit avoir un header et au moins 1 ligne'); return; }
+    const header = lines[0].toLowerCase().split(/[;,]/).map(h => h.trim());
+    const nameIdx = header.findIndex(h => h.includes('nom'));
+    const emailIdx = header.findIndex(h => h.includes('email') || h.includes('mail'));
+    const roleIdx = header.findIndex(h => h.includes('role') || h.includes('rôle'));
+    const phoneIdx = header.findIndex(h => h.includes('tel') || h.includes('phone'));
+    const agencyIdx = header.findIndex(h => h.includes('agence') || h.includes('agency'));
+    const pwdIdx = header.findIndex(h => h.includes('mot') || h.includes('pass') || h.includes('pwd'));
+    if (nameIdx < 0 || emailIdx < 0) { setError('Le CSV doit contenir au minimum les colonnes "nom" et "email"'); return; }
+    let created = 0, errors = 0;
+    const currentUser = getUser();
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(/[;,]/).map(c => c.trim().replace(/^["']|["']$/g, ''));
+      if (!cols[nameIdx] || !cols[emailIdx]) continue;
+      try {
+        const res = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('frescoop_token')}` },
+          body: JSON.stringify({
+            name: cols[nameIdx],
+            email: cols[emailIdx],
+            role: roleIdx >= 0 ? cols[roleIdx]?.toUpperCase() || 'AGENT' : 'AGENT',
+            phone: phoneIdx >= 0 ? cols[phoneIdx] || '' : '',
+            agency: agencyIdx >= 0 ? cols[agencyIdx] || '' : '',
+            password: pwdIdx >= 0 ? cols[pwdIdx] || 'default2026' : 'default2026',
+            tenant_id: currentUser.tenant_id,
+          }),
+        });
+        if (res.ok) created++; else errors++;
+      } catch { errors++; }
+    }
+    setSuccess(`Import terminé : ${created} créé(s), ${errors} erreur(s)`);
+    loadUsers();
+  }
+
   async function handleCreate() {
     setError(''); setSuccess('');
     if (!createForm.name || !createForm.email || !createForm.password) { setError('Nom, email et mot de passe requis'); return; }
@@ -105,7 +145,13 @@ function UsersTab() {
 
       <div className="flex justify-between items-center mb-4">
         <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600 }}>Utilisateurs ({users.length})</h2>
-        <button className="btn btn-primary btn-sm" onClick={() => setCreating(!creating)}><UserPlus size={14} /> Nouvel utilisateur</button>
+        <div className="flex gap-2">
+          <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+            <input type="file" accept=".csv,.txt" style={{ display: 'none' }} onChange={e => handleCSVImport(e.target.files[0])} />
+            Importer CSV
+          </label>
+          <button className="btn btn-primary btn-sm" onClick={() => setCreating(!creating)}><UserPlus size={14} /> Nouvel utilisateur</button>
+        </div>
       </div>
 
       <div style={{ marginBottom: 16, position: 'relative' }}>

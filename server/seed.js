@@ -8,10 +8,13 @@ export async function ensureAdminAccounts() {
   const tenantId = tenantRes.rows[0].id;
 
   const defaultPwd = process.env.ADMIN_DEFAULT_PWD || 'changeme2026';
+  const juryPwd = process.env.JURY_PWD || 'jury2026';
   const admins = [
-    { name: 'Seydina Limamou Laye', email: 'seydinalimamoulaye@gmail.com', role: 'ADMIN', phone: '+221770000010', agency: 'Siège Dakar' },
-    { name: 'Cherif Hane', email: 'cherifhane@gmail.com', role: 'ADMIN', phone: '+221770000011', agency: 'Siège Dakar' },
-    { name: 'Ameth Sall', email: 'amethsl2218@gmail.com', role: 'ADMIN', phone: '+221770000012', agency: 'Siège Dakar' },
+    { name: 'Seydina Limamou Laye', email: 'seydinalimamoulaye@gmail.com', role: 'ADMIN', phone: '+221770000010', agency: 'Siège Dakar', pwd: defaultPwd },
+    { name: 'Cherif Hane', email: 'cherifhane@gmail.com', role: 'ADMIN', phone: '+221770000011', agency: 'Siège Dakar', pwd: defaultPwd },
+    { name: 'Ameth Sall', email: 'amethsl2218@gmail.com', role: 'ADMIN', phone: '+221770000012', agency: 'Siège Dakar', pwd: defaultPwd },
+    { name: 'Membre du Jury CIF', email: 'jury@frescoop.demo', role: 'JURY', phone: '', agency: 'CIF', pwd: juryPwd },
+    { name: 'Évaluateur CIF', email: 'evaluateur@frescoop.demo', role: 'JURY', phone: '', agency: 'CIF', pwd: juryPwd },
   ];
 
   for (const a of admins) {
@@ -19,7 +22,7 @@ export async function ensureAdminAccounts() {
     if (existing.rows.length === 0) {
       await db.execute({
         sql: 'INSERT INTO users (id, tenant_id, email, password_hash, name, role, phone, agency) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        args: [uuid(), tenantId, a.email, hashPassword(defaultPwd), a.name, a.role, a.phone, a.agency],
+        args: [uuid(), tenantId, a.email, hashPassword(a.pwd), a.name, a.role, a.phone, a.agency],
       });
       console.log(`[FresCoop] Compte admin créé: ${a.email}`);
     }

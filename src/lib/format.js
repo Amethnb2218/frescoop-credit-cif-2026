@@ -48,6 +48,7 @@ export const ROLE_LABELS = {
   ADMIN: 'Administrateur',
   AUDITEUR: 'Auditeur',
   SUPPORT: 'Support technique',
+  JURY: 'Membre du jury',
 };
 
 export const VERIFICATION_LEVELS = {

@@ -35,10 +35,11 @@ export function authMiddleware(req, res, next) {
 }
 
 const ROLE_HIERARCHY = {
-  SUPERADMIN: 8,
-  ADMIN: 7,
-  SUPPORT: 6,
-  RISK_MANAGER: 5,
+  SUPERADMIN: 9,
+  ADMIN: 8,
+  SUPPORT: 7,
+  RISK_MANAGER: 6,
+  JURY: 5,
   COMITE: 4,
   SUPERVISEUR: 3,
   AUDITEUR: 2,

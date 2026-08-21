@@ -116,6 +116,42 @@ export default function Dashboard() {
         </>
       )}
 
+      {/* Jury view — simplified scoring overview */}
+      {role === 'JURY' && (
+        <>
+          <div className="metrics-row">
+            <div className="metric-card">
+              <div className="metric-value">{stats.total}</div>
+              <div className="metric-label">Dossiers instruits</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-value" style={{ color: 'var(--c-success)' }}>{stats.prequalified}</div>
+              <div className="metric-label">Scorés favorablement</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-value" style={{ color: 'var(--c-warning)' }}>{stats.reviewRequired}</div>
+              <div className="metric-label">Revue requise</div>
+            </div>
+            <div className="metric-card">
+              <div className="metric-value" style={{ color: 'var(--c-success)' }}>{stats.decided}</div>
+              <div className="metric-label">Décisions prises</div>
+            </div>
+          </div>
+          <div className="surface">
+            <div className="surface-title">Dossiers avec scoring</div>
+            {dossiers.filter(d => d.prequalification).slice(0, 5).map(d => (
+              <div key={d.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--c-100)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 'var(--fs-base)' }}>{d.applicant_name || 'Sans nom'}</div>
+                  <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--c-500)' }}>{d.activity_type} — {formatCFA(d.amount_requested)}</div>
+                </div>
+                <Link to={`/dossiers/${d.id}`} className="btn btn-primary btn-sm">Voir le scoring</Link>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
       {/* Supervisor / Risk Manager / Admin / SuperAdmin / Support view */}
       {['SUPERVISEUR', 'RISK_MANAGER', 'ADMIN', 'SUPERADMIN', 'SUPPORT'].includes(role) && (
         <>

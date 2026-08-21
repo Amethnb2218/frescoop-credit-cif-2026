@@ -132,11 +132,40 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* Business Model */}
+      <section style={{ padding: '56px 48px', background: '#f8faf9' }}>
+        <div style={{ maxWidth: 900, margin: '0 auto' }}>
+          <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1a2332', textAlign: 'center', marginBottom: 8 }}>
+            Modèle économique
+          </h2>
+          <p style={{ textAlign: 'center', color: '#5a6577', fontSize: 13, marginBottom: 28 }}>
+            FresCoop s'intègre dans l'écosystème existant des coopératives financières
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+            <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, padding: 18, textAlign: 'center' }}>
+              <div style={{ fontSize: 24, fontWeight: 700, color: '#1b6b52', marginBottom: 4 }}>Phase 1</div>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Pilote gratuit</div>
+              <div style={{ fontSize: 11, color: '#5a6577', lineHeight: 1.5 }}>Déploiement dans 2-3 agences pilotes CIF. Validation terrain. Zéro coût pour la coopérative.</div>
+            </div>
+            <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, padding: 18, textAlign: 'center' }}>
+              <div style={{ fontSize: 24, fontWeight: 700, color: '#1b6b52', marginBottom: 4 }}>Phase 2</div>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>SaaS par agence</div>
+              <div style={{ fontSize: 11, color: '#5a6577', lineHeight: 1.5 }}>Abonnement mensuel par agence (15 000 - 50 000 FCFA/mois selon volume). ROI dès le 1er mois grâce aux impayés évités.</div>
+            </div>
+            <div style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 6, padding: 18, textAlign: 'center' }}>
+              <div style={{ fontSize: 24, fontWeight: 700, color: '#1b6b52', marginBottom: 4 }}>Phase 3</div>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Réseau CIF</div>
+              <div style={{ fontSize: 11, color: '#5a6577', lineHeight: 1.5 }}>Déploiement via le catalogue DigiCoop-WA+ dans les 5 pays. Licence réseau. Données agrégées anonymisées pour améliorer le scoring.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* CTA */}
-      <section style={{ background: '#f8faf9', padding: '48px 24px', textAlign: 'center' }}>
-        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#1a2332', marginBottom: 8 }}>Prêt à transformer l'instruction du crédit agricole ?</h2>
-        <p style={{ color: '#5a6577', fontSize: 13, marginBottom: 20 }}>Connectez-vous pour explorer la plateforme de démonstration.</p>
-        <Link to="/login" className="btn btn-primary btn-lg">Accéder à la plateforme</Link>
+      <section style={{ padding: '48px 24px', textAlign: 'center' }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: '#1a2332', marginBottom: 8 }}>Prêt à voir le scoring en action ?</h2>
+        <p style={{ color: '#5a6577', fontSize: 13, marginBottom: 20 }}>Connectez-vous pour explorer un dossier de crédit scoré en temps réel.</p>
+        <Link to="/login" className="btn btn-primary btn-lg">Tester le scoring</Link>
       </section>
 
       {/* Footer */}
