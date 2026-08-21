@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api, getUser } from '../lib/api';
-import { ROLE_LABELS } from '../lib/format';
-import { Users, Key, Shield, UserPlus, Lock } from 'lucide-react';
+import { ROLE_LABELS, formatDateTime } from '../lib/format';
+import { Users, Key, Shield, UserPlus, Lock, AlertTriangle, Search } from 'lucide-react';
 
 export default function AdminPage() {
   const user = getUser();
@@ -20,10 +20,12 @@ export default function AdminPage() {
 
       <div className="tab-list">
         <button className={`tab-item ${tab === 'users' ? 'active' : ''}`} onClick={() => setTab('users')}><Users size={14} /> Utilisateurs</button>
+        <button className={`tab-item ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}><AlertTriangle size={14} /> Système</button>
         <button className={`tab-item ${tab === 'password' ? 'active' : ''}`} onClick={() => setTab('password')}><Lock size={14} /> Mon mot de passe</button>
       </div>
 
       {tab === 'users' && <UsersTab />}
+      {tab === 'system' && <SystemTab />}
       {tab === 'password' && <PasswordTab />}
     </div>
   );
@@ -38,6 +40,7 @@ function UsersTab() {
   const [newPassword, setNewPassword] = useState('');
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState({ name: '', email: '', role: 'AGENT', phone: '', agency: '', password: '' });
+  const [search, setSearch] = useState('');
 
   useEffect(() => { loadUsers(); }, []);
 
@@ -105,6 +108,11 @@ function UsersTab() {
         <button className="btn btn-primary btn-sm" onClick={() => setCreating(!creating)}><UserPlus size={14} /> Nouvel utilisateur</button>
       </div>
 
+      <div style={{ marginBottom: 16, position: 'relative' }}>
+        <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--c-400)' }} />
+        <input className="input" style={{ paddingLeft: 32 }} placeholder="Rechercher par nom ou email..." value={search} onChange={e => setSearch(e.target.value)} />
+      </div>
+
       {creating && (
         <div className="surface mb-4">
           <h3 style={{ fontSize: 'var(--fs-md)', fontWeight: 600, marginBottom: 12 }}>Créer un utilisateur</h3>
@@ -163,7 +171,11 @@ function UsersTab() {
               </tr>
             </thead>
             <tbody>
-              {users.map(u => (
+              {users.filter(u => {
+                if (!search) return true;
+                const q = search.toLowerCase();
+                return u.name?.toLowerCase().includes(q) || u.email?.toLowerCase().includes(q);
+              }).map(u => (
                 <tr key={u.id}>
                   <td><div className="table-cell-primary">{u.name}</div></td>
                   <td style={{ fontSize: 'var(--fs-12)' }}>{u.email}</td>
@@ -201,6 +213,105 @@ function UsersTab() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function SystemTab() {
+  const [health, setHealth] = useState(null);
+  const [errors, setErrors] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => { checkSystem(); }, []);
+
+  async function checkSystem() {
+    const checks = [];
+    try {
+      const h = await api.health();
+      setHealth(h);
+    } catch (err) {
+      checks.push({ level: 'critical', source: 'API', message: `Serveur inaccessible : ${err.message}`, time: new Date().toISOString() });
+    }
+
+    try { await api.getDossiers(); }
+    catch (err) { checks.push({ level: 'error', source: 'Dossiers', message: `Erreur accès dossiers : ${err.message}`, time: new Date().toISOString() }); }
+
+    try { await api.getStats(); }
+    catch (err) { checks.push({ level: 'warning', source: 'Stats', message: `Stats indisponibles : ${err.message}`, time: new Date().toISOString() }); }
+
+    try { await api.getRules(); }
+    catch (err) { checks.push({ level: 'warning', source: 'Règles', message: `Erreur accès règles : ${err.message}`, time: new Date().toISOString() }); }
+
+    try { await api.getProducts(); }
+    catch (err) { checks.push({ level: 'warning', source: 'Produits', message: `Erreur accès produits : ${err.message}`, time: new Date().toISOString() }); }
+
+    setErrors(checks);
+    setLoading(false);
+  }
+
+  const levelStyle = { critical: { bg: '#fef2f2', border: '#fca5a5', color: '#991b1b' }, error: { bg: '#fef2f2', border: '#fca5a5', color: '#dc2626' }, warning: { bg: '#fffbeb', border: '#fde68a', color: '#92400e' } };
+
+  if (loading) return <div className="loading-state">Vérification du système...</div>;
+
+  return (
+    <div>
+      <div className="surface mb-4">
+        <div className="surface-title">État du serveur</div>
+        {health ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+            <div style={{ padding: 12, background: '#ecfdf5', borderRadius: 'var(--radius)', textAlign: 'center' }}>
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Statut</div>
+              <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, color: '#059669' }}>En ligne</div>
+            </div>
+            <div style={{ padding: 12, background: '#f9fafb', borderRadius: 'var(--radius)', textAlign: 'center' }}>
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Mode</div>
+              <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600 }}>{health.mode}</div>
+            </div>
+            <div style={{ padding: 12, background: '#f9fafb', borderRadius: 'var(--radius)', textAlign: 'center' }}>
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Version</div>
+              <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600 }}>{health.version}</div>
+            </div>
+            <div style={{ padding: 12, background: '#f9fafb', borderRadius: 'var(--radius)', textAlign: 'center' }}>
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Produit</div>
+              <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600 }}>{health.product}</div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ padding: 12, background: '#fef2f2', borderRadius: 'var(--radius)', color: '#dc2626', fontSize: 'var(--fs-12)' }}>Serveur inaccessible</div>
+        )}
+      </div>
+
+      <div className="surface">
+        <div className="surface-title">Diagnostic des services ({errors.length} problème{errors.length !== 1 ? 's' : ''} détecté{errors.length !== 1 ? 's' : ''})</div>
+        {errors.length === 0 ? (
+          <div style={{ padding: 20, textAlign: 'center' }}>
+            <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#ecfdf5', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+              <Shield size={20} color="#059669" />
+            </div>
+            <p style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: '#059669' }}>Tous les services fonctionnent correctement</p>
+            <p style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', marginTop: 4 }}>API, base de données, modules — aucune anomalie détectée</p>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {errors.map((e, i) => {
+              const s = levelStyle[e.level] || levelStyle.warning;
+              return (
+                <div key={i} style={{ padding: '10px 14px', background: s.bg, border: `1px solid ${s.border}`, borderRadius: 'var(--radius)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <span style={{ fontSize: 'var(--fs-12)', fontWeight: 600, color: s.color }}>[{e.source}]</span>
+                    <span style={{ fontSize: 'var(--fs-12)', color: s.color, marginLeft: 8 }}>{e.message}</span>
+                  </div>
+                  <span style={{ fontSize: 'var(--fs-xs)', color: '#9ca3af' }}>{formatDateTime(e.time)}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <button className="btn btn-secondary btn-sm" style={{ marginTop: 16 }} onClick={() => { setLoading(true); checkSystem(); }}>
+          Relancer le diagnostic
+        </button>
+      </div>
     </div>
   );
 }
