@@ -6,7 +6,12 @@ import { EVIDENCE_LEVELS } from '../lib/tokens';
 import { isOnline, addToSyncQueue, saveEvidenceOffline } from '../lib/offline';
 import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff, Shield, MapPin, FileCheck } from 'lucide-react';
 
-const TABS = ['Résumé', 'Preuves', 'Cash-flow', 'Stress test', 'Préqualification', 'Contrôles', 'Décision', 'Audit'];
+function getTabsForRole(role) {
+  if (role === 'COMITE') return ['Résumé', 'Préqualification', 'Décision', 'Audit'];
+  if (role === 'AUDITEUR') return ['Résumé', 'Preuves', 'Cash-flow', 'Préqualification', 'Audit'];
+  if (role === 'RISK_MANAGER') return ['Résumé', 'Preuves', 'Cash-flow', 'Stress test', 'Préqualification', 'Contrôles', 'Audit'];
+  return ['Résumé', 'Preuves', 'Cash-flow', 'Stress test', 'Préqualification', 'Contrôles', 'Décision', 'Audit'];
+}
 
 export default function DossierDetail() {
   const { id } = useParams();
@@ -79,10 +84,11 @@ export default function DossierDetail() {
           <p className="page-subtitle">{dossier.applicant_location} · {dossier.activity_type || dossier.sector} · {formatCFA(dossier.amount_requested)}</p>
         </div>
         <div className="flex gap-2">
-          {dossier.status === 'draft' && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('submitted')}>Soumettre</button>}
-          {dossier.status === 'submitted' && user?.role !== 'AGENT' && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('verification')}>Vérifier</button>}
-          {dossier.status === 'verification' && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('review')}>Passer en revue</button>}
-          {dossier.status === 'review' && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('committee')}>Transmettre au comité</button>}
+          {dossier.status === 'draft' && ['AGENT','SUPERVISEUR','ADMIN','SUPERADMIN'].includes(user?.role) && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('submitted')}>Soumettre</button>}
+          {dossier.status === 'submitted' && ['SUPERVISEUR','ADMIN','SUPERADMIN'].includes(user?.role) && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('verification')}>Vérifier</button>}
+          {dossier.status === 'verification' && ['SUPERVISEUR','ADMIN','SUPERADMIN'].includes(user?.role) && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('review')}>Passer en revue</button>}
+          {dossier.status === 'review' && ['SUPERVISEUR','ADMIN','SUPERADMIN'].includes(user?.role) && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus('committee')}>Transmettre au comité</button>}
+          {dossier.status === 'committee' && ['COMITE','ADMIN','SUPERADMIN'].includes(user?.role) && !dossier.decision && <button className="btn btn-primary btn-sm" onClick={() => setTab('Décision')}>Prendre une décision</button>}
         </div>
       </div>
 
@@ -93,7 +99,7 @@ export default function DossierDetail() {
       </div>
 
       <div className="tab-list">
-        {TABS.map(t => <button key={t} className={`tab-item ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>{t}</button>)}
+        {getTabsForRole(user?.role).map(t => <button key={t} className={`tab-item ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>{t}</button>)}
       </div>
 
       {tab === 'Résumé' && <SummaryTab dossier={dossier} evidence={evidence} cashflow={cashflow} bicData={bicData} onCheckBic={checkBic} />}
@@ -436,8 +442,9 @@ function ControlsTab({ dossierId, dossier }) {
   const [visits, setVisits] = useState([]);
   const [consents, setConsents] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [addingVisit, setAddingVisit] = useState(false);
-  const [visitForm, setVisitForm] = useState({ observations: '', activity_confirmed: true });
+  const [visitForm, setVisitForm] = useState({ observations: '', activity_confirmed: true, surface_observed: '', gps_lat: '', gps_lon: '' });
   const [addingConsent, setAddingConsent] = useState(false);
   const [consentForm, setConsentForm] = useState({ consent_type: 'data_collection', consent_given: true, consent_method: 'verbal' });
 
@@ -457,34 +464,48 @@ function ControlsTab({ dossierId, dossier }) {
   }
 
   async function runFraud() {
-    setLoading(true);
+    setLoading(true); setError('');
     try {
       const res = await api.runFraudCheck(dossierId);
       setFraudChecks(res.checks || []);
-    } catch (err) { alert(err.message); }
+    } catch (err) { setError(err.message); }
     finally { setLoading(false); }
   }
 
   async function saveVisit() {
+    setError('');
     try {
       await api.createVisit({ dossier_id: dossierId, ...visitForm });
       setAddingVisit(false);
+      setVisitForm({ observations: '', activity_confirmed: true, surface_observed: '', gps_lat: '', gps_lon: '' });
       loadControls();
-    } catch (err) { alert(err.message); }
+    } catch (err) { setError(err.message); }
+  }
+
+  async function getGPS() {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => setVisitForm(f => ({ ...f, gps_lat: pos.coords.latitude.toFixed(6), gps_lon: pos.coords.longitude.toFixed(6) })),
+        () => setError('Impossible d\'obtenir la localisation GPS')
+      );
+    }
   }
 
   async function saveConsent() {
+    setError('');
     try {
       await api.createConsent({ dossier_id: dossierId, applicant_name: dossier.applicant_name, ...consentForm });
       setAddingConsent(false);
       loadControls();
-    } catch (err) { alert(err.message); }
+    } catch (err) { setError(err.message); }
   }
 
   const severityLabel = { clean: 'badge-success', warning: 'badge-warning', critical: 'badge-error' };
 
   return (
     <div>
+      {error && <div style={{ background: 'var(--c-danger-bg)', color: 'var(--c-danger)', padding: '8px 12px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #e0a0a0' }}>{error}</div>}
+
       {/* Fraud checks */}
       <div className="surface mb-4">
         <div className="surface-header">
@@ -517,17 +538,36 @@ function ControlsTab({ dossierId, dossier }) {
           <button className="btn btn-secondary btn-sm" onClick={() => setAddingVisit(!addingVisit)}><MapPin size={13} /> Ajouter</button>
         </div>
         {addingVisit && (
-          <div style={{ marginBottom: 12, padding: 12, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>
-            <div className="field">
-              <label className="field-label">Observations</label>
-              <textarea className="input" rows={3} value={visitForm.observations} onChange={e => setVisitForm(f => ({ ...f, observations: e.target.value }))} />
+          <div style={{ marginBottom: 12, padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', border: '1px solid var(--c-border)' }}>
+            <div className="grid-2">
+              <div className="field">
+                <label className="field-label">Surface observée (ha)</label>
+                <input className="input" type="number" step="0.1" value={visitForm.surface_observed} onChange={e => setVisitForm(f => ({ ...f, surface_observed: e.target.value }))} />
+              </div>
+              <div className="field">
+                <label className="field-label">Coordonnées GPS</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input className="input" placeholder="Latitude" value={visitForm.gps_lat} onChange={e => setVisitForm(f => ({ ...f, gps_lat: e.target.value }))} style={{ flex: 1 }} />
+                  <input className="input" placeholder="Longitude" value={visitForm.gps_lon} onChange={e => setVisitForm(f => ({ ...f, gps_lon: e.target.value }))} style={{ flex: 1 }} />
+                  <button className="btn btn-secondary btn-sm" onClick={getGPS} type="button" title="Localisation actuelle">GPS</button>
+                </div>
+              </div>
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)' }}>
-              <input type="checkbox" checked={visitForm.activity_confirmed} onChange={e => setVisitForm(f => ({ ...f, activity_confirmed: e.target.checked }))} />
-              Activité confirmée sur le terrain
-            </label>
-            <div className="flex gap-2 mt-4">
-              <button className="btn btn-primary btn-sm" onClick={saveVisit}>Enregistrer</button>
+            <div className="field">
+              <label className="field-label">Observations terrain</label>
+              <textarea className="input" rows={3} value={visitForm.observations} onChange={e => setVisitForm(f => ({ ...f, observations: e.target.value }))} placeholder="État de la parcelle, cultures observées, équipements, bâtiments..." />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-12)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={visitForm.activity_confirmed} onChange={e => setVisitForm(f => ({ ...f, activity_confirmed: e.target.checked }))} />
+                Activité agricole confirmée sur le terrain
+              </label>
+            </div>
+            <div style={{ background: '#fff', border: '1px solid var(--c-border)', borderRadius: 'var(--radius)', padding: 10, marginBottom: 12, fontSize: 'var(--fs-11)', color: 'var(--c-text-secondary)' }}>
+              <strong>Documents à joindre après création :</strong> Photo terrain, CNI demandeur, carte membre coopérative, fiche RIT. Ces pièces seront ajoutées via l'onglet Preuves.
+            </div>
+            <div className="flex gap-2">
+              <button className="btn btn-primary btn-sm" onClick={saveVisit}>Enregistrer la visite</button>
               <button className="btn btn-secondary btn-sm" onClick={() => setAddingVisit(false)}>Annuler</button>
             </div>
           </div>

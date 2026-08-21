@@ -14,37 +14,32 @@ export default function Landing() {
         <Link to="/login" className="btn btn-primary">Se connecter</Link>
       </header>
 
-      {/* Hero with image */}
-      <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', minHeight: 420, overflow: 'hidden' }}>
-        <div style={{ padding: '64px 48px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <div style={{ padding: '3px 10px', borderRadius: 4, background: '#e8f5f0', color: '#1b6b52', fontSize: 11, fontWeight: 600, display: 'inline-block', marginBottom: 16, width: 'fit-content' }}>
-            CIF DigiCoop-WA+ 2026 — Sénégal
-          </div>
-          <h1 style={{ fontSize: 32, fontWeight: 700, color: '#1a2332', lineHeight: 1.2, marginBottom: 16, letterSpacing: '-.5px' }}>
-            Le copilote de l'agent de crédit agricole
-          </h1>
-          <p style={{ fontSize: 15, color: '#5a6577', lineHeight: 1.7, marginBottom: 28, maxWidth: 440 }}>
-            FresCoop transforme les réalités du terrain en un dossier de crédit vérifiable.
-            Cash-flow saisonnier, preuves classées, recommandation explicable — même sans réseau.
-          </p>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-            <Link to="/login" className="btn btn-primary btn-lg">Accéder à la plateforme <ArrowRight size={14} /></Link>
-          </div>
-          <div style={{ marginTop: 24, display: 'flex', gap: 20 }}>
-            <MiniStat icon={<Clock size={14} />} label="Instruction 2x plus rapide" />
-            <MiniStat icon={<WifiOff size={14} />} label="Fonctionne hors ligne" />
-            <MiniStat icon={<Eye size={14} />} label="Décision traçable" />
-          </div>
-        </div>
-        <div style={{ background: '#0f3d2e', position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-          <img
-            src="https://images.unsplash.com/photo-1589923188651-268a9765e432?w=700&h=500&fit=crop&crop=center"
-            alt="Agent de crédit sur le terrain en Afrique de l'Ouest"
-            style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.7 }}
-          />
-          <div style={{ position: 'absolute', bottom: 24, left: 24, right: 24, background: 'rgba(15,61,46,.9)', borderRadius: 8, padding: '14px 18px', color: '#fff' }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>Un dossier plus vite, des preuves plus fortes</div>
-            <div style={{ fontSize: 11, color: '#a8d4c0', marginTop: 2 }}>Une décision qui reste humaine</div>
+      {/* Hero - full width image banner */}
+      <section style={{ position: 'relative', height: 360, overflow: 'hidden' }}>
+        <img
+          src="https://images.unsplash.com/photo-1574943320219-553eb213f72d?w=1400&h=400&fit=crop&crop=center"
+          alt="Champs agricoles en Afrique de l'Ouest"
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+        />
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to right, rgba(15,61,46,.85), rgba(15,61,46,.4))' }}></div>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', padding: '0 48px' }}>
+          <div style={{ maxWidth: 560 }}>
+            <div style={{ padding: '3px 10px', borderRadius: 4, background: 'rgba(255,255,255,.15)', color: '#fff', fontSize: 11, fontWeight: 600, display: 'inline-block', marginBottom: 16 }}>
+              CIF DigiCoop-WA+ 2026 — Sénégal
+            </div>
+            <h1 style={{ fontSize: 30, fontWeight: 700, color: '#fff', lineHeight: 1.3, marginBottom: 14 }}>
+              Le copilote de l'agent de crédit agricole
+            </h1>
+            <p style={{ fontSize: 14, color: 'rgba(255,255,255,.85)', lineHeight: 1.7, marginBottom: 24 }}>
+              FresCoop transforme les réalités du terrain en un dossier de crédit vérifiable.
+              Cash-flow saisonnier, preuves classées, recommandation explicable — même sans réseau.
+            </p>
+            <Link to="/login" className="btn btn-lg" style={{ background: '#fff', color: '#0f3d2e', fontWeight: 600, border: 'none' }}>Accéder à la plateforme <ArrowRight size={14} /></Link>
+            <div style={{ marginTop: 20, display: 'flex', gap: 20 }}>
+              <MiniStat icon={<Clock size={14} />} label="Instruction 2x plus rapide" light />
+              <MiniStat icon={<WifiOff size={14} />} label="Fonctionne hors ligne" light />
+              <MiniStat icon={<Eye size={14} />} label="Décision traçable" light />
+            </div>
           </div>
         </div>
       </section>
@@ -145,10 +140,10 @@ export default function Landing() {
   );
 }
 
-function MiniStat({ icon, label }) {
+function MiniStat({ icon, label, light }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#5a6577' }}>
-      <span style={{ color: '#1b6b52' }}>{icon}</span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: light ? 'rgba(255,255,255,.8)' : '#5a6577' }}>
+      <span style={{ color: light ? '#a8d4c0' : '#1b6b52' }}>{icon}</span>
       {label}
     </div>
   );
