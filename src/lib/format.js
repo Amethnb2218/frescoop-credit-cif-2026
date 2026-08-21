@@ -47,6 +47,7 @@ export const ROLE_LABELS = {
   RISK_MANAGER: 'Gestionnaire des risques',
   ADMIN: 'Administrateur',
   AUDITEUR: 'Auditeur',
+  SUPPORT: 'Support technique',
 };
 
 export const VERIFICATION_LEVELS = {

@@ -16,6 +16,7 @@ import RulesPage from './pages/RulesPage';
 import StatsPage from './pages/StatsPage';
 import ProductsPage from './pages/ProductsPage';
 import SyncPage from './pages/SyncPage';
+import AdminPage from './pages/AdminPage';
 
 const NAV_ITEMS = {
   dashboard: { to: '/', icon: Home, label: 'Tableau de bord' },
@@ -109,6 +110,7 @@ export default function App() {
                   <Route path="/stats" element={<StatsPage />} />
                   <Route path="/products" element={<ProductsPage />} />
                   <Route path="/sync" element={<SyncPage />} />
+                  <Route path="/admin" element={<AdminPage />} />
                   <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
               </div>

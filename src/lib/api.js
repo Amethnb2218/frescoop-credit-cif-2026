@@ -27,7 +27,7 @@ async function request(path, options = {}) {
 
   const res = await fetch(`${API_BASE}${path}`, { headers, ...options });
 
-  if (res.status === 401) {
+  if (res.status === 401 && !path.includes('/auth/login')) {
     logout();
     window.location.href = '/login';
     throw new Error('Session expirée');
@@ -95,4 +95,10 @@ export const api = {
 
   // Stats
   getStats: () => request('/api/stats'),
+
+  // Users (admin)
+  getUsers: () => request('/api/auth/users'),
+  resetUserPassword: (userId, new_password) => request(`/api/auth/users/${userId}/reset-password`, { method: 'PUT', body: JSON.stringify({ new_password }) }),
+  toggleUser: (userId) => request(`/api/auth/users/${userId}/toggle`, { method: 'PUT' }),
+  changePassword: (current_password, new_password) => request('/api/auth/password', { method: 'PUT', body: JSON.stringify({ current_password, new_password }) }),
 };

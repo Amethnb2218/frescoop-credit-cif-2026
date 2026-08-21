@@ -114,6 +114,7 @@ export const EVIDENCE_LEVELS = {
 export const ROLE_NAV = {
   SUPERADMIN: ['dashboard', 'dossiers', 'rules', 'stats', 'products', 'audit', 'admin'],
   ADMIN: ['dashboard', 'dossiers', 'rules', 'stats', 'products', 'audit', 'admin'],
+  SUPPORT: ['dashboard', 'dossiers', 'stats', 'audit', 'admin'],
   RISK_MANAGER: ['dashboard', 'dossiers', 'rules', 'stats', 'products', 'audit'],
   COMITE: ['dashboard', 'dossiers', 'decisions'],
   SUPERVISEUR: ['dashboard', 'dossiers', 'rules', 'sync', 'audit'],

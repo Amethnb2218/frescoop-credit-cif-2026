@@ -98,8 +98,8 @@ export default function Dashboard() {
         </>
       )}
 
-      {/* Supervisor / Risk Manager / Admin / SuperAdmin view */}
-      {['SUPERVISEUR', 'RISK_MANAGER', 'ADMIN', 'SUPERADMIN'].includes(role) && (
+      {/* Supervisor / Risk Manager / Admin / SuperAdmin / Support view */}
+      {['SUPERVISEUR', 'RISK_MANAGER', 'ADMIN', 'SUPERADMIN', 'SUPPORT'].includes(role) && (
         <>
           <div className="metrics-row">
             <div className="metric-card">

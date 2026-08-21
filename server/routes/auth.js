@@ -58,7 +58,7 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Champs obligatoires manquants' });
     }
 
-    const validRoles = ['SUPERADMIN', 'AGENT', 'SUPERVISEUR', 'COMITE', 'RISK_MANAGER', 'ADMIN', 'AUDITEUR'];
+    const validRoles = ['SUPERADMIN', 'AGENT', 'SUPERVISEUR', 'COMITE', 'RISK_MANAGER', 'ADMIN', 'AUDITEUR', 'SUPPORT'];
     if (!validRoles.includes(role)) {
       return res.status(400).json({ error: 'Rôle invalide' });
     }
@@ -90,6 +90,67 @@ router.post('/register', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur' });
   }
+});
+
+// Change own password
+router.put('/password', authMiddleware, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+    if (!current_password || !new_password) return res.status(400).json({ error: 'Mot de passe actuel et nouveau requis' });
+    if (new_password.length < 6) return res.status(400).json({ error: 'Le nouveau mot de passe doit faire au moins 6 caractères' });
+
+    const db = getDb();
+    const result = await db.execute({ sql: 'SELECT password_hash FROM users WHERE id = ?', args: [req.user.id] });
+    if (!result.rows[0] || result.rows[0].password_hash !== hashPassword(current_password)) {
+      return res.status(401).json({ error: 'Mot de passe actuel incorrect' });
+    }
+
+    await db.execute({ sql: 'UPDATE users SET password_hash = ? WHERE id = ?', args: [hashPassword(new_password), req.user.id] });
+    await logAudit(req.user.tenant_id, req.user.id, req.user.name, req.user.role, 'PASSWORD_CHANGE', 'user', req.user.id, {}, req);
+    res.json({ ok: true, message: 'Mot de passe modifié' });
+  } catch { res.status(500).json({ error: 'Erreur serveur' }); }
+});
+
+// Admin: reset user password
+router.put('/users/:userId/reset-password', authMiddleware, async (req, res) => {
+  try {
+    if (!['ADMIN', 'SUPERADMIN'].includes(req.user.role)) return res.status(403).json({ error: 'Accès refusé' });
+    const { new_password } = req.body;
+    if (!new_password) return res.status(400).json({ error: 'Nouveau mot de passe requis' });
+    if (new_password.length < 6) return res.status(400).json({ error: 'Le mot de passe doit faire au moins 6 caractères' });
+
+    const db = getDb();
+    const user = await db.execute({ sql: 'SELECT id, name FROM users WHERE id = ? AND tenant_id = ?', args: [req.params.userId, req.user.tenant_id] });
+    if (!user.rows[0]) return res.status(404).json({ error: 'Utilisateur introuvable' });
+
+    await db.execute({ sql: 'UPDATE users SET password_hash = ? WHERE id = ?', args: [hashPassword(new_password), req.params.userId] });
+    await logAudit(req.user.tenant_id, req.user.id, req.user.name, req.user.role, 'PASSWORD_RESET', 'user', req.params.userId, { target_name: user.rows[0].name }, req);
+    res.json({ ok: true, message: `Mot de passe réinitialisé pour ${user.rows[0].name}` });
+  } catch { res.status(500).json({ error: 'Erreur serveur' }); }
+});
+
+// Admin: list users
+router.get('/users', authMiddleware, async (req, res) => {
+  try {
+    if (!['ADMIN', 'SUPERADMIN'].includes(req.user.role)) return res.status(403).json({ error: 'Accès refusé' });
+    const db = getDb();
+    const result = await db.execute({ sql: 'SELECT id, email, name, role, phone, agency, active, created_at FROM users WHERE tenant_id = ? ORDER BY name', args: [req.user.tenant_id] });
+    res.json({ ok: true, users: result.rows });
+  } catch { res.status(500).json({ error: 'Erreur serveur' }); }
+});
+
+// Admin: toggle user active
+router.put('/users/:userId/toggle', authMiddleware, async (req, res) => {
+  try {
+    if (!['ADMIN', 'SUPERADMIN'].includes(req.user.role)) return res.status(403).json({ error: 'Accès refusé' });
+    const db = getDb();
+    const user = await db.execute({ sql: 'SELECT id, name, active FROM users WHERE id = ? AND tenant_id = ?', args: [req.params.userId, req.user.tenant_id] });
+    if (!user.rows[0]) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    const newActive = user.rows[0].active ? 0 : 1;
+    await db.execute({ sql: 'UPDATE users SET active = ? WHERE id = ?', args: [newActive, req.params.userId] });
+    await logAudit(req.user.tenant_id, req.user.id, req.user.name, req.user.role, newActive ? 'USER_ACTIVATED' : 'USER_DEACTIVATED', 'user', req.params.userId, { target_name: user.rows[0].name }, req);
+    res.json({ ok: true, active: !!newActive });
+  } catch { res.status(500).json({ error: 'Erreur serveur' }); }
 });
 
 export default router;
