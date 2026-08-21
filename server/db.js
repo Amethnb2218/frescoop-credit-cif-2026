@@ -39,7 +39,7 @@ export async function initDb() {
       email TEXT NOT NULL,
       password_hash TEXT NOT NULL,
       name TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('SUPERADMIN','AGENT','SUPERVISEUR','COMITE','RISK_MANAGER','ADMIN','AUDITEUR','SUPPORT')),
+      role TEXT NOT NULL CHECK(role IN ('SUPERADMIN','AGENT','SUPERVISEUR','COMITE','RISK_MANAGER','ADMIN','AUDITEUR','SUPPORT','JURY')),
       phone TEXT,
       agency TEXT,
       active INTEGER DEFAULT 1,
@@ -323,6 +323,34 @@ export async function initDb() {
 
   // Migrations for existing databases
   try { await client.execute('ALTER TABLE dossiers ADD COLUMN prequalification_score INTEGER'); } catch {}
+
+  // Migration: add JURY and SUPPORT to role CHECK constraint
+  try {
+    const tableInfo = await client.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'");
+    const sql = tableInfo.rows[0]?.sql || '';
+    if (sql && !sql.includes('JURY')) {
+      await client.executeMultiple(`
+        CREATE TABLE IF NOT EXISTS users_migrated (
+          id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL REFERENCES tenants(id),
+          email TEXT NOT NULL,
+          password_hash TEXT NOT NULL,
+          name TEXT NOT NULL,
+          role TEXT NOT NULL CHECK(role IN ('SUPERADMIN','AGENT','SUPERVISEUR','COMITE','RISK_MANAGER','ADMIN','AUDITEUR','SUPPORT','JURY')),
+          phone TEXT,
+          agency TEXT,
+          active INTEGER DEFAULT 1,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now')),
+          UNIQUE(tenant_id, email)
+        );
+        INSERT OR IGNORE INTO users_migrated SELECT id, tenant_id, email, password_hash, name, role, phone, agency, active, created_at, updated_at FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_migrated RENAME TO users;
+      `);
+      console.log('[FresCoop] Migration: rôles JURY/SUPPORT ajoutés');
+    }
+  } catch (e) { console.log('[FresCoop] Migration roles skipped:', e.message); }
 
   return client;
 }
