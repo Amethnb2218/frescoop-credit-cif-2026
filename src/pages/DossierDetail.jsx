@@ -4,7 +4,8 @@ import { api, getUser } from '../lib/api';
 import { formatCFA, formatDate, formatDateTime, STATUS_LABELS, MONTHS, prequalLabel, prequalColor } from '../lib/format';
 import { EVIDENCE_LEVELS } from '../lib/tokens';
 import { isOnline, addToSyncQueue, saveEvidenceOffline } from '../lib/offline';
-import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff, Shield, MapPin, FileCheck } from 'lucide-react';
+import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff, Shield, MapPin, FileCheck, Printer } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 function getTabsForRole(role) {
   if (role === 'COMITE') return ['Mémo décision', 'Décision'];
@@ -137,6 +138,17 @@ export default function DossierDetail() {
   );
 }
 
+function ScoreCircle({ score }) {
+  if (score == null) return null;
+  const color = score > 70 ? '#059669' : score >= 40 ? '#d97706' : '#dc2626';
+  const bg = score > 70 ? '#ecfdf5' : score >= 40 ? '#fffbeb' : '#fef2f2';
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 56, height: 56, borderRadius: '50%', background: bg, border: `3px solid ${color}`, flexShrink: 0 }}>
+      <span style={{ fontSize: 18, fontWeight: 700, color }}>{score}</span>
+    </div>
+  );
+}
+
 function MemoTab({ dossier, evidence, cashflow, ruleEvals }) {
   const totalRevenue = cashflow.reduce((s, e) => s + (e.revenue || 0), 0);
   const totalExpenses = cashflow.reduce((s, e) => s + (e.expenses || 0), 0);
@@ -146,10 +158,18 @@ function MemoTab({ dossier, evidence, cashflow, ruleEvals }) {
 
   return (
     <div>
-      <div style={{ background: '#fff', border: '1px solid var(--c-border)', borderRadius: 'var(--radius-md)', padding: 24 }}>
+      <div className="no-print" style={{ marginBottom: 12, display: 'flex', justifyContent: 'flex-end' }}>
+        <button className="btn btn-secondary btn-sm" onClick={() => window.print()}><Printer size={14} /> Imprimer le mémo</button>
+      </div>
+      <div className="print-area" style={{ background: '#fff', border: '1px solid var(--c-border)', borderRadius: 'var(--radius-md)', padding: 24 }}>
         <div style={{ textAlign: 'center', marginBottom: 24, paddingBottom: 16, borderBottom: '2px solid var(--c-primary)' }}>
-          <h2 style={{ fontSize: 'var(--fs-xl)', fontWeight: 700, color: 'var(--c-primary)' }}>Mémo de crédit</h2>
-          <p style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', marginTop: 4 }}>{dossier.applicant_name} — {formatCFA(dossier.amount_requested)}</p>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16 }}>
+            {dossier.prequalification_score != null && <ScoreCircle score={dossier.prequalification_score} />}
+            <div>
+              <h2 style={{ fontSize: 'var(--fs-xl)', fontWeight: 700, color: 'var(--c-primary)' }}>Mémo de crédit</h2>
+              <p style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', marginTop: 4 }}>{dossier.applicant_name} — {formatCFA(dossier.amount_requested)}</p>
+            </div>
+          </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
@@ -226,6 +246,14 @@ function MemoTab({ dossier, evidence, cashflow, ruleEvals }) {
           <MemoSection title="Note de l'agent">
             <p style={{ fontStyle: 'italic' }}>{dossier.agent_note}</p>
           </MemoSection>
+        )}
+
+        {dossier.prequalification_score != null && (
+          <div style={{ textAlign: 'center', paddingTop: 16, borderTop: '2px solid var(--c-primary)' }}>
+            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginBottom: 4 }}>SCORE DE CREDIT</div>
+            <ScoreCircle score={dossier.prequalification_score} />
+            <div style={{ fontSize: 'var(--fs-12)', color: '#6b7280', marginTop: 4 }}>/100</div>
+          </div>
         )}
       </div>
     </div>
@@ -477,6 +505,21 @@ function CashflowTab({ dossierId, cashflow, dossier, onReload }) {
         <div className="metric-card"><div className="metric-value" style={{ fontSize: 'var(--fs-xl)' }}>{formatCFA(monthlyPayment)}</div><div className="metric-label">Échéance mensuelle</div></div>
       </div>
 
+      <div className="surface mb-4">
+        <div className="surface-title">Évolution mensuelle</div>
+        <ResponsiveContainer width="100%" height={220}>
+          <LineChart data={entries.map((e, i) => ({ name: MONTHS[i]?.slice(0, 3), revenus: e.revenue || 0, charges: (e.expenses || 0) + (e.debt_payments || 0), net: (e.revenue || 0) - (e.expenses || 0) - (e.debt_payments || 0) }))}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} tickFormatter={v => v >= 1000000 ? `${(v/1000000).toFixed(1)}M` : v >= 1000 ? `${(v/1000).toFixed(0)}k` : v} />
+            <Tooltip formatter={v => new Intl.NumberFormat('fr-FR').format(v) + ' FCFA'} />
+            <Line type="monotone" dataKey="revenus" stroke="#059669" strokeWidth={2} dot={false} name="Revenus" />
+            <Line type="monotone" dataKey="charges" stroke="#dc2626" strokeWidth={2} dot={false} name="Charges" />
+            <Line type="monotone" dataKey="net" stroke="#2563eb" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Flux net" />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
       <div className="surface" style={{ padding: 0 }}>
         <div className="table-container">
           <table className="cashflow-table">
@@ -553,6 +596,18 @@ function PrequalTab({ dossier, ruleEvals, onEvaluate }) {
         <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600 }}>Préqualification</h2>
         <button className="btn btn-primary btn-sm" onClick={onEvaluate}><Play size={14} /> Évaluer les règles</button>
       </div>
+
+      {dossier.prequalification_score != null && (
+        <div className="surface mb-4" style={{ display: 'flex', alignItems: 'center', gap: 20, padding: 20 }}>
+          <ScoreCircle score={dossier.prequalification_score} />
+          <div>
+            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700 }}>Score de crédit : {dossier.prequalification_score}/100</div>
+            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', marginTop: 2 }}>
+              {dossier.prequalification_score > 70 ? 'Dossier solide — recommandation favorable' : dossier.prequalification_score >= 40 ? 'Dossier à examiner — points d\'attention détectés' : 'Dossier fragile — risque élevé identifié'}
+            </div>
+          </div>
+        </div>
+      )}
 
       {dossier.prequalification && (
         <div className={`prequal-panel ${prequalColor(dossier.prequalification) === 'green' ? 'success' : prequalColor(dossier.prequalification) === 'amber' ? 'warning' : 'error'}`}>

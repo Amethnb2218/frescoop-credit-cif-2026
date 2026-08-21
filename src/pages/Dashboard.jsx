@@ -3,7 +3,24 @@ import { Link } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
 import { formatCFA, STATUS_LABELS, prequalLabel, prequalColor } from '../lib/format';
 import { isOnline, getSyncQueue } from '../lib/offline';
-import { Plus, FileText, AlertTriangle, CheckCircle, Clock, BookOpen } from 'lucide-react';
+import { Plus, FileText, AlertTriangle, CheckCircle, Clock, BookOpen, X } from 'lucide-react';
+
+function DemoGuide() {
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem('frescoop_demo_dismissed') === '1');
+  if (dismissed) return null;
+  function dismiss() { localStorage.setItem('frescoop_demo_dismissed', '1'); setDismissed(true); }
+  return (
+    <div style={{ background: 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)', border: '1px solid #a7f3d0', borderRadius: 'var(--radius-md)', padding: '14px 18px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 14 }}>
+      <div style={{ fontSize: 24, flexShrink: 0 }}>🎯</div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 600, fontSize: 'var(--fs-13)', color: '#065f46' }}>Découvrez FresCoop</div>
+        <div style={{ fontSize: 'var(--fs-12)', color: '#047857', marginTop: 2 }}>Ouvrez le dossier « Awa Faye » pour explorer une instruction complète de crédit agricole avec preuves, cash-flow saisonnier et préqualification.</div>
+      </div>
+      <Link to="/dossiers" className="btn btn-primary btn-sm" style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>Voir les dossiers</Link>
+      <button onClick={dismiss} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 4 }}><X size={16} /></button>
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const [dossiers, setDossiers] = useState([]);
@@ -37,6 +54,7 @@ export default function Dashboard() {
 
   return (
     <div>
+      <DemoGuide />
       <div className="page-header">
         <div className="flex justify-between items-center">
           <div>

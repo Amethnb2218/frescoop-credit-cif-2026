@@ -301,15 +301,36 @@ select.input { appearance: auto; }
 .login-title { font-size: var(--fs-16); font-weight: 700; color: var(--c-text); }
 .login-subtitle { font-size: var(--fs-12); color: var(--c-text-tertiary); margin-top: 2px; }
 
-/* ========== RESPONSIVE ========== */
+/* ========== NOTIFICATION BADGE ========== */
+.nav-badge { background: #dc2626; color: #fff; font-size: 10px; font-weight: 700; min-width: 18px; height: 18px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; margin-left: auto; }
+
+/* ========== MOBILE ========== */
+.mobile-hamburger { display: none; position: fixed; top: 10px; left: 10px; z-index: 1100; background: #fff; border: 1px solid var(--c-border); border-radius: var(--radius); padding: 6px 8px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+.mobile-close-btn { display: none; background: none; border: none; cursor: pointer; color: var(--c-text-secondary); padding: 4px; }
+.mobile-overlay { display: none; }
+
 @media (max-width: 768px) {
-  .nav-sidebar { display: none; }
-  .page-content { margin-left: 0; }
+  .mobile-hamburger { display: flex; }
+  .mobile-close-btn { display: block; position: absolute; top: 12px; right: 12px; }
+  .mobile-overlay { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 999; }
+  .nav-sidebar { display: none; position: fixed; top: 0; left: 0; bottom: 0; z-index: 1000; width: 240px; box-shadow: 4px 0 20px rgba(0,0,0,.2); }
+  .nav-sidebar.mobile-open { display: flex; }
+  .page-content { margin-left: 0; padding-top: 48px; }
   .offline-banner { left: 0; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .page-inner { padding: 12px; }
   .prequal-dimensions { grid-template-columns: 1fr; }
   .metrics-row { grid-template-columns: 1fr 1fr; }
+}
+
+/* ========== PRINT ========== */
+@media print {
+  .nav-sidebar, .mobile-hamburger, .mobile-overlay, .offline-banner, .tab-list, .workflow-bar, .page-header, .no-print { display: none !important; }
+  .app-layout { display: block; }
+  .page-content { margin-left: 0 !important; padding: 0 !important; }
+  .page-inner { padding: 0 !important; }
+  .print-area { border: none !important; box-shadow: none !important; padding: 0 !important; }
+  body { background: #fff; }
 }
 
 /* ========== UTILITY ========== */

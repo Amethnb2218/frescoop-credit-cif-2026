@@ -1,10 +1,10 @@
 import { Routes, Route, Navigate, useLocation, useNavigate, Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { isLoggedIn, getUser, logout } from './lib/api';
+import { isLoggedIn, getUser, logout, api } from './lib/api';
 import { isOnline, onConnectivityChange } from './lib/offline';
 import { ROLE_LABELS } from './lib/format';
 import { ROLE_NAV } from './lib/tokens';
-import { FileText, Home, Shield, Users, BookOpen, Scale, LogOut, WifiOff, Settings, Gavel, BarChart3, Package, RefreshCw } from 'lucide-react';
+import { FileText, Home, Shield, Users, BookOpen, Scale, LogOut, WifiOff, Settings, Gavel, BarChart3, Package, RefreshCw, Menu, X } from 'lucide-react';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -35,17 +35,34 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
-function Navigation() {
+function Navigation({ mobileOpen, setMobileOpen }) {
   const location = useLocation();
   const navigate = useNavigate();
   const user = getUser();
   const allowedKeys = ROLE_NAV[user?.role] || ['dashboard', 'dossiers'];
+  const [badge, setBadge] = useState(0);
+
+  useEffect(() => {
+    if (isOnline()) {
+      api.getDossiers().then(res => {
+        const dossiers = res.dossiers || [];
+        const role = user?.role;
+        let count = 0;
+        if (role === 'AGENT') count = dossiers.filter(d => d.status === 'draft').length;
+        else if (role === 'SUPERVISEUR') count = dossiers.filter(d => ['submitted', 'verification', 'review'].includes(d.status)).length;
+        else if (role === 'COMITE') count = dossiers.filter(d => d.status === 'committee').length;
+        else count = dossiers.filter(d => ['submitted', 'verification', 'review', 'committee'].includes(d.status)).length;
+        setBadge(count);
+      }).catch(() => {});
+    }
+  }, [location.pathname]);
 
   return (
-    <nav className="nav-sidebar">
+    <nav className={`nav-sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
       <div className="nav-brand">
         <div className="nav-brand-name">FresCoop</div>
         <div className="nav-brand-desc">Crédit agricole</div>
+        <button className="mobile-close-btn" onClick={() => setMobileOpen(false)}><X size={18} /></button>
       </div>
 
       <div className="nav-section">
@@ -54,10 +71,12 @@ function Navigation() {
           const item = NAV_ITEMS[key];
           if (!item) return null;
           const isActive = item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to.split('?')[0]);
+          const showBadge = key === 'dossiers' && badge > 0;
           return (
-            <Link key={key} to={item.to} className={`nav-item ${isActive ? 'active' : ''}`}>
+            <Link key={key} to={item.to} className={`nav-item ${isActive ? 'active' : ''}`} onClick={() => setMobileOpen(false)}>
               <item.icon size={16} />
               {item.label}
+              {showBadge && <span className="nav-badge">{badge}</span>}
             </Link>
           );
         })}
@@ -86,6 +105,7 @@ function OfflineBanner({ online }) {
 
 export default function App() {
   const [online, setOnline] = useState(isOnline());
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => onConnectivityChange(setOnline), []);
 
@@ -96,7 +116,9 @@ export default function App() {
       <Route path="*" element={
         <ProtectedRoute>
           <div className="app-layout">
-            <Navigation />
+            <button className="mobile-hamburger" onClick={() => setMobileOpen(true)}><Menu size={20} /></button>
+            {mobileOpen && <div className="mobile-overlay" onClick={() => setMobileOpen(false)}></div>}
+            <Navigation mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
             <OfflineBanner online={online} />
             <div className="page-content">
               <div className="page-inner">

@@ -140,22 +140,34 @@ router.post('/evaluate/:dossierId', authMiddleware, tenantGuard, async (req, res
       reasons = ['Toutes les règles respectées', 'Capacité de remboursement suffisante', 'Preuves vérifiées'];
     }
 
+    // Compute numeric score (0-100)
+    let score = 50;
+    if (evidenceConfidence === 'HIGH') score += 20;
+    else if (evidenceConfidence === 'MEDIUM') score += 10;
+    if (repaymentCapacity === 'SUFFICIENT') score += 20;
+    else if (repaymentCapacity === 'LIMIT') score += 10;
+    const nonTriggered = evaluations.filter(e => !e.triggered).length;
+    score += Math.min(nonTriggered * 2, 20);
+    score += Math.min(evidenceACount * 3 + evidenceBCount * 2, 10);
+    score = Math.min(100, Math.max(0, score));
+    if (hasNonEligible) score = Math.min(score, 25);
+
     await db.execute({
       sql: `UPDATE dossiers SET evidence_confidence = ?, repayment_capacity = ?,
-            prequalification = ?, prequalification_reasons = ?, updated_at = datetime('now')
+            prequalification = ?, prequalification_reasons = ?, prequalification_score = ?, updated_at = datetime('now')
             WHERE id = ? AND tenant_id = ?`,
-      args: [evidenceConfidence, repaymentCapacity, prequalification, JSON.stringify(reasons), dossierId, req.tenantId],
+      args: [evidenceConfidence, repaymentCapacity, prequalification, JSON.stringify(reasons), score, dossierId, req.tenantId],
     });
 
     await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, 'RULES_EVALUATED', 'dossier', dossierId, {
-      prequalification, evidenceConfidence, repaymentCapacity,
+      prequalification, evidenceConfidence, repaymentCapacity, score,
       rules_triggered: evaluations.filter(e => e.triggered).length,
     }, req);
 
     res.json({
       ok: true,
       evaluations,
-      summary: { evidence_confidence: evidenceConfidence, repayment_capacity: repaymentCapacity, prequalification, reasons },
+      summary: { evidence_confidence: evidenceConfidence, repayment_capacity: repaymentCapacity, prequalification, reasons, score },
     });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur', detail: err.message });

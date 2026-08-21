@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 import { STATUS_LABELS, formatCFA } from '../lib/format';
+import { BarChart, Bar, PieChart, Pie, Cell, Tooltip, ResponsiveContainer, XAxis, YAxis } from 'recharts';
 
 export default function StatsPage() {
   const [stats, setStats] = useState(null);
@@ -91,25 +92,14 @@ export default function StatsPage() {
         <div className="surface">
           <div className="surface-title">Répartition par statut</div>
           {stats.dossiers_by_status && Object.keys(stats.dossiers_by_status).length > 0 ? (
-            <div style={{ display: 'grid', gap: 8 }}>
-              {Object.entries(stats.dossiers_by_status).map(([status, count]) => {
-                const total = stats.total_dossiers || 1;
-                const pct = Math.round((count / total) * 100);
-                return (
-                  <div key={status} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                        <span style={{ fontSize: 'var(--fs-12)', fontWeight: 500 }}>{STATUS_LABELS[status] || status}</span>
-                        <span style={{ fontSize: 'var(--fs-12)', fontWeight: 600 }}>{count}</span>
-                      </div>
-                      <div style={{ height: 6, background: 'var(--c-100)', borderRadius: 3, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: `${pct}%`, background: 'var(--c-primary)', borderRadius: 3, transition: 'width .3s' }}></div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={Object.entries(stats.dossiers_by_status).map(([k, v]) => ({ name: STATUS_LABELS[k] || k, count: v }))} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={50} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="count" fill="#1b6b52" radius={[3, 3, 0, 0]} name="Dossiers" />
+              </BarChart>
+            </ResponsiveContainer>
           ) : (
             <p className="text-sm text-muted">Aucune donnée disponible.</p>
           )}
@@ -118,15 +108,26 @@ export default function StatsPage() {
         <div className="surface">
           <div className="surface-title">Préqualification</div>
           {stats.prequalification_distribution && Object.keys(stats.prequalification_distribution).length > 0 ? (
-            <div style={{ display: 'grid', gap: 10 }}>
-              {Object.entries(stats.prequalification_distribution).map(([key, count]) => (
-                <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: key === 'PREQUALIFIE' ? '#ecfdf5' : key === 'REVUE_REQUISE' ? '#fffbeb' : key === 'NON_ELIGIBLE' ? '#fef2f2' : '#f9fafb', borderRadius: 'var(--radius)', border: '1px solid var(--c-border-light)' }}>
-                  <span style={{ fontSize: 'var(--fs-12)', fontWeight: 500 }}>
-                    {key === 'PREQUALIFIE' ? 'Préqualifié' : key === 'REVUE_REQUISE' ? 'Revue requise' : key === 'NON_ELIGIBLE' ? 'Non éligible' : 'Non évalué'}
-                  </span>
-                  <span style={{ fontSize: 'var(--fs-md)', fontWeight: 700, color: key === 'PREQUALIFIE' ? 'var(--c-success)' : key === 'NON_ELIGIBLE' ? 'var(--c-error)' : 'var(--c-text)' }}>{count}</span>
-                </div>
-              ))}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <ResponsiveContainer width="50%" height={180}>
+                <PieChart>
+                  <Pie data={Object.entries(stats.prequalification_distribution).map(([k, v]) => ({ name: k === 'PREQUALIFIE' ? 'Préqualifié' : k === 'REVUE_REQUISE' ? 'Revue requise' : k === 'NON_ELIGIBLE' ? 'Non éligible' : 'Non évalué', value: v }))} cx="50%" cy="50%" innerRadius={35} outerRadius={65} dataKey="value" paddingAngle={2}>
+                    {Object.keys(stats.prequalification_distribution).map((k, i) => (
+                      <Cell key={i} fill={k === 'PREQUALIFIE' ? '#059669' : k === 'REVUE_REQUISE' ? '#d97706' : k === 'NON_ELIGIBLE' ? '#dc2626' : '#9ca3af'} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ display: 'grid', gap: 8 }}>
+                {Object.entries(stats.prequalification_distribution).map(([key, count]) => (
+                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-12)' }}>
+                    <span style={{ width: 10, height: 10, borderRadius: 2, background: key === 'PREQUALIFIE' ? '#059669' : key === 'REVUE_REQUISE' ? '#d97706' : key === 'NON_ELIGIBLE' ? '#dc2626' : '#9ca3af' }}></span>
+                    <span>{key === 'PREQUALIFIE' ? 'Préqualifié' : key === 'REVUE_REQUISE' ? 'Revue requise' : key === 'NON_ELIGIBLE' ? 'Non éligible' : 'Non évalué'}</span>
+                    <span style={{ fontWeight: 700, marginLeft: 'auto' }}>{count}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : (
             <p className="text-sm text-muted">Aucune donnée disponible.</p>

@@ -39,7 +39,7 @@ export async function initDb() {
       email TEXT NOT NULL,
       password_hash TEXT NOT NULL,
       name TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('SUPERADMIN','AGENT','SUPERVISEUR','COMITE','RISK_MANAGER','ADMIN','AUDITEUR')),
+      role TEXT NOT NULL CHECK(role IN ('SUPERADMIN','AGENT','SUPERVISEUR','COMITE','RISK_MANAGER','ADMIN','AUDITEUR','SUPPORT')),
       phone TEXT,
       agency TEXT,
       active INTEGER DEFAULT 1,
@@ -88,6 +88,7 @@ export async function initDb() {
       risk_flags TEXT DEFAULT '[]',
       prequalification TEXT,
       prequalification_reasons TEXT DEFAULT '[]',
+      prequalification_score INTEGER,
 
       -- Committee decision
       decision TEXT CHECK(decision IN ('approved','refused','complement','modified')),
@@ -319,6 +320,9 @@ export async function initDb() {
       created_at TEXT DEFAULT (datetime('now'))
     );
   `);
+
+  // Migrations for existing databases
+  try { await client.execute('ALTER TABLE dossiers ADD COLUMN prequalification_score INTEGER'); } catch {}
 
   return client;
 }
