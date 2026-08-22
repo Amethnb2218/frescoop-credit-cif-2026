@@ -4,7 +4,7 @@ import { authMiddleware, tenantGuard, requireRole } from '../auth.js';
 
 const router = Router();
 
-router.get('/', authMiddleware, tenantGuard, requireRole('ADMIN', 'SUPERADMIN', 'RISK_MANAGER', 'SUPERVISEUR'), async (req, res) => {
+router.get('/', authMiddleware, tenantGuard, requireRole('ADMIN', 'SUPERADMIN', 'RISK_MANAGER', 'SUPERVISEUR', 'AUDITEUR', 'JURY', 'SUPPORT'), async (req, res) => {
   try {
     const db = getDb();
     const tid = req.tenantId;

@@ -49,6 +49,9 @@ export default function DossierDetail() {
       setStressTests(res.stress_tests || []);
       setRuleEvals(res.rule_evaluations || []);
       setRiskFlags(res.risk_flags || []);
+      if (res.dossier && !res.dossier.prequalification_score && res.dossier.status !== 'draft') {
+        try { await api.evaluateRules(id); const r2 = await api.getDossier(id); setDossier(r2.dossier); setRuleEvals(r2.rule_evaluations || []); } catch {}
+      }
     } catch (err) {}
     finally { setLoading(false); }
   }
@@ -288,87 +291,147 @@ function SummaryTab({ dossier, evidence, cashflow, bicData, onCheckBic }) {
   const totalRevenue = cashflow.reduce((s, e) => s + (e.revenue || 0), 0);
   const totalExpenses = cashflow.reduce((s, e) => s + (e.expenses || 0), 0);
   const totalDebt = cashflow.reduce((s, e) => s + (e.debt_payments || 0), 0);
+  const fluxNet = totalRevenue - totalExpenses - totalDebt;
+  const monthlyPayment = dossier.amount_requested && dossier.duration_months ? Math.ceil(dossier.amount_requested / dossier.duration_months) : 0;
 
   return (
-    <div className="grid-2">
-      <div className="surface">
-        <Section title="Identité">
-          <p><strong>{dossier.applicant_name}</strong></p>
-          <p className="text-sm text-muted">{dossier.applicant_phone} · {dossier.applicant_id_number}</p>
-          <p className="text-sm">{dossier.applicant_location}</p>
-        </Section>
-        <Section title="Activité">
-          <p>{dossier.sector} · {dossier.activity_type}</p>
-          <p className="text-sm text-muted">{dossier.years_experience} ans · {dossier.surface_ha} ha · Cycle: {dossier.production_cycle}</p>
-        </Section>
-        <Section title="Demande de crédit">
-          <p style={{ fontSize: 'var(--fs-xl)', fontWeight: 700 }}>{formatCFA(dossier.amount_requested)}</p>
-          <p className="text-sm">{dossier.credit_purpose}</p>
-          <p className="text-sm text-muted">{dossier.duration_months} mois · {dossier.desired_schedule}</p>
-        </Section>
-        <Section title="Garanties">
-          <p className="text-sm">Épargne: {formatCFA(dossier.savings_amount)} · {dossier.guarantee_type}</p>
-          {dossier.group_guarantee && <p className="text-sm text-muted">{dossier.group_guarantee}</p>}
-        </Section>
-        {dossier.agent_note && (
-          <Section title="Note de l'agent">
-            <p className="text-sm">{dossier.agent_note}</p>
-          </Section>
+    <div>
+      {/* Score + Key metrics banner */}
+      <div style={{ display: 'grid', gridTemplateColumns: dossier.prequalification_score ? '120px 1fr' : '1fr', gap: 16, marginBottom: 20 }}>
+        {dossier.prequalification_score && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 16, background: dossier.prequalification_score > 70 ? '#ecfdf5' : dossier.prequalification_score >= 40 ? '#fffbeb' : '#fef2f2', borderRadius: 'var(--radius-md)', border: `2px solid ${dossier.prequalification_score > 70 ? '#a7f3d0' : dossier.prequalification_score >= 40 ? '#fde68a' : '#fca5a5'}` }}>
+            <ScoreCircle score={dossier.prequalification_score} />
+            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginTop: 6, fontWeight: 600 }}>SCORE</div>
+          </div>
         )}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+          <div style={{ padding: '12px 10px', background: '#f9fafb', borderRadius: 'var(--radius)', textAlign: 'center', border: '1px solid #e5e7eb' }}>
+            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Montant demandé</div>
+            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, marginTop: 2 }}>{formatCFA(dossier.amount_requested)}</div>
+          </div>
+          <div style={{ padding: '12px 10px', background: '#f9fafb', borderRadius: 'var(--radius)', textAlign: 'center', border: '1px solid #e5e7eb' }}>
+            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Durée</div>
+            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, marginTop: 2 }}>{dossier.duration_months} mois</div>
+          </div>
+          <div style={{ padding: '12px 10px', background: fluxNet >= 0 ? '#ecfdf5' : '#fef2f2', borderRadius: 'var(--radius)', textAlign: 'center', border: `1px solid ${fluxNet >= 0 ? '#a7f3d0' : '#fca5a5'}` }}>
+            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Flux net annuel</div>
+            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, marginTop: 2, color: fluxNet >= 0 ? '#059669' : '#dc2626' }}>{formatCFA(fluxNet)}</div>
+          </div>
+          <div style={{ padding: '12px 10px', background: '#f9fafb', borderRadius: 'var(--radius)', textAlign: 'center', border: '1px solid #e5e7eb' }}>
+            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Preuves</div>
+            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, marginTop: 2 }}>{evidence.length} <span style={{ fontSize: 'var(--fs-xs)', fontWeight: 400, color: '#6b7280' }}>({evidence.filter(e => ['A','B'].includes(e.verification_level)).length} vérifiées)</span></div>
+          </div>
+        </div>
       </div>
 
-      <div>
-        {dossier.prequalification && (
-          <div className={`prequal-panel ${prequalColor(dossier.prequalification) === 'green' ? 'success' : prequalColor(dossier.prequalification) === 'amber' ? 'warning' : 'error'}`}>
-            <div className="prequal-title">{prequalLabel(dossier.prequalification)}</div>
-            <div className="prequal-dimensions">
-              <div><div className="prequal-dim-label">Confiance preuves</div><div className="prequal-dim-value">{dossier.evidence_confidence || '—'}</div></div>
-              <div><div className="prequal-dim-label">Capacité remboursement</div><div className="prequal-dim-value">{dossier.repayment_capacity || '—'}</div></div>
-              <div><div className="prequal-dim-label">Preuves au dossier</div><div className="prequal-dim-value">{evidence.length}</div></div>
-            </div>
+      {/* Decision banner if exists */}
+      {dossier.decision && (
+        <div style={{ marginBottom: 16, padding: '12px 16px', borderRadius: 'var(--radius-md)', borderLeft: `4px solid ${dossier.decision === 'approved' || dossier.decision === 'modified' ? '#059669' : dossier.decision === 'refused' ? '#dc2626' : '#d97706'}`, background: dossier.decision === 'approved' || dossier.decision === 'modified' ? '#ecfdf5' : dossier.decision === 'refused' ? '#fef2f2' : '#fffbeb', display: 'flex', alignItems: 'center', gap: 10 }}>
+          {dossier.decision === 'approved' || dossier.decision === 'modified' ? <CheckCircle size={18} color="#059669" /> : dossier.decision === 'refused' ? <XCircle size={18} color="#dc2626" /> : <AlertTriangle size={18} color="#d97706" />}
+          <div>
+            <strong style={{ fontSize: 'var(--fs-13)' }}>{dossier.decision === 'approved' ? 'Crédit approuvé' : dossier.decision === 'refused' ? 'Crédit refusé' : dossier.decision === 'complement' ? 'Complément requis' : 'Approuvé avec modification'}</strong>
+            {dossier.decision_amount && <span style={{ fontSize: 'var(--fs-12)', marginLeft: 12, color: '#374151' }}>{formatCFA(dossier.decision_amount)}</span>}
           </div>
-        )}
-
-        <div className="surface mb-4">
-          <Section title="Cash-flow annuel">
-            <div className="grid-3" style={{ gap: 12 }}>
-              <div><div className="text-xs text-muted">Revenus</div><div className="font-bold text-success">{formatCFA(totalRevenue)}</div></div>
-              <div><div className="text-xs text-muted">Charges + dettes</div><div className="font-bold text-error">{formatCFA(totalExpenses + totalDebt)}</div></div>
-              <div><div className="text-xs text-muted">Flux net</div><div className="font-bold">{formatCFA(totalRevenue - totalExpenses - totalDebt)}</div></div>
-            </div>
-          </Section>
         </div>
+      )}
 
-        {dossier.decision && (
-          <div className="surface mb-4" style={{ borderLeft: `4px solid ${dossier.decision === 'approved' || dossier.decision === 'modified' ? '#059669' : dossier.decision === 'refused' ? '#dc2626' : '#d97706'}` }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              {dossier.decision === 'approved' || dossier.decision === 'modified' ? <CheckCircle size={18} color="#059669" /> : dossier.decision === 'refused' ? <XCircle size={18} color="#dc2626" /> : <AlertTriangle size={18} color="#d97706" />}
-              <strong style={{ fontSize: 'var(--fs-md)' }}>
-                {dossier.decision === 'approved' ? 'Approuvé' : dossier.decision === 'refused' ? 'Refusé' : dossier.decision === 'complement' ? 'Complément requis' : 'Approuvé avec modification'}
-              </strong>
+      <div className="grid-2">
+        {/* Left column - Applicant info */}
+        <div className="surface">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid #e5e7eb' }}>
+            <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#1b6b52', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14 }}>{(dossier.applicant_name || '?')[0]}</div>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 'var(--fs-md)' }}>{dossier.applicant_name}</div>
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>{dossier.applicant_phone} · {dossier.applicant_id_number}</div>
             </div>
-            {dossier.decision_amount && <p style={{ fontSize: 'var(--fs-12)' }}>Montant accordé : <strong>{formatCFA(dossier.decision_amount)}</strong></p>}
-            {dossier.decision_motif && <p style={{ fontSize: 'var(--fs-12)', marginTop: 4, color: 'var(--c-600)' }}>{dossier.decision_motif}</p>}
           </div>
-        )}
 
-        <div className="surface mb-4">
-          <div className="flex justify-between items-center">
-            <div className="text-xs font-semibold text-muted" style={{ textTransform: 'uppercase', letterSpacing: '.4px' }}>BIC — Données simulées</div>
-            <button className="btn btn-secondary btn-sm" onClick={onCheckBic}>Consulter</button>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 20px', fontSize: 'var(--fs-12)' }}>
+            <div><span style={{ color: '#6b7280' }}>Localisation</span><div style={{ fontWeight: 500, marginTop: 2 }}>{dossier.applicant_location || '—'}</div></div>
+            <div><span style={{ color: '#6b7280' }}>Filière</span><div style={{ fontWeight: 500, marginTop: 2 }}>{dossier.sector} · {dossier.activity_type}</div></div>
+            <div><span style={{ color: '#6b7280' }}>Expérience</span><div style={{ fontWeight: 500, marginTop: 2 }}>{dossier.years_experience || '—'} ans</div></div>
+            <div><span style={{ color: '#6b7280' }}>Surface</span><div style={{ fontWeight: 500, marginTop: 2 }}>{dossier.surface_ha || '—'} ha</div></div>
+            <div><span style={{ color: '#6b7280' }}>Cycle production</span><div style={{ fontWeight: 500, marginTop: 2 }}>{dossier.production_cycle || '—'}</div></div>
+            <div><span style={{ color: '#6b7280' }}>Calendrier</span><div style={{ fontWeight: 500, marginTop: 2 }}>{dossier.desired_schedule || '—'}</div></div>
           </div>
-          {bicData && (
-            <div style={{ marginTop: 12 }}>
-              {bicData.summary.total_records === 0 ? (
-                <p className="text-sm text-success">Aucun crédit existant trouvé</p>
-              ) : (
-                <div>
-                  <p className="text-sm"><strong>{bicData.summary.total_records}</strong> crédit(s) · Encours: <strong>{formatCFA(bicData.summary.total_outstanding)}</strong></p>
-                  {bicData.summary.has_late_payments && <p className="text-sm text-error">Retard de paiement détecté ({bicData.summary.max_days_late} jours)</p>}
-                </div>
-              )}
+
+          <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>
+            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 6 }}>Objet du crédit</div>
+            <p style={{ fontSize: 'var(--fs-12)', lineHeight: 1.5 }}>{dossier.credit_purpose}</p>
+          </div>
+
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>
+            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 6 }}>Garanties</div>
+            <p style={{ fontSize: 'var(--fs-12)' }}>Épargne: {formatCFA(dossier.savings_amount)} · {dossier.guarantee_type || 'Non renseigné'}</p>
+            {dossier.group_guarantee && <p style={{ fontSize: 'var(--fs-12)', color: '#6b7280', marginTop: 2 }}>{dossier.group_guarantee}</p>}
+          </div>
+
+          {dossier.agent_note && (
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e5e7eb' }}>
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 6 }}>Note de l'agent</div>
+              <p style={{ fontSize: 'var(--fs-12)', fontStyle: 'italic', color: '#374151' }}>{dossier.agent_note}</p>
             </div>
           )}
+        </div>
+
+        {/* Right column - Financial */}
+        <div>
+          <div className="surface mb-4">
+            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 12 }}>Cash-flow annuel</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+              <div style={{ textAlign: 'center', padding: 10, background: '#ecfdf5', borderRadius: 'var(--radius)' }}>
+                <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, color: '#059669' }}>{formatCFA(totalRevenue)}</div>
+                <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginTop: 2 }}>Revenus</div>
+              </div>
+              <div style={{ textAlign: 'center', padding: 10, background: '#fef2f2', borderRadius: 'var(--radius)' }}>
+                <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, color: '#dc2626' }}>{formatCFA(totalExpenses + totalDebt)}</div>
+                <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginTop: 2 }}>Charges + dettes</div>
+              </div>
+              <div style={{ textAlign: 'center', padding: 10, background: fluxNet >= 0 ? '#ecfdf5' : '#fef2f2', borderRadius: 'var(--radius)' }}>
+                <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, color: fluxNet >= 0 ? '#059669' : '#dc2626' }}>{formatCFA(fluxNet)}</div>
+                <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginTop: 2 }}>Flux net</div>
+              </div>
+            </div>
+            {monthlyPayment > 0 && (
+              <div style={{ marginTop: 10, padding: '8px 12px', background: '#f3f4f6', borderRadius: 'var(--radius)', fontSize: 'var(--fs-12)', display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: '#6b7280' }}>Échéance mensuelle estimée</span>
+                <span style={{ fontWeight: 600 }}>{formatCFA(monthlyPayment)}</span>
+              </div>
+            )}
+          </div>
+
+          {dossier.prequalification && (
+            <div className="surface mb-4" style={{ borderLeft: `3px solid ${prequalColor(dossier.prequalification) === 'green' ? '#059669' : prequalColor(dossier.prequalification) === 'amber' ? '#d97706' : '#dc2626'}` }}>
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 8 }}>Préqualification</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ padding: '3px 8px', borderRadius: 'var(--radius)', fontSize: 'var(--fs-12)', fontWeight: 600, background: prequalColor(dossier.prequalification) === 'green' ? '#d1fae5' : prequalColor(dossier.prequalification) === 'amber' ? '#fef3c7' : '#fee2e2', color: prequalColor(dossier.prequalification) === 'green' ? '#065f46' : prequalColor(dossier.prequalification) === 'amber' ? '#92400e' : '#991b1b' }}>{prequalLabel(dossier.prequalification)}</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 10, fontSize: 'var(--fs-12)' }}>
+                <div><span style={{ color: '#6b7280' }}>Confiance</span><div style={{ fontWeight: 600, marginTop: 2 }}>{dossier.evidence_confidence || '—'}</div></div>
+                <div><span style={{ color: '#6b7280' }}>Capacité</span><div style={{ fontWeight: 600, marginTop: 2 }}>{dossier.repayment_capacity || '—'}</div></div>
+                <div><span style={{ color: '#6b7280' }}>Preuves</span><div style={{ fontWeight: 600, marginTop: 2 }}>{evidence.length}</div></div>
+              </div>
+            </div>
+          )}
+
+          <div className="surface">
+            <div className="flex justify-between items-center">
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px' }}>BIC — Données simulées</div>
+              <button className="btn btn-secondary btn-sm" onClick={onCheckBic}>Consulter</button>
+            </div>
+            {bicData && (
+              <div style={{ marginTop: 12 }}>
+                {bicData.summary.total_records === 0 ? (
+                  <p style={{ fontSize: 'var(--fs-12)', color: '#059669' }}>Aucun crédit existant trouvé</p>
+                ) : (
+                  <div>
+                    <p style={{ fontSize: 'var(--fs-12)' }}><strong>{bicData.summary.total_records}</strong> crédit(s) · Encours: <strong>{formatCFA(bicData.summary.total_outstanding)}</strong></p>
+                    {bicData.summary.has_late_payments && <p style={{ fontSize: 'var(--fs-12)', color: '#dc2626', marginTop: 4 }}>Retard de paiement détecté ({bicData.summary.max_days_late} jours)</p>}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -764,7 +827,7 @@ function ControlsTab({ dossierId, dossier }) {
               <div key={i} className={`flag-item ${c.result === 'critical' ? 'critical' : c.result === 'warning' ? 'high' : 'medium'}`}>
                 <div style={{ flex: 1 }}>
                   <div className="flag-title">{c.check_type.replace(/_/g, ' ')}</div>
-                  <div className="flag-desc">{c.details}</div>
+                  <div className="flag-desc">{typeof c.details === 'object' ? JSON.stringify(c.details) : c.details}</div>
                 </div>
                 <span className={`badge ${severityLabel[c.result] || 'badge-neutral'}`}>{c.result === 'clean' ? 'OK' : c.result}</span>
               </div>
