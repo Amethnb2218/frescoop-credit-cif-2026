@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
-import { formatCFA, formatDate, STATUS_LABELS, prequalLabel, prequalColor } from '../lib/format';
+import { formatCFA, formatDate, STATUS_LABELS, prequalLabel, prequalColor, scoreStyle } from '../lib/format';
 import { Plus, Search, Filter } from 'lucide-react';
 
 export default function DossierList() {
@@ -96,9 +96,7 @@ export default function DossierList() {
                     <td style={{ fontWeight: 600 }}>{formatCFA(d.amount_requested)}</td>
                     <td>
                       {d.prequalification_score != null ? (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', background: d.prequalification_score > 70 ? '#ecfdf5' : d.prequalification_score >= 40 ? '#fffbeb' : '#fef2f2', border: `2px solid ${d.prequalification_score > 70 ? '#059669' : d.prequalification_score >= 40 ? '#d97706' : '#dc2626'}`, fontSize: 11, fontWeight: 700, color: d.prequalification_score > 70 ? '#059669' : d.prequalification_score >= 40 ? '#d97706' : '#dc2626' }}>
-                          {d.prequalification_score}
-                        </span>
+                        <ScoreBadge score={d.prequalification_score} prequalification={d.prequalification} />
                       ) : <span className="text-xs text-muted">—</span>}
                     </td>
                     <td>
@@ -123,5 +121,19 @@ export default function DossierList() {
         )}
       </div>
     </div>
+  );
+}
+
+function ScoreBadge({ score, prequalification }) {
+  const style = scoreStyle(score);
+  const description = `${style.label}, score technique ${score} sur 100${prequalification ? `, ${prequalLabel(prequalification)}` : ''}`;
+  return (
+    <span
+      aria-label={description}
+      title={description}
+      style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', background: style.background, border: `2px solid ${style.border}`, fontSize: 11, fontWeight: 700, color: style.color }}
+    >
+      {score}
+    </span>
   );
 }

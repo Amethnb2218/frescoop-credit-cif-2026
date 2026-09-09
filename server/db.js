@@ -89,6 +89,8 @@ export async function initDb() {
       prequalification TEXT,
       prequalification_reasons TEXT DEFAULT '[]',
       prequalification_score INTEGER,
+      prequalification_score_details TEXT DEFAULT '{}',
+      prequalification_score_version INTEGER,
 
       -- Committee decision
       decision TEXT CHECK(decision IN ('approved','refused','complement','modified')),
@@ -323,6 +325,8 @@ export async function initDb() {
 
   // Migrations for existing databases
   try { await client.execute('ALTER TABLE dossiers ADD COLUMN prequalification_score INTEGER'); } catch {}
+  try { await client.execute("ALTER TABLE dossiers ADD COLUMN prequalification_score_details TEXT DEFAULT '{}'"); } catch {}
+  try { await client.execute('ALTER TABLE dossiers ADD COLUMN prequalification_score_version INTEGER'); } catch {}
 
   // Migration: add JURY and SUPPORT to role CHECK constraint
   try {

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
-import { formatCFA, formatDate, formatDateTime, STATUS_LABELS, MONTHS, prequalLabel, prequalColor } from '../lib/format';
+import { formatCFA, formatDate, formatDateTime, STATUS_LABELS, MONTHS, prequalLabel, prequalColor, scoreStyle, parseScoreDetails } from '../lib/format';
 import { EVIDENCE_LEVELS } from '../lib/tokens';
 import { isOnline, addToSyncQueue, saveEvidenceOffline } from '../lib/offline';
 import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff, Shield, MapPin, FileCheck, Printer } from 'lucide-react';
@@ -49,7 +49,7 @@ export default function DossierDetail() {
       setStressTests(res.stress_tests || []);
       setRuleEvals(res.rule_evaluations || []);
       setRiskFlags(res.risk_flags || []);
-      if (res.dossier && !res.dossier.prequalification_score && res.dossier.status !== 'draft') {
+      if (res.dossier && res.dossier.prequalification_score == null && res.dossier.status !== 'draft') {
         try { await api.evaluateRules(id); const r2 = await api.getDossier(id); setDossier(r2.dossier); setRuleEvals(r2.rule_evaluations || []); } catch {}
       }
     } catch (err) {}
@@ -121,17 +121,20 @@ export default function DossierDetail() {
         </div>
       </div>
 
-      {dossier.prequalification_score != null && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '10px 16px', background: '#f9fafb', borderRadius: 'var(--radius-md)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid var(--c-border-light)' }}>
-          <span style={{ fontWeight: 600, color: 'var(--c-text)' }}>Score: <span style={{ color: dossier.prequalification_score > 70 ? '#059669' : dossier.prequalification_score >= 40 ? '#d97706' : '#dc2626', fontSize: 'var(--fs-md)' }}>{dossier.prequalification_score}/100</span></span>
-          <span style={{ color: 'var(--c-500)' }}>|</span>
-          <span>Confiance preuves: <strong>{dossier.evidence_confidence || '—'}</strong></span>
-          <span style={{ color: 'var(--c-500)' }}>|</span>
-          <span>Capacité: <strong>{dossier.repayment_capacity || '—'}</strong></span>
-          <span style={{ color: 'var(--c-500)' }}>|</span>
-          <span>{evidence.filter(e => ['A', 'B'].includes(e.verification_level)).length} preuves vérifiées</span>
-        </div>
-      )}
+      {dossier.prequalification_score != null && (() => {
+        const style = scoreStyle(dossier.prequalification_score);
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '10px 16px', background: '#f9fafb', borderRadius: 'var(--radius-md)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid var(--c-border-light)' }}>
+            <span style={{ fontWeight: 600, color: 'var(--c-text)' }}>Score technique : <span style={{ color: style.color, fontSize: 'var(--fs-md)' }}>{dossier.prequalification_score}/100</span></span>
+            <span style={{ color: 'var(--c-500)' }}>|</span>
+            <span>Confiance preuves: <strong>{dossier.evidence_confidence || '—'}</strong></span>
+            <span style={{ color: 'var(--c-500)' }}>|</span>
+            <span>Capacité: <strong>{dossier.repayment_capacity || '—'}</strong></span>
+            <span style={{ color: 'var(--c-500)' }}>|</span>
+            <span>{evidence.filter(e => ['A', 'B'].includes(e.verification_level)).length} preuves vérifiées</span>
+          </div>
+        );
+      })()}
 
       <div className="workflow-bar">
         {workflowSteps.map((s, i) => (
@@ -158,11 +161,20 @@ export default function DossierDetail() {
 
 function ScoreCircle({ score }) {
   if (score == null) return null;
-  const color = score > 70 ? '#059669' : score >= 40 ? '#d97706' : '#dc2626';
-  const bg = score > 70 ? '#ecfdf5' : score >= 40 ? '#fffbeb' : '#fef2f2';
+  const style = scoreStyle(score);
   return (
-    <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 56, height: 56, borderRadius: '50%', background: bg, border: `3px solid ${color}`, flexShrink: 0 }}>
-      <span style={{ fontSize: 18, fontWeight: 700, color }}>{score}</span>
+    <div aria-label={`${style.label}, score technique ${score} sur 100`} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 56, height: 56, borderRadius: '50%', background: style.background, border: `3px solid ${style.border}`, flexShrink: 0 }}>
+      <span style={{ fontSize: 18, fontWeight: 700, color: style.color }}>{score}</span>
+    </div>
+  );
+}
+
+function ScoreComponent({ label, value }) {
+  if (!value) return null;
+  return (
+    <div style={{ padding: 10, borderRadius: 'var(--radius-sm)', background: '#f9fafb', border: '1px solid var(--c-border-light)' }}>
+      <div className="text-xs text-muted">{label}</div>
+      <div style={{ fontWeight: 700, marginTop: 2 }}>{value.points}/{value.maximum}</div>
     </div>
   );
 }
@@ -268,7 +280,7 @@ function MemoTab({ dossier, evidence, cashflow, ruleEvals }) {
 
         {dossier.prequalification_score != null && (
           <div style={{ textAlign: 'center', paddingTop: 16, borderTop: '2px solid var(--c-primary)' }}>
-            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginBottom: 4 }}>SCORE DE CREDIT</div>
+            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginBottom: 4 }}>SCORE TECHNIQUE</div>
             <ScoreCircle score={dossier.prequalification_score} />
             <div style={{ fontSize: 'var(--fs-12)', color: '#6b7280', marginTop: 4 }}>/100</div>
           </div>
@@ -293,15 +305,16 @@ function SummaryTab({ dossier, evidence, cashflow, bicData, onCheckBic }) {
   const totalDebt = cashflow.reduce((s, e) => s + (e.debt_payments || 0), 0);
   const fluxNet = totalRevenue - totalExpenses - totalDebt;
   const monthlyPayment = dossier.amount_requested && dossier.duration_months ? Math.ceil(dossier.amount_requested / dossier.duration_months) : 0;
+  const scoreVisual = scoreStyle(dossier.prequalification_score);
 
   return (
     <div>
       {/* Score + Key metrics banner */}
-      <div style={{ display: 'grid', gridTemplateColumns: dossier.prequalification_score ? '120px 1fr' : '1fr', gap: 16, marginBottom: 20 }}>
-        {dossier.prequalification_score && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 16, background: dossier.prequalification_score > 70 ? '#ecfdf5' : dossier.prequalification_score >= 40 ? '#fffbeb' : '#fef2f2', borderRadius: 'var(--radius-md)', border: `2px solid ${dossier.prequalification_score > 70 ? '#a7f3d0' : dossier.prequalification_score >= 40 ? '#fde68a' : '#fca5a5'}` }}>
+      <div style={{ display: 'grid', gridTemplateColumns: dossier.prequalification_score != null ? '120px 1fr' : '1fr', gap: 16, marginBottom: 20 }}>
+        {dossier.prequalification_score != null && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 16, background: scoreVisual.background, borderRadius: 'var(--radius-md)', border: `2px solid ${scoreVisual.softBorder}` }}>
             <ScoreCircle score={dossier.prequalification_score} />
-            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginTop: 6, fontWeight: 600 }}>SCORE</div>
+            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginTop: 6, fontWeight: 600 }}>SCORE TECHNIQUE</div>
           </div>
         )}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
@@ -668,6 +681,10 @@ function StressTab({ stressTests, onRun }) {
 }
 
 function PrequalTab({ dossier, ruleEvals, onEvaluate }) {
+  const scoreVisual = scoreStyle(dossier.prequalification_score);
+  const scoreDetails = parseScoreDetails(dossier.prequalification_score_details);
+  const components = scoreDetails?.components;
+
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
@@ -676,14 +693,29 @@ function PrequalTab({ dossier, ruleEvals, onEvaluate }) {
       </div>
 
       {dossier.prequalification_score != null && (
-        <div className="surface mb-4" style={{ display: 'flex', alignItems: 'center', gap: 20, padding: 20 }}>
-          <ScoreCircle score={dossier.prequalification_score} />
-          <div>
-            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700 }}>Score de crédit : {dossier.prequalification_score}/100</div>
-            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', marginTop: 2 }}>
-              {dossier.prequalification_score > 70 ? 'Dossier solide — recommandation favorable' : dossier.prequalification_score >= 40 ? 'Dossier à examiner — points d\'attention détectés' : 'Dossier fragile — risque élevé identifié'}
+        <div className="surface mb-4" style={{ padding: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+            <ScoreCircle score={dossier.prequalification_score} />
+            <div>
+              <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700 }}>Score technique : {dossier.prequalification_score}/100</div>
+              <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', marginTop: 2 }}>{scoreVisual.label} — la préqualification reste déterminée par les règles bloquantes</div>
             </div>
           </div>
+          {components && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10, marginTop: 16 }}>
+              <ScoreComponent label="Identité" value={components.identity} />
+              <ScoreComponent label="Capacité" value={components.capacity} />
+              <ScoreComponent label="Preuves" value={components.evidence} />
+              <ScoreComponent label="Risques" value={components.risk} />
+            </div>
+          )}
+          {scoreDetails && (
+            <div className="text-xs text-muted" style={{ marginTop: 12 }}>
+              Ratio de capacité : {scoreDetails.capacity_ratio == null ? 'non calculable' : scoreDetails.capacity_ratio.toFixed(2)}
+              {scoreDetails.penalties?.length > 0 && ` · Pénalités : ${scoreDetails.penalties.map(item => `${item.code} (-${item.points})`).join(', ')}`}
+              {` · Moteur v${scoreDetails.version || dossier.prequalification_score_version || 1}`}
+            </div>
+          )}
         </div>
       )}
 

@@ -2,7 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { initDb } from './db.js';
+import { getDb, initDb } from './db.js';
+import { recalculateOutdatedScores } from './services/prequalification.js';
 
 import authRoutes from './routes/auth.js';
 import dossierRoutes from './routes/dossiers.js';
@@ -63,6 +64,14 @@ async function start() {
   const { seedIfEmpty, ensureAdminAccounts } = await import('./seed.js');
   await seedIfEmpty();
   await ensureAdminAccounts();
+
+  const scoreMigration = await recalculateOutdatedScores(getDb());
+  if (scoreMigration.found > 0) {
+    console.log(`[FresCoop] Scores v2: ${scoreMigration.updated}/${scoreMigration.found} recalculés`);
+  }
+  if (scoreMigration.errors.length > 0) {
+    console.error('[FresCoop] Échecs de recalcul des scores:', scoreMigration.errors);
+  }
 
   app.listen(PORT, HOST, () => {
     console.log(`[FresCoop] Serveur démarré sur http://${HOST}:${PORT}`);

@@ -73,3 +73,15 @@ export function prequalLabel(prequal) {
   if (prequal === 'NON_ELIGIBLE') return 'NON ÉLIGIBLE';
   return 'En attente';
 }
+
+export function scoreStyle(score) {
+  if (score > 70) return { color: '#059669', background: '#ecfdf5', border: '#059669', softBorder: '#a7f3d0', label: 'Dossier solide' };
+  if (score >= 40) return { color: '#d97706', background: '#fffbeb', border: '#d97706', softBorder: '#fde68a', label: 'Dossier à examiner' };
+  return { color: '#dc2626', background: '#fef2f2', border: '#dc2626', softBorder: '#fca5a5', label: 'Dossier fragile' };
+}
+
+export function parseScoreDetails(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch { return null; }
+}
