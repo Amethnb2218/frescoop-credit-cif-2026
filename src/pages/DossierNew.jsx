@@ -1,17 +1,19 @@
-import { useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
+import { buildLocalFeasibility } from '../agriculturalFeasibilityLocal';
 import { isOnline, saveDossierOffline, addToSyncQueue } from '../lib/offline';
 import { formatCFA } from '../lib/format';
-import { Save, WifiOff, ArrowLeft, ArrowRight, Check, MapPin } from 'lucide-react';
+import { Save, WifiOff, ArrowLeft, ArrowRight, MapPin, Plus, Trash2, Pencil } from 'lucide-react';
 
 const STEPS = [
-  { key: 'demande', label: 'Demande' },
-  { key: 'identite', label: 'Identité' },
+  { key: 'demande-identite', label: 'Demande & identité' },
   { key: 'activite', label: 'Activité' },
+  { key: 'projet', label: 'Projet agricole' },
+  { key: 'faisabilite', label: 'Faisabilité agronomique' },
   { key: 'revenus', label: 'Revenus' },
   { key: 'charges', label: 'Charges' },
-  { key: 'dettes', label: 'Dettes' },
+  { key: 'dettes', label: 'Dettes / BIC' },
   { key: 'garanties', label: 'Garanties' },
   { key: 'preuves', label: 'Preuves' },
   { key: 'analyse', label: 'Analyse' },
@@ -29,15 +31,30 @@ const LOCATIONS = [
 ];
 
 const ACTIVITY_TYPES = [
-  'Riziculture', 'Maraîchage', 'Céréales (mil, sorgho, maïs)', 'Arachide',
-  'Arboriculture fruitière', 'Horticulture', 'Aviculture', 'Élevage bovin',
-  'Élevage ovin/caprin', 'Apiculture', 'Pêche artisanale', 'Aquaculture',
-  'Transformation céréales', 'Transformation fruits/légumes', 'Production laitière',
-  'Commerce de bétail', 'Commerce de céréales', 'Semences et intrants',
-  'Embouche bovine', 'Embouche ovine',
+  'Grandes cultures', 'Maraîchage', 'Céréales (mil, sorgho, maïs)',
+  'Arachide', 'Horticulture',
 ];
 
 const MONTHS = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+
+function num(v) { return v === '' || v == null ? null : Number(v); }
+
+function buildProjectAssessment(form) {
+  return {
+    crop_label: form.crop_name, variety: form.crop_variety,
+    crop_experience_years: num(form.crop_experience_years), project_surface_ha: num(form.project_surface_ha),
+    land_access: form.land_access, agro_zone: form.agro_zone, soil_type: form.soil_type,
+    soil_source: form.soil_source, season: form.season, cultivation_mode: form.irrigation_mode,
+    water_source: form.water_source, water_reliability: form.water_reliability,
+    sowing_month: form.production_cycle_start === '' ? null : Number(form.production_cycle_start) + 1,
+    harvest_month: form.production_cycle_end === '' ? null : Number(form.production_cycle_end) + 1,
+    expected_yield: num(form.expected_yield), expected_price: num(form.expected_price),
+    loss_percent: num(form.loss_percent), own_contribution: num(form.own_contribution),
+    other_funding: num(form.other_funding), climate_risks: form.climate_risks,
+    mitigations: form.mitigations, market_channel: form.main_buyer,
+    amount_requested: num(form.amount_requested),
+  };
+}
 
 const GUARANTEE_TYPES = [
   { value: 'Caution solidaire', label: 'Caution solidaire (groupe de 5-10 membres)' },
@@ -58,25 +75,73 @@ export default function DossierNew() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({
     amount_requested: '', credit_purpose: '', duration_months: '', desired_schedule: '',
-    applicant_name: '', applicant_phone: '', applicant_id_number: '', applicant_location: '', applicant_activity: '',
+    applicant_name: '', applicant_phone: '', applicant_id_number: '', applicant_location: '', applicant_activity: 'Agriculteur', bic_consent: false,
     sector: 'Agriculture', activity_type: '', years_experience: '', surface_ha: '', production_cycle_start: '', production_cycle_end: '', production_cycle: '',
-    revenue_agriculture: '', revenue_commerce: '', revenue_other: '', revenue_frequency: 'mensuel', main_buyer: '',
-    expenses_agriculture: '', expenses_household: '', expenses_other: '',
-    existing_debt_institution: '', existing_debt_amount: '', existing_debt_monthly: '', existing_debt_status: 'aucun',
-    savings_amount: '', guarantee_type: '', group_guarantee: '', other_guarantees: '',
+    crop_name: '', crop_variety: '', crop_experience_years: '', project_surface_ha: '', land_access: '', agro_zone: '', soil_type: '', soil_source: '', season: '', irrigation_mode: '', water_source: '', water_reliability: '', expected_yield: '', expected_price: '', loss_percent: '', own_contribution: '', other_funding: '', climate_risks: '', mitigations: '',
+    revenue_commerce: '', commerce_revenue_frequency: 'mensuel', revenue_other: '', other_revenue_frequency: 'mensuel', main_buyer: '',
+    expenses_agriculture: '', expenses_household: '',
+    savings_amount: '', guarantee_type: '', group_guarantee: '', other_guarantees: '', third_party_commitment: false,
+    guarantor_name: '', guarantor_id_number: '', guarantor_phone: '', guarantor_location: '', guarantor_relationship: '', guarantor_commitment_type: '', guarantor_commitment_amount: '', guarantor_consent: false,
     agent_note: '',
   });
+  const [inputItems, setInputItems] = useState([]);
+  const [declaredDebts, setDeclaredDebts] = useState([]);
+  const [initialEvidence, setInitialEvidence] = useState([]);
+  const dossierIdRef = useRef(crypto.randomUUID());
 
   function update(field, value) { setForm(f => ({ ...f, [field]: value })); }
-  function num(v) { return v ? Number(v) : null; }
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+      reader.onerror = () => reject(new Error('Lecture du fichier impossible'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function validateStep(index) {
+    if (index === 0 && (!form.applicant_name.trim() || !form.applicant_id_number.trim())) return 'Le nom complet et le numéro de CNI sont obligatoires.';
+    if (index === 0 && (!num(form.amount_requested) || !num(form.duration_months) || !form.credit_purpose.trim())) return 'Renseignez le montant, la durée et l’objet du crédit.';
+    if (index === 2 && (!form.crop_name || !num(form.project_surface_ha))) return 'Renseignez au minimum la culture et la surface du projet.';
+    if (index === 7 && form.third_party_commitment && (!form.guarantor_name.trim() || !form.guarantor_id_number.trim() || !form.guarantor_phone.trim() || !form.guarantor_consent)) return 'Renseignez le nom, la CNI, le téléphone et le consentement du garant tiers.';
+    return '';
+  }
+
+  function nextStep() {
+    const message = validateStep(step);
+    if (message) { setError(message); return; }
+    setError('');
+    setStep(s => s + 1);
+  }
 
   async function handleSave() {
     setSaving(true); setError('');
     try {
-      const cycle = form.production_cycle_start && form.production_cycle_end
+      const cycle = form.production_cycle_start !== '' && form.production_cycle_end !== ''
         ? `${MONTHS[form.production_cycle_start]} - ${MONTHS[form.production_cycle_end]}`
         : form.production_cycle;
+      const frequencyMultiplier = frequency => ({ hebdomadaire: 52, mensuel: 12, trimestriel: 4, saisonnier: 1, annuel: 1 }[frequency] || 1);
+      const commerceRevenue = Number(form.revenue_commerce === 'neant' ? 0 : form.revenue_commerce || 0);
+      const otherRevenue = Number(form.revenue_other === 'neant' ? 0 : form.revenue_other || 0);
+      const annualCommerceRevenue = commerceRevenue * frequencyMultiplier(form.commerce_revenue_frequency);
+      const annualOtherRevenue = otherRevenue * frequencyMultiplier(form.other_revenue_frequency);
+      const annualRevenue = annualCommerceRevenue + annualOtherRevenue;
+      const monthlyExpenses = ['expenses_agriculture', 'expenses_household'].reduce((sum, key) => sum + Number(form[key] === 'neant' ? 0 : form[key] || 0), 0);
+      const monthlyDebtPayments = declaredDebts.reduce((sum, debt) => sum + Number(debt.periodic_payment || 0), 0);
+      const projectAssessment = buildProjectAssessment(form);
+      const financialSummary = {
+        annual_revenue: annualRevenue,
+        commerce_revenue: commerceRevenue, commerce_revenue_frequency: form.commerce_revenue_frequency,
+        other_revenue: otherRevenue, other_revenue_frequency: form.other_revenue_frequency,
+        agricultural_expenses: Number(form.expenses_agriculture === 'neant' ? 0 : form.expenses_agriculture || 0),
+        household_expenses: Number(form.expenses_household === 'neant' ? 0 : form.expenses_household || 0),
+        monthly_expenses: monthlyExpenses,
+        monthly_debt_payments: monthlyDebtPayments,
+        revenue_detail: { commerce: commerceRevenue, other: otherRevenue, annual_commerce: annualCommerceRevenue, annual_other: annualOtherRevenue },
+        expenses_detail: { agriculture: Number(form.expenses_agriculture === 'neant' ? 0 : form.expenses_agriculture || 0), household: Number(form.expenses_household === 'neant' ? 0 : form.expenses_household || 0) },
+      };
       const data = {
+        id: dossierIdRef.current,
         applicant_name: form.applicant_name,
         applicant_phone: form.applicant_phone,
         applicant_id_number: form.applicant_id_number,
@@ -95,15 +160,48 @@ export default function DossierNew() {
         guarantee_type: form.guarantee_type,
         group_guarantee: form.group_guarantee,
         other_guarantees: form.other_guarantees,
+        third_party_commitment: form.third_party_commitment,
+        third_party_guarantor: form.third_party_commitment ? {
+          name: form.guarantor_name,
+          id_number: form.guarantor_id_number,
+          phone: form.guarantor_phone,
+          location: form.guarantor_location,
+          relationship: form.guarantor_relationship,
+          commitment_type: form.guarantor_commitment_type,
+          commitment_amount: num(form.guarantor_commitment_amount),
+          consent_given: form.guarantor_consent,
+        } : null,
         agent_note: form.agent_note,
+        bic_consent: form.bic_consent,
+        project_assessment: projectAssessment,
+        input_items: inputItems,
+        declared_debts: declaredDebts,
+        initial_evidence: initialEvidence.map(({ file, ...item }) => item),
+        financial_summary: financialSummary,
       };
       if (isOnline()) {
         const res = await api.createDossier(data);
+        for (const item of initialEvidence) {
+          if (!item.file) continue;
+          await api.saveEvidenceAttachment(item.id, {
+            original_name: item.file.name,
+            mime_type: item.file.type,
+            content_base64: await fileToBase64(item.file),
+          });
+        }
         navigate(`/dossiers/${res.id}`);
       } else {
-        const id = crypto.randomUUID();
-        await saveDossierOffline({ id, ...data, status: 'draft', agent_id: user.id, created_offline: true });
+        const id = data.id;
+        await saveDossierOffline({ id, ...data, initial_evidence: initialEvidence, status: 'draft', agent_id: user.id, created_offline: true });
         await addToSyncQueue({ operation: 'create', entity_type: 'dossier', entity_id: id, payload: data });
+        for (const item of initialEvidence) {
+          if (!item.file) continue;
+          await addToSyncQueue({
+            operation: 'attachment', entity_type: 'evidence', entity_id: item.id,
+            payload: { dossier_id: id, original_name: item.file.name, mime_type: item.file.type,
+              content_base64: await fileToBase64(item.file) },
+          });
+        }
         navigate('/dossiers');
       }
     } catch (err) { setError(err.message); }
@@ -135,21 +233,22 @@ export default function DossierNew() {
       {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '10px 14px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
 
       <div className="surface">
-        {step === 0 && <StepDemande form={form} update={update} />}
-        {step === 1 && <StepIdentite form={form} update={update} />}
-        {step === 2 && <StepActivite form={form} update={update} />}
-        {step === 3 && <StepRevenus form={form} update={update} />}
-        {step === 4 && <StepCharges form={form} update={update} />}
-        {step === 5 && <StepDettes form={form} update={update} />}
-        {step === 6 && <StepGaranties form={form} update={update} />}
-        {step === 7 && <StepPreuves />}
-        {step === 8 && <StepAnalyse form={form} />}
-        {step === 9 && <StepSoumission form={form} update={update} saving={saving} onSave={handleSave} setStep={setStep} />}
+        {step === 0 && <StepDemandeIdentite form={form} update={update} />}
+        {step === 1 && <StepActivite form={form} update={update} />}
+        {step === 2 && <StepProjetAgricole form={form} update={update} items={inputItems} setItems={setInputItems} />}
+        {step === 3 && <StepFaisabiliteAgronomique form={form} items={inputItems} />}
+        {step === 4 && <StepRevenus form={form} update={update} />}
+        {step === 5 && <StepCharges form={form} update={update} />}
+        {step === 6 && <StepDettes debts={declaredDebts} setDebts={setDeclaredDebts} applicantId={form.applicant_id_number} bicConsent={form.bic_consent} />}
+        {step === 7 && <StepGaranties form={form} update={update} />}
+        {step === 8 && <StepPreuves evidence={initialEvidence} setEvidence={setInitialEvidence} />}
+        {step === 9 && <StepAnalyse form={form} items={inputItems} debts={declaredDebts} />}
+        {step === 10 && <StepSoumission form={form} update={update} saving={saving} onSave={handleSave} setStep={setStep} items={inputItems} debts={declaredDebts} evidence={initialEvidence} />}
 
-        {step < 9 && (
+        {step < STEPS.length - 1 && (
           <div className="flex justify-between items-center" style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--c-border)' }}>
             {step > 0 ? <button className="btn btn-secondary" onClick={() => setStep(s => s - 1)}><ArrowLeft size={14} /> Précédent</button> : <div />}
-            <button className="btn btn-primary" onClick={() => setStep(s => s + 1)}>Suivant <ArrowRight size={14} /></button>
+            <button className="btn btn-primary" onClick={nextStep}>Suivant <ArrowRight size={14} /></button>
           </div>
         )}
       </div>
@@ -220,6 +319,16 @@ function NeantField({ label, value, onChange, type = 'number', hint }) {
   );
 }
 
+function StepDemandeIdentite({ form, update }) {
+  return (
+    <div>
+      <StepIdentite form={form} update={update} />
+      <div style={{ borderTop: '1px solid var(--c-border)', margin: '24px 0' }} />
+      <StepDemande form={form} update={update} />
+    </div>
+  );
+}
+
 function StepDemande({ form, update }) {
   return (
     <div>
@@ -279,8 +388,9 @@ function StepIdentite({ form, update }) {
           <input className="input" type="tel" value={form.applicant_phone} onChange={e => update('applicant_phone', e.target.value)} placeholder="77 xxx xx xx" />
         </div>
         <div className="field">
-          <label className="field-label">N° pièce d'identité</label>
-          <input className="input" value={form.applicant_id_number} onChange={e => update('applicant_id_number', e.target.value)} placeholder="CNI ou passeport" />
+          <label className="field-label">N° CNI *</label>
+          <input className="input" required value={form.applicant_id_number} onChange={e => update('applicant_id_number', e.target.value)} placeholder="Numéro de carte nationale d’identité" />
+          {!form.applicant_id_number && <div className="field-error">Le numéro de CNI est obligatoire pour poursuivre et soumettre le dossier.</div>}
         </div>
         <div className="field">
           <label className="field-label">Localisation</label>
@@ -295,7 +405,7 @@ function StepIdentite({ form, update }) {
         </div>
         <div className="field" style={{ gridColumn: '1 / -1' }}>
           <label className="field-label">Activité principale déclarée</label>
-          <input className="input" value={form.applicant_activity} onChange={e => update('applicant_activity', e.target.value)} placeholder="Agriculteur, éleveur, commerçant..." />
+          <input className="input" value="Agriculteur" readOnly aria-readonly="true" />
         </div>
       </div>
     </div>
@@ -309,17 +419,11 @@ function StepActivite({ form, update }) {
       <div className="grid-2">
         <div className="field">
           <label className="field-label">Filière</label>
-          <select className="input" value={form.sector} onChange={e => update('sector', e.target.value)}>
-            <option value="Agriculture">Agriculture</option>
-            <option value="Élevage">Élevage</option>
-            <option value="Pêche">Pêche</option>
-            <option value="Transformation">Transformation</option>
-            <option value="Commerce agricole">Commerce agricole</option>
-          </select>
+          <input className="input" value="Agriculture" readOnly aria-readonly="true" />
         </div>
         <div className="field">
           <label className="field-label">Type d'activité</label>
-          <AutocompleteInput value={form.activity_type} onChange={v => update('activity_type', v)} suggestions={ACTIVITY_TYPES} placeholder="Commencez à taper..." hint="Ex: Maraîchage, Riziculture, Aviculture" />
+          <AutocompleteInput value={form.activity_type} onChange={v => update('activity_type', v)} suggestions={ACTIVITY_TYPES} placeholder="Commencez à taper..." hint="Grandes cultures, maraîchage, céréales, arachide ou horticulture" />
         </div>
         <div className="field">
           <label className="field-label">Années d'expérience</label>
@@ -353,25 +457,150 @@ function StepActivite({ form, update }) {
   );
 }
 
-function StepRevenus({ form, update }) {
+function StepProjetAgricole({ form, update, items, setItems }) {
+  const [draft, setDraft] = useState({ category: 'Semences', label: '', quantity: '', unit: '', unit_cost: '', supplier: '' });
+  const budget = items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_cost || 0), 0);
+  const revenue = Number(form.project_surface_ha || 0) * Number(form.expected_yield || 0) * (1 - Number(form.loss_percent || 0) / 100) * Number(form.expected_price || 0);
+  function addItem() {
+    if (!draft.label || !Number(draft.quantity) || !Number(draft.unit_cost)) return;
+    setItems(list => [...list, { ...draft, id: crypto.randomUUID() }]);
+    setDraft({ category: 'Semences', label: '', quantity: '', unit: '', unit_cost: '', supplier: '' });
+  }
   return (
     <div>
-      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Sources de revenus</h2>
+      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Projet agricole et besoin réel</h2>
+      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Décrivez la faisabilité technique, le budget et les hypothèses prudentes du projet.</p>
       <div className="grid-2">
-        <NeantField label="Revenus agriculture (FCFA / période)" value={form.revenue_agriculture} onChange={v => update('revenue_agriculture', v)} hint="Mettre Néant si pas de revenus agricoles" />
-        <NeantField label="Revenus commerce (FCFA / période)" value={form.revenue_commerce} onChange={v => update('revenue_commerce', v)} hint="Mettre Néant si pas de commerce" />
-        <NeantField label="Autres revenus (FCFA / période)" value={form.revenue_other} onChange={v => update('revenue_other', v)} hint="Transferts, pension, etc." />
-        <div className="field">
-          <label className="field-label">Fréquence des revenus</label>
-          <select className="input" value={form.revenue_frequency} onChange={e => update('revenue_frequency', e.target.value)}>
-            <option value="mensuel">Mensuel</option>
-            <option value="trimestriel">Trimestriel</option>
-            <option value="saisonnier">Saisonnier (1-2 fois/an)</option>
-            <option value="hebdomadaire">Hebdomadaire</option>
-          </select>
+        <div className="field"><label className="field-label">Culture *</label><input className="input" value={form.crop_name} onChange={e => update('crop_name', e.target.value)} placeholder="Ex : maïs, arachide, tomate" /></div>
+        <div className="field"><label className="field-label">Variété</label><input className="input" value={form.crop_variety} onChange={e => update('crop_variety', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Expérience sur cette culture (années)</label><input className="input" type="number" min="0" value={form.crop_experience_years} onChange={e => update('crop_experience_years', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Surface du projet (ha) *</label><input className="input" type="number" min="0" step="0.1" value={form.project_surface_ha} onChange={e => update('project_surface_ha', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Accès à la parcelle</label><select className="input" value={form.land_access} onChange={e => update('land_access', e.target.value)}><option value="">Sélectionner</option><option>Propriété</option><option>Location</option><option>Prêt familial</option><option>Parcelle communautaire</option></select></div>
+        <div className="field"><label className="field-label">Zone agroécologique</label><input className="input" value={form.agro_zone} onChange={e => update('agro_zone', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Type / aptitude du sol</label><input className="input" value={form.soil_type} onChange={e => update('soil_type', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Source de l'information sur le sol</label><input className="input" value={form.soil_source} onChange={e => update('soil_source', e.target.value)} placeholder="Analyse, technicien, déclaration…" /></div>
+        <div className="field"><label className="field-label">Saison</label><input className="input" value={form.season} onChange={e => update('season', e.target.value)} placeholder="Hivernage, saison sèche…" /></div>
+        <div className="field"><label className="field-label">Mode de culture</label><select className="input" value={form.irrigation_mode} onChange={e => update('irrigation_mode', e.target.value)}><option value="">Sélectionner</option><option value="pluvial">Pluvial</option><option value="irrigué">Irrigué</option><option value="mixte">Mixte</option></select></div>
+        <div className="field"><label className="field-label">Source d'eau</label><input className="input" value={form.water_source} onChange={e => update('water_source', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Fiabilité de l'eau</label><select className="input" value={form.water_reliability} onChange={e => update('water_reliability', e.target.value)}><option value="">Sélectionner</option><option value="sécurisée">Sécurisée</option><option value="partielle">Partielle</option><option value="incertaine">Incertaine</option></select></div>
+      </div>
+      <div className="grid-2" style={{ marginTop: 16 }}>
+        <div className="field"><label className="field-label">Rendement prudent (kg/ha)</label><input className="input" type="number" min="0" value={form.expected_yield} onChange={e => update('expected_yield', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Prix prudent (FCFA/kg)</label><input className="input" type="number" min="0" value={form.expected_price} onChange={e => update('expected_price', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Pertes estimées (%)</label><input className="input" type="number" min="0" max="100" value={form.loss_percent} onChange={e => update('loss_percent', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Apport personnel (FCFA)</label><input className="input" type="number" min="0" value={form.own_contribution} onChange={e => update('own_contribution', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Autres financements (FCFA)</label><input className="input" type="number" min="0" value={form.other_funding} onChange={e => update('other_funding', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Risques principaux</label><input className="input" value={form.climate_risks} onChange={e => update('climate_risks', e.target.value)} placeholder="Sécheresse, ravageurs, prix…" /></div>
+        <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label">Mesures d'atténuation</label><textarea className="input" rows={2} value={form.mitigations} onChange={e => update('mitigations', e.target.value)} /></div>
+      </div>
+      <h3 style={{ fontSize: 'var(--fs-14)', margin: '20px 0 10px' }}>Intrants et charges du projet</h3>
+      <div className="grid-2">
+        <div className="field"><label className="field-label">Catégorie</label><select className="input" value={draft.category} onChange={e => setDraft(d => ({ ...d, category: e.target.value }))}><option>Semences</option><option>Engrais</option><option>Produits phytosanitaires</option><option>Main-d'œuvre</option><option>Matériel</option><option>Transport</option><option>Autre</option></select></div>
+        <div className="field"><label className="field-label">Désignation</label><input className="input" value={draft.label} onChange={e => setDraft(d => ({ ...d, label: e.target.value }))} /></div>
+        <div className="field"><label className="field-label">Quantité</label><input className="input" type="number" min="0" value={draft.quantity} onChange={e => setDraft(d => ({ ...d, quantity: e.target.value }))} /></div>
+        <div className="field"><label className="field-label">Unité</label><input className="input" value={draft.unit} onChange={e => setDraft(d => ({ ...d, unit: e.target.value }))} placeholder="kg, sac, jour…" /></div>
+        <div className="field"><label className="field-label">Coût unitaire (FCFA)</label><input className="input" type="number" min="0" value={draft.unit_cost} onChange={e => setDraft(d => ({ ...d, unit_cost: e.target.value }))} /></div>
+        <div className="field"><label className="field-label">Fournisseur</label><input className="input" value={draft.supplier} onChange={e => setDraft(d => ({ ...d, supplier: e.target.value }))} /></div>
+      </div>
+      <button type="button" className="btn btn-secondary btn-sm" onClick={addItem}><Plus size={14} /> Ajouter l'intrant</button>
+      {items.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span>{item.category} · {item.label} · {item.quantity} {item.unit}</span><span><strong>{formatCFA(Number(item.quantity) * Number(item.unit_cost))}</strong> <button type="button" className="btn btn-ghost btn-sm" onClick={() => setItems(list => list.filter(x => x.id !== item.id))}><Trash2 size={13} /></button></span></div>)}
+      <div style={{ marginTop: 12, padding: 12, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)' }}><strong>Budget :</strong> {formatCFA(budget)} · <strong>Besoin net :</strong> {formatCFA(Math.max(0, budget - Number(form.own_contribution || 0) - Number(form.other_funding || 0)))} · <strong>Revenu prudent :</strong> {formatCFA(revenue)} · <strong>Marge :</strong> {formatCFA(revenue - budget)}</div>
+    </div>
+  );
+}
+
+function feasibilitySourceLabel(source = {}) {
+  if (source.mode === 'hybrid') return 'Moteur FresCoop + signaux Teranga';
+  if (source.mode === 'hybrid_partial') return 'Moteur FresCoop + réponse Teranga partielle';
+  if (source.mode === 'local_offline') return 'Analyse locale uniquement — navigateur hors ligne';
+  if (source.mode === 'local_fallback') return 'Analyse locale uniquement — Teranga indisponible';
+  return 'Analyse locale uniquement';
+}
+
+function StepFaisabiliteAgronomique({ form, items }) {
+  const [analysis, setAnalysis] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [run, setRun] = useState(0);
+  const project = buildProjectAssessment(form);
+  const fingerprint = JSON.stringify({ project, items, city: form.applicant_location });
+  const current = analysis?.fingerprint === fingerprint ? analysis.result : null;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    async function assess() {
+      setLoading(true);
+      let result;
+      if (!isOnline()) {
+        result = buildLocalFeasibility(project, items, [], 'offline');
+      } else {
+        try {
+          result = await api.assessAgriculturalFeasibility({
+            project, input_items: items,
+            context: { city: form.applicant_location },
+          }, controller.signal);
+        } catch (error) {
+          if (error.name === 'AbortError') return;
+          result = buildLocalFeasibility(project, items, [], 'request_failed');
+        }
+      }
+      if (active) {
+        setAnalysis({ fingerprint, result });
+        setLoading(false);
+      }
+    }
+    assess();
+    return () => { active = false; controller.abort(); };
+  }, [fingerprint, run]);
+
+  const badgeClass = current?.status === 'FEASIBLE' ? 'badge-success'
+    : current?.status === 'HUMAN_REVIEW' ? 'badge-error' : 'badge-warning';
+  const details = current?.details || {};
+  return (
+    <div>
+      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Faisabilité agronomique</h2>
+      <p className="text-sm text-muted" style={{ marginBottom: 18 }}>
+        Avis consultatif calculé depuis le projet agricole. Il ne remplace ni le score financier ni la décision humaine.
+      </p>
+      {loading && <div style={{ padding: 16, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>Analyse agronomique en cours…</div>}
+      {!loading && current && <>
+        <div style={{ padding: 18, border: '1px solid var(--c-border)', borderRadius: 'var(--radius-md)', marginBottom: 14 }}>
+          <span className={`badge ${badgeClass}`} style={{ marginBottom: 10 }}>{current.label}</span>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>{current.summary}</div>
+          <div className="text-sm text-muted">{feasibilitySourceLabel(current.source)}</div>
         </div>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setRun(value => value + 1)}>
+          Relancer l’analyse
+        </button>
+        <details style={{ marginTop: 14, padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>
+          <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Voir les constats et la provenance</summary>
+          <div style={{ marginTop: 12, fontSize: 'var(--fs-12)' }}>
+            {details.missing_data?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Données manquantes :</strong> {details.missing_data.join(', ')}</div>}
+            {details.findings?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Constats :</strong><ul>{details.findings.map(item => <li key={item.code}>{item.explanation}</li>)}</ul></div>}
+            {details.recommendations?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Recommandations :</strong><ul>{details.recommendations.map(item => <li key={item}>{item}</li>)}</ul></div>}
+            {details.external_signals?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Signaux Teranga :</strong><ul>{details.external_signals.map((item, index) => <li key={`${item.type}-${index}`}>{item.explanation}</li>)}</ul></div>}
+            <div><strong>Moteur :</strong> {current.source?.engine} v{current.source?.engine_version} · règles locales v{current.source?.local_rules_version}</div>
+            {current.source?.fallback_reason && <div><strong>Repli :</strong> {current.source.fallback_reason}</div>}
+          </div>
+        </details>
+      </>}
+    </div>
+  );
+}
+
+function StepRevenus({ form, update }) {
+  const frequencies = <><option value="hebdomadaire">Hebdomadaire</option><option value="mensuel">Mensuel</option><option value="trimestriel">Trimestriel</option><option value="saisonnier">Saisonnier</option></>;
+  return (
+    <div>
+      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Revenus complémentaires</h2>
+      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Le revenu agricole est calculé uniquement depuis le projet agricole afin d’éviter tout double comptage.</p>
+      <div className="grid-2">
+        <NeantField label="Revenus commerce (FCFA / période)" value={form.revenue_commerce} onChange={v => update('revenue_commerce', v)} hint="Mettre Néant si pas de commerce" />
+        <div className="field"><label className="field-label">Fréquence — commerce</label><select className="input" value={form.commerce_revenue_frequency} onChange={e => update('commerce_revenue_frequency', e.target.value)}>{frequencies}</select></div>
+        <NeantField label="Autres revenus (FCFA / période)" value={form.revenue_other} onChange={v => update('revenue_other', v)} hint="Transferts, pension, etc." />
+        <div className="field"><label className="field-label">Fréquence — autres revenus</label><select className="input" value={form.other_revenue_frequency} onChange={e => update('other_revenue_frequency', e.target.value)}>{frequencies}</select></div>
         <div className="field" style={{ gridColumn: '1 / -1' }}>
-          <label className="field-label">Acheteur principal</label>
+          <label className="field-label">Acheteur principal du projet agricole</label>
           <input className="input" value={form.main_buyer} onChange={e => update('main_buyer', e.target.value)} placeholder="Coopérative, marché, acheteur B2B..." />
         </div>
       </div>
@@ -384,52 +613,46 @@ function StepCharges({ form, update }) {
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Charges mensuelles</h2>
       <div className="grid-2">
-        <NeantField label="Charges agricoles (FCFA / mois)" value={form.expenses_agriculture} onChange={v => update('expenses_agriculture', v)} hint="Intrants, semences, main-d'oeuvre, transport" />
-        <NeantField label="Charges du ménage (FCFA / mois)" value={form.expenses_household} onChange={v => update('expenses_household', v)} hint="Alimentation, santé, éducation, logement" />
-        <div className="field" style={{ gridColumn: '1 / -1' }}>
-          <NeantField label="Autres charges (FCFA / mois)" value={form.expenses_other} onChange={v => update('expenses_other', v)} hint="Cotisations, loyers, obligations sociales" />
-        </div>
+        <NeantField label="Charges agricoles (FCFA / mois)" value={form.expenses_agriculture} onChange={v => update('expenses_agriculture', v)} hint="Semences, intrants, matériel, main-d'œuvre et transport hors budget détaillé" />
+        <NeantField label="Charges du ménage (FCFA / mois)" value={form.expenses_household} onChange={v => update('expenses_household', v)} hint="Alimentation, santé, éducation, logement, cotisations et obligations sociales" />
       </div>
     </div>
   );
 }
 
-function StepDettes({ form, update }) {
-  const hasDebt = form.existing_debt_status !== 'aucun';
+function StepDettes({ debts, setDebts, applicantId, bicConsent }) {
+  const [draft, setDraft] = useState({ institution: '', credit_type: '', source: 'DECLAREE', initial_amount: '', outstanding: '', periodic_payment: '', frequency: 'mensuel', status: 'en_cours', days_late: '', purpose: '', consent_given: false });
+  const [bicMessage, setBicMessage] = useState('');
+  function addDebt() {
+    if (!draft.institution || !Number(draft.outstanding)) return;
+    setDebts(list => [...list, { ...draft, id: crypto.randomUUID() }]);
+    setDraft({ institution: '', credit_type: '', source: 'DECLAREE', initial_amount: '', outstanding: '', periodic_payment: '', frequency: 'mensuel', status: 'en_cours', days_late: '', purpose: '', consent_given: false });
+  }
+  async function checkBic() {
+    if (!applicantId || !bicConsent) { setBicMessage('Le numéro de CNI et le consentement BIC sont requis.'); return; }
+    try {
+      const result = await api.checkBic(applicantId);
+      setBicMessage(result.disclaimer || 'Données synthétiques de démonstration — BIC non connecté');
+    } catch (err) { setBicMessage(err.message); }
+  }
   return (
     <div>
-      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Dettes existantes</h2>
-      <div className="field" style={{ marginBottom: 16 }}>
-        <label className="field-label">Avez-vous des crédits en cours ?</label>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" className={`btn btn-sm ${hasDebt ? 'btn-primary' : 'btn-ghost'}`} onClick={() => update('existing_debt_status', 'en_cours')}>Oui</button>
-          <button type="button" className={`btn btn-sm ${!hasDebt ? 'btn-primary' : 'btn-ghost'}`} onClick={() => { update('existing_debt_status', 'aucun'); update('existing_debt_amount', ''); update('existing_debt_monthly', ''); update('existing_debt_institution', ''); }}>Non, aucune dette</button>
-        </div>
+      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Dettes déclarées et BIC</h2>
+      <p className="text-sm text-muted" style={{ marginBottom: 12 }}>Ajoutez chaque dette séparément. Les données BIC sont exclusivement synthétiques.</p>
+      <div style={{ padding: 10, background: 'var(--c-warning-bg)', color: 'var(--c-warning)', borderRadius: 'var(--radius)', marginBottom: 16, fontSize: 'var(--fs-12)' }}><strong>Données synthétiques de démonstration — BIC non connecté</strong> <button type="button" className="btn btn-ghost btn-sm" onClick={checkBic}>Vérifier la démo BIC</button>{bicMessage && <div>{bicMessage}</div>}</div>
+      <div className="grid-2">
+        <div className="field"><label className="field-label">Institution</label><input className="input" value={draft.institution} onChange={e => setDraft(d => ({ ...d, institution: e.target.value }))} /></div>
+        <div className="field"><label className="field-label">Type de crédit</label><input className="input" value={draft.credit_type} onChange={e => setDraft(d => ({ ...d, credit_type: e.target.value }))} /></div>
+        <div className="field"><label className="field-label">Montant initial</label><input className="input" type="number" min="0" value={draft.initial_amount} onChange={e => setDraft(d => ({ ...d, initial_amount: e.target.value }))} /></div>
+        <div className="field"><label className="field-label">Encours restant *</label><input className="input" type="number" min="0" value={draft.outstanding} onChange={e => setDraft(d => ({ ...d, outstanding: e.target.value }))} /></div>
+        <div className="field"><label className="field-label">Échéance périodique</label><input className="input" type="number" min="0" value={draft.periodic_payment} onChange={e => setDraft(d => ({ ...d, periodic_payment: e.target.value }))} /></div>
+        <div className="field"><label className="field-label">Périodicité</label><select className="input" value={draft.frequency} onChange={e => setDraft(d => ({ ...d, frequency: e.target.value }))}><option value="mensuel">Mensuelle</option><option value="trimestriel">Trimestrielle</option><option value="saisonnier">Saisonnière</option></select></div>
+        <div className="field"><label className="field-label">Statut</label><select className="input" value={draft.status} onChange={e => setDraft(d => ({ ...d, status: e.target.value }))}><option value="en_cours">En cours</option><option value="retard">En retard</option><option value="termine">Terminé</option></select></div>
+        <div className="field"><label className="field-label">Jours de retard</label><input className="input" type="number" min="0" value={draft.days_late} onChange={e => setDraft(d => ({ ...d, days_late: e.target.value }))} /></div>
+        <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label">Objet</label><input className="input" value={draft.purpose} onChange={e => setDraft(d => ({ ...d, purpose: e.target.value }))} /></div>
       </div>
-      {hasDebt && (
-        <div className="grid-2">
-          <div className="field">
-            <label className="field-label">Institution créancière</label>
-            <input className="input" value={form.existing_debt_institution} onChange={e => update('existing_debt_institution', e.target.value)} placeholder="IMF, banque, tontine, particulier" />
-          </div>
-          <div className="field">
-            <label className="field-label">Montant restant dû (FCFA)</label>
-            <input className="input" type="number" min="0" value={form.existing_debt_amount} onChange={e => update('existing_debt_amount', e.target.value)} />
-          </div>
-          <div className="field">
-            <label className="field-label">Échéance mensuelle (FCFA)</label>
-            <input className="input" type="number" min="0" value={form.existing_debt_monthly} onChange={e => update('existing_debt_monthly', e.target.value)} />
-          </div>
-          <div className="field">
-            <label className="field-label">Statut du crédit</label>
-            <select className="input" value={form.existing_debt_status} onChange={e => update('existing_debt_status', e.target.value)}>
-              <option value="en_cours">En cours (à jour)</option>
-              <option value="retard">En retard</option>
-              <option value="termine">Terminé</option>
-            </select>
-          </div>
-        </div>
-      )}
+      <button type="button" className="btn btn-secondary btn-sm" onClick={addDebt}><Plus size={14} /> Ajouter la dette</button>
+      {debts.map(debt => <div key={debt.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span>{debt.institution} · encours {formatCFA(Number(debt.outstanding))} · échéance {formatCFA(Number(debt.periodic_payment))}</span><button type="button" className="btn btn-ghost btn-sm" onClick={() => setDebts(list => list.filter(x => x.id !== debt.id))}><Trash2 size={13} /></button></div>)}
     </div>
   );
 }
@@ -455,8 +678,19 @@ function StepGaranties({ form, update }) {
         )}
         <div className="field" style={{ gridColumn: '1 / -1' }}>
           <label className="field-label">Garanties complémentaires</label>
-          <textarea className="input" rows={2} value={form.other_guarantees} onChange={e => update('other_guarantees', e.target.value)} placeholder="Autres biens, sûretés ou engagements de tiers" />
+          <textarea className="input" rows={2} value={form.other_guarantees} onChange={e => update('other_guarantees', e.target.value)} placeholder="Autres biens ou sûretés" />
         </div>
+        <label style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, alignItems: 'center', fontSize: 'var(--fs-12)' }}><input type="checkbox" checked={form.third_party_commitment} onChange={e => update('third_party_commitment', e.target.checked)} /> Cette garantie comprend l'engagement d'un tiers</label>
+        {form.third_party_commitment && <>
+          <div className="field"><label className="field-label">Nom complet du garant *</label><input className="input" value={form.guarantor_name} onChange={e => update('guarantor_name', e.target.value)} /></div>
+          <div className="field"><label className="field-label">N° CNI du garant *</label><input className="input" value={form.guarantor_id_number} onChange={e => update('guarantor_id_number', e.target.value)} /></div>
+          <div className="field"><label className="field-label">Téléphone *</label><input className="input" type="tel" value={form.guarantor_phone} onChange={e => update('guarantor_phone', e.target.value)} /></div>
+          <div className="field"><label className="field-label">Localisation / adresse</label><input className="input" value={form.guarantor_location} onChange={e => update('guarantor_location', e.target.value)} /></div>
+          <div className="field"><label className="field-label">Lien avec le demandeur</label><input className="input" value={form.guarantor_relationship} onChange={e => update('guarantor_relationship', e.target.value)} /></div>
+          <div className="field"><label className="field-label">Nature de l'engagement</label><input className="input" value={form.guarantor_commitment_type} onChange={e => update('guarantor_commitment_type', e.target.value)} placeholder="Caution personnelle, garantie solidaire…" /></div>
+          <div className="field"><label className="field-label">Plafond de l'engagement (FCFA)</label><input className="input" type="number" min="0" value={form.guarantor_commitment_amount} onChange={e => update('guarantor_commitment_amount', e.target.value)} /></div>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 'var(--fs-12)' }}><input type="checkbox" checked={form.guarantor_consent} onChange={e => update('guarantor_consent', e.target.checked)} /> Consentement du garant recueilli *</label>
+        </>}
       </div>
 
       <div style={{ marginTop: 16, padding: 12, background: '#f0fdf4', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-11)', color: '#166534', border: '1px solid #bbf7d0' }}>
@@ -466,23 +700,38 @@ function StepGaranties({ form, update }) {
   );
 }
 
-function StepPreuves() {
+function StepPreuves({ evidence, setEvidence }) {
+  const [draft, setDraft] = useState({ category: 'projet', label: '', source: 'document', source_detail: '', verification_level: 'C', file: null });
+  const [editingId, setEditingId] = useState(null);
+  function chooseLevel(level) {
+    setDraft(d => ({ ...d, verification_level: ['A', 'B'].includes(level) ? 'C' : level, source: level === 'D' ? 'declaration' : 'document' }));
+    document.getElementById('evidence-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  function saveEvidence() {
+    if (!draft.label.trim()) return;
+    if (draft.file && (!['application/pdf', 'image/jpeg', 'image/png'].includes(draft.file.type) || draft.file.size > 2 * 1024 * 1024)) return;
+    const item = { ...draft, id: editingId || crypto.randomUUID(), metadata: draft.file ? { file_name: draft.file.name, file_type: draft.file.type, file_size: draft.file.size, upload_pending: true } : (draft.metadata || {}) };
+    setEvidence(list => editingId ? list.map(x => x.id === editingId ? item : x) : [...list, item]);
+    setDraft({ category: 'projet', label: '', source: 'document', source_detail: '', verification_level: 'C', file: null });
+    setEditingId(null);
+  }
+  function editEvidence(item) { setDraft({ ...item, file: null }); setEditingId(item.id); }
   return (
     <div>
-      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Preuves à collecter</h2>
-      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>
-        Après création du dossier, vous pourrez associer des preuves à chaque fait déclaré via l'onglet Preuves et la visite terrain.
-      </p>
-      <div style={{ display: 'grid', gap: 8 }}>
-        <EvidenceGuidance level="A" label="Historique IMF" desc="Crédits précédents, remboursements, épargne — vérifiable dans le système" />
-        <EvidenceGuidance level="B" label="Attestation coopérative" desc="Volumes livrés, montants de vente confirmés par la coopérative" />
-        <EvidenceGuidance level="B" label="Confirmation acheteur" desc="Attestation ou bon de commande d'un acheteur identifié" />
-        <EvidenceGuidance level="C" label="Reçus et documents" desc="Factures, reçus de vente, relevés mobile money — non vérifiés" />
-        <EvidenceGuidance level="D" label="Déclarations" desc="Revenus, charges, activité déclarés par le demandeur" />
+      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Preuves du dossier</h2>
+      <p className="text-sm text-muted" style={{ marginBottom: 14 }}>Cliquez sur un niveau pour ouvrir le formulaire. Un Agent ne peut pas attribuer A ou B : un fichier non vérifié commence en C, une déclaration seule en D.</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 18 }}>
+        {['A', 'B', 'C', 'D'].map(level => <button type="button" key={level} className="btn btn-secondary" onClick={() => chooseLevel(level)} style={{ minHeight: 54 }}><strong>{level}</strong><span style={{ display: 'block', fontSize: 10 }}>{level === 'A' ? 'Interne vérifiée' : level === 'B' ? 'Externe crédible' : level === 'C' ? 'Document à vérifier' : 'Déclaration'}</span></button>)}
       </div>
-      <div style={{ marginTop: 16, padding: 12, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)', color: 'var(--c-text-secondary)' }}>
-        <strong>Documents recommandés lors de la visite terrain :</strong> Photo du terrain, CNI du demandeur, carte de membre coopérative, fiche RIT, reçus de vente.
+      <div id="evidence-form" className="grid-2" style={{ padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>
+        <div className="field"><label className="field-label">Élément concerné</label><select className="input" value={draft.category} onChange={e => setDraft(d => ({ ...d, category: e.target.value }))}><option value="identite">Identité</option><option value="projet">Projet agricole</option><option value="revenu">Revenu</option><option value="charge">Charge</option><option value="dette">Dette</option><option value="intrant">Intrant</option><option value="parcelle">Parcelle</option><option value="garantie">Garantie</option></select></div>
+        <div className="field"><label className="field-label">Niveau initial</label><input className="input" value={draft.verification_level} readOnly /></div>
+        <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label">Libellé *</label><input className="input" value={draft.label} onChange={e => setDraft(d => ({ ...d, label: e.target.value }))} placeholder="Ex : reçu d'achat de semences" /></div>
+        <div className="field"><label className="field-label">Source / émetteur</label><input className="input" value={draft.source_detail} onChange={e => setDraft(d => ({ ...d, source_detail: e.target.value }))} /></div>
+        <div className="field"><label className="field-label">Fichier PDF, JPEG ou PNG</label><input className="input" type="file" accept="application/pdf,image/jpeg,image/png" onChange={e => { const file = e.target.files?.[0] || null; if (file && file.size > 2 * 1024 * 1024) { e.target.value = ''; return; } setDraft(d => ({ ...d, file, verification_level: file ? 'C' : d.verification_level })); }} /><div className="field-hint">2 Mo maximum par fichier, 10 Mo par dossier. Envoi authentifié et empreinte SHA-256.</div></div>
+        <button type="button" className="btn btn-primary btn-sm" onClick={saveEvidence}>{editingId ? 'Enregistrer les modifications' : 'Ajouter la preuve'}</button>
       </div>
+      {evidence.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '10px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span><strong>{item.verification_level}</strong> · {item.label}{item.metadata?.file_name ? ` · ${item.metadata.file_name}` : ''}</span><span><button type="button" className="btn btn-ghost btn-sm" onClick={() => editEvidence(item)}><Pencil size={13} /></button><button type="button" className="btn btn-ghost btn-sm" onClick={() => setEvidence(list => list.filter(x => x.id !== item.id))}><Trash2 size={13} /></button></span></div>)}
     </div>
   );
 }
@@ -501,35 +750,30 @@ function EvidenceGuidance({ level, label, desc }) {
   );
 }
 
-function StepAnalyse({ form }) {
-  const revAgri = form.revenue_agriculture === 'neant' ? 0 : Number(form.revenue_agriculture) || 0;
-  const revCommerce = form.revenue_commerce === 'neant' ? 0 : Number(form.revenue_commerce) || 0;
-  const revOther = form.revenue_other === 'neant' ? 0 : Number(form.revenue_other) || 0;
-  const totalRevPeriod = revAgri + revCommerce + revOther;
-
-  const multiplier = form.revenue_frequency === 'mensuel' ? 12 : form.revenue_frequency === 'trimestriel' ? 4 : form.revenue_frequency === 'hebdomadaire' ? 52 : 1;
-  const totalRevAnnuel = totalRevPeriod * multiplier;
-
+function StepAnalyse({ form, items = [], debts = [] }) {
+  const commerce = form.revenue_commerce === 'neant' ? 0 : Number(form.revenue_commerce) || 0;
+  const other = form.revenue_other === 'neant' ? 0 : Number(form.revenue_other) || 0;
+  const multiplier = frequency => ({ hebdomadaire: 52, mensuel: 12, trimestriel: 4, saisonnier: 1 }[frequency] || 1);
+  const projectBudget = items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_cost || 0), 0);
+  const agriculturalRevenue = Number(form.project_surface_ha || 0) * Number(form.expected_yield || 0) * (1 - Number(form.loss_percent || 0) / 100) * Number(form.expected_price || 0);
+  const totalRevAnnuel = agriculturalRevenue + commerce * multiplier(form.commerce_revenue_frequency) + other * multiplier(form.other_revenue_frequency);
   const expAgri = form.expenses_agriculture === 'neant' ? 0 : Number(form.expenses_agriculture) || 0;
   const expHousehold = form.expenses_household === 'neant' ? 0 : Number(form.expenses_household) || 0;
-  const expOther = form.expenses_other === 'neant' ? 0 : Number(form.expenses_other) || 0;
-  const totalExpMensuel = expAgri + expHousehold + expOther;
-  const totalExpAnnuel = totalExpMensuel * 12;
-
-  const debtMonthly = Number(form.existing_debt_monthly) || 0;
-  const totalDebtAnnuel = debtMonthly * 12;
-
+  const totalExpAnnuel = (expAgri + expHousehold) * 12;
+  const totalDebtAnnuel = debts.reduce((sum, debt) => sum + Number(debt.periodic_payment || 0) * (debt.frequency === 'trimestriel' ? 4 : debt.frequency === 'saisonnier' ? 1 : 12), 0);
   const fluxNet = totalRevAnnuel - totalExpAnnuel - totalDebtAnnuel;
   const amount = Number(form.amount_requested) || 0;
   const duration = Number(form.duration_months) || 1;
   const echeance = amount > 0 ? Math.ceil(amount / duration) : 0;
+  const calculable = Boolean(form.crop_name && Number(form.project_surface_ha) > 0 && Number(form.expected_yield) > 0 && Number(form.expected_price) > 0 && projectBudget > 0);
 
   return (
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 8 }}>Analyse préliminaire</h2>
       <p className="text-sm text-muted" style={{ marginBottom: 16 }}>
-        Résumé calculé automatiquement à partir des informations que vous avez saisies dans les étapes précédentes.
+        Résumé calculé automatiquement. Il ne s'agit pas encore de la décision humaine du comité.
       </p>
+      {!calculable && <div style={{ padding: 14, background: 'var(--c-warning-bg)', color: 'var(--c-warning)', borderRadius: 'var(--radius-md)', marginBottom: 16 }}><strong>Non calculé — données insuffisantes</strong><div className="text-sm">Complétez le rendement, le prix prudent et le budget détaillé du projet. Aucun score numérique n'est produit.</div></div>}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
         <SummaryLine label="Revenus annuels estimés" value={formatCFA(totalRevAnnuel)} color="var(--c-success)" />
@@ -574,7 +818,7 @@ function SummaryLine({ label, value, color }) {
 }
 
 function StepSoumission({ form, update, saving, onSave, setStep }) {
-  const canSubmit = form.applicant_name && form.amount_requested && form.credit_purpose;
+  const canSubmit = form.applicant_name && form.applicant_id_number && form.amount_requested && form.credit_purpose && (!form.third_party_commitment || (form.guarantor_name && form.guarantor_id_number && form.guarantor_phone && form.guarantor_consent));
 
   return (
     <div>
@@ -597,7 +841,7 @@ function StepSoumission({ form, update, saving, onSave, setStep }) {
       </div>
 
       <div className="flex justify-between items-center" style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--c-border)' }}>
-        <button className="btn btn-secondary" onClick={() => setStep(8)}>
+        <button className="btn btn-secondary" onClick={() => setStep(9)}>
           <ArrowLeft size={14} /> Revenir en arrière
         </button>
         <button className="btn btn-primary btn-lg" onClick={onSave} disabled={saving || !canSubmit}>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
-import { isOnline, getSyncQueue, onConnectivityChange } from '../lib/offline';
+import { isOnline, getSyncQueue, markSynced, onConnectivityChange } from '../lib/offline';
 import { RefreshCw, Wifi, WifiOff, CheckCircle, AlertTriangle, Clock } from 'lucide-react';
 
 export default function SyncPage() {
@@ -40,6 +40,14 @@ export default function SyncPage() {
         local_timestamp: op.local_timestamp,
       }));
       const res = await api.syncPush(operations);
+      const completed = new Map((res.results || []).map(result => [
+        `${result.entity_id}:${result.local_timestamp}`,
+        result.status,
+      ]));
+      await Promise.all(queue.map(op => {
+        const status = completed.get(`${op.entity_id}:${op.local_timestamp}`);
+        return ['synced', 'duplicate'].includes(status) ? markSynced(op.id) : Promise.resolve();
+      }));
       setLastResult(res);
       await loadStatus();
     } catch (err) {

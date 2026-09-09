@@ -97,7 +97,7 @@ export default function DossierList() {
                     <td>
                       {d.prequalification_score != null ? (
                         <ScoreBadge score={d.prequalification_score} prequalification={d.prequalification} />
-                      ) : <span className="text-xs text-muted">—</span>}
+                      ) : <span className="text-xs text-muted">Non calculé — données insuffisantes</span>}
                     </td>
                     <td>
                       <span className={`badge badge-${d.status === 'draft' ? 'neutral' : ['decided','exported','disbursed','closed'].includes(d.status) ? 'success' : 'warning'}`}>

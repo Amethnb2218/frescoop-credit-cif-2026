@@ -3,8 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
 import { formatCFA, formatDate, formatDateTime, STATUS_LABELS, MONTHS, prequalLabel, prequalColor, scoreStyle, parseScoreDetails } from '../lib/format';
 import { EVIDENCE_LEVELS } from '../lib/tokens';
-import { isOnline, addToSyncQueue, saveEvidenceOffline } from '../lib/offline';
-import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff, Shield, MapPin, FileCheck, Printer } from 'lucide-react';
+import { isOnline, addToSyncQueue, saveEvidenceOffline, deleteEvidenceOffline } from '../lib/offline';
+import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff, Shield, MapPin, FileCheck, Printer, Download, Trash2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 function getTabsForRole(role) {
@@ -49,9 +49,6 @@ export default function DossierDetail() {
       setStressTests(res.stress_tests || []);
       setRuleEvals(res.rule_evaluations || []);
       setRiskFlags(res.risk_flags || []);
-      if (res.dossier && res.dossier.prequalification_score == null && res.dossier.status !== 'draft') {
-        try { await api.evaluateRules(id); const r2 = await api.getDossier(id); setDossier(r2.dossier); setRuleEvals(r2.rule_evaluations || []); } catch {}
-      }
     } catch (err) {}
     finally { setLoading(false); }
   }
@@ -113,6 +110,7 @@ export default function DossierDetail() {
           <div>
             <h1 className="page-title">{dossier.applicant_name || 'Dossier'}</h1>
             <p className="page-subtitle">{dossier.applicant_location} · {dossier.activity_type || dossier.sector} · {formatCFA(dossier.amount_requested)}</p>
+            {dossier.prequalification_score == null && <p className="text-xs text-muted" style={{ marginTop: 4 }}>Non calculé — données insuffisantes</p>}
           </div>
         </div>
         <div className="flex gap-2">
@@ -148,7 +146,7 @@ export default function DossierDetail() {
 
       {tab === 'Résumé' && <SummaryTab dossier={dossier} evidence={evidence} cashflow={cashflow} bicData={bicData} onCheckBic={checkBic} />}
       {tab === 'Mémo décision' && <MemoTab dossier={dossier} evidence={evidence} cashflow={cashflow} ruleEvals={ruleEvals} />}
-      {tab === 'Preuves' && <EvidenceTab dossierId={id} evidence={evidence} onReload={loadDossier} />}
+      {tab === 'Preuves' && <EvidenceTab dossierId={id} dossierStatus={dossier.status} evidence={evidence} onReload={loadDossier} />}
       {tab === 'Cash-flow' && <CashflowTab dossierId={id} cashflow={cashflow} dossier={dossier} onReload={loadDossier} />}
       {tab === 'Stress test' && <StressTab stressTests={stressTests} onRun={runStressTest} />}
       {tab === 'Préqualification' && <PrequalTab dossier={dossier} ruleEvals={ruleEvals} onEvaluate={evaluateRules} />}
@@ -306,18 +304,52 @@ function SummaryTab({ dossier, evidence, cashflow, bicData, onCheckBic }) {
   const fluxNet = totalRevenue - totalExpenses - totalDebt;
   const monthlyPayment = dossier.amount_requested && dossier.duration_months ? Math.ceil(dossier.amount_requested / dossier.duration_months) : 0;
   const scoreVisual = scoreStyle(dossier.prequalification_score);
+  const scoreDetails = parseScoreDetails(dossier.prequalification_score_details) || {};
+  const capacityRatio = scoreDetails.capacity_ratio;
+  const stressedRatio = scoreDetails.stressed_capacity_ratio;
+  const averageMonthlyNet = scoreDetails.average_monthly_net;
+  const monthlyMargin = scoreDetails.monthly_margin_after_payment;
+  const paymentMonths = Array.isArray(scoreDetails.payment_months) ? scoreDetails.payment_months : [];
+  const scheduleMinimumMargin = scoreDetails.schedule_minimum_margin;
+  const stressedScheduleMinimumMargin = scoreDetails.stressed_schedule_minimum_margin;
+  const capacityKnown = capacityRatio != null;
 
   return (
     <div>
+      <div style={{ marginBottom: 20, padding: 18, borderRadius: 'var(--radius-md)', background: capacityKnown && capacityRatio >= 1.3 ? '#ecfdf5' : capacityKnown && capacityRatio >= 1 ? '#fffbeb' : '#fef2f2', border: `2px solid ${capacityKnown && capacityRatio >= 1.3 ? '#6ee7b7' : capacityKnown && capacityRatio >= 1 ? '#fcd34d' : '#fca5a5'}` }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
+          <div>
+            <div style={{ fontSize: 'var(--fs-xs)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.6px', color: '#475569' }}>Capacité de remboursement</div>
+            <div style={{ fontSize: 'var(--fs-xl)', fontWeight: 800, marginTop: 3 }}>{capacityKnown ? `${capacityRatio.toFixed(2)}× l’échéance` : 'Non calculé — données insuffisantes'}</div>
+          </div>
+          <span className={`badge ${dossier.repayment_capacity === 'SUFFICIENT' ? 'badge-success' : dossier.repayment_capacity === 'LIMIT' ? 'badge-warning' : 'badge-danger'}`}>
+            {dossier.repayment_capacity === 'SUFFICIENT' ? 'Suffisante' : dossier.repayment_capacity === 'LIMIT' ? 'Limite' : dossier.repayment_capacity === 'INSUFFICIENT' ? 'Insuffisante' : 'Non calculable'}
+          </span>
+        </div>
+        <div className="capacity-metrics">
+          <div><div className="text-xs text-muted">Flux net mensuel moyen</div><strong>{averageMonthlyNet == null ? '—' : formatCFA(averageMonthlyNet)}</strong></div>
+          <div><div className="text-xs text-muted">Échéance proposée</div><strong>{monthlyPayment ? formatCFA(monthlyPayment) : '—'}</strong></div>
+          <div><div className="text-xs text-muted">Marge après échéance</div><strong>{monthlyMargin == null ? '—' : formatCFA(monthlyMargin)}</strong></div>
+          <div><div className="text-xs text-muted">Stress revenus −20 %</div><strong>{stressedRatio == null ? '—' : `${stressedRatio.toFixed(2)}×`}</strong></div>
+        </div>
+        <div className="text-xs text-muted" style={{ marginTop: 12 }}>
+          Calendrier : {scoreDetails.seasonal_schedule ? 'saisonnier prévu' : dossier.desired_schedule || 'non renseigné'} · Revenus observés sur {scoreDetails.revenue_months ?? '—'} mois.
+          {paymentMonths.length > 0 && <> · Mois d’échéance : <strong>{paymentMonths.join(', ')}</strong></>}
+          {scheduleMinimumMargin != null && <> · Marge minimale : <strong>{formatCFA(scheduleMinimumMargin)}</strong></>}
+          {stressedScheduleMinimumMargin != null && <> · Marge minimale stressée : <strong>{formatCFA(stressedScheduleMinimumMargin)}</strong></>}
+          {' '}L’orientation reste explicable et la décision finale appartient au comité habilité.
+        </div>
+      </div>
+
       {/* Score + Key metrics banner */}
-      <div style={{ display: 'grid', gridTemplateColumns: dossier.prequalification_score != null ? '120px 1fr' : '1fr', gap: 16, marginBottom: 20 }}>
+      <div className={`summary-score-grid ${dossier.prequalification_score == null ? 'no-score' : ''}`}>
         {dossier.prequalification_score != null && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 16, background: scoreVisual.background, borderRadius: 'var(--radius-md)', border: `2px solid ${scoreVisual.softBorder}` }}>
             <ScoreCircle score={dossier.prequalification_score} />
             <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginTop: 6, fontWeight: 600 }}>SCORE TECHNIQUE</div>
           </div>
         )}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+        <div className="key-metrics-grid">
           <div style={{ padding: '12px 10px', background: '#f9fafb', borderRadius: 'var(--radius)', textAlign: 'center', border: '1px solid #e5e7eb' }}>
             <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Montant demandé</div>
             <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, marginTop: 2 }}>{formatCFA(dossier.amount_requested)}</div>
@@ -391,7 +423,7 @@ function SummaryTab({ dossier, evidence, cashflow, bicData, onCheckBic }) {
         <div>
           <div className="surface mb-4">
             <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 12 }}>Cash-flow annuel</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <div className="cashflow-metrics">
               <div style={{ textAlign: 'center', padding: 10, background: '#ecfdf5', borderRadius: 'var(--radius)' }}>
                 <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, color: '#059669' }}>{formatCFA(totalRevenue)}</div>
                 <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginTop: 2 }}>Revenus</div>
@@ -419,7 +451,7 @@ function SummaryTab({ dossier, evidence, cashflow, bicData, onCheckBic }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span style={{ padding: '3px 8px', borderRadius: 'var(--radius)', fontSize: 'var(--fs-12)', fontWeight: 600, background: prequalColor(dossier.prequalification) === 'green' ? '#d1fae5' : prequalColor(dossier.prequalification) === 'amber' ? '#fef3c7' : '#fee2e2', color: prequalColor(dossier.prequalification) === 'green' ? '#065f46' : prequalColor(dossier.prequalification) === 'amber' ? '#92400e' : '#991b1b' }}>{prequalLabel(dossier.prequalification)}</span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 10, fontSize: 'var(--fs-12)' }}>
+              <div className="prequal-metrics" style={{ marginTop: 10, fontSize: 'var(--fs-12)' }}>
                 <div><span style={{ color: '#6b7280' }}>Confiance</span><div style={{ fontWeight: 600, marginTop: 2 }}>{dossier.evidence_confidence || '—'}</div></div>
                 <div><span style={{ color: '#6b7280' }}>Capacité</span><div style={{ fontWeight: 600, marginTop: 2 }}>{dossier.repayment_capacity || '—'}</div></div>
                 <div><span style={{ color: '#6b7280' }}>Preuves</span><div style={{ fontWeight: 600, marginTop: 2 }}>{evidence.length}</div></div>
@@ -429,8 +461,11 @@ function SummaryTab({ dossier, evidence, cashflow, bicData, onCheckBic }) {
 
           <div className="surface">
             <div className="flex justify-between items-center">
-              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px' }}>BIC — Données simulées</div>
+              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px' }}>BIC</div>
               <button className="btn btn-secondary btn-sm" onClick={onCheckBic}>Consulter</button>
+            </div>
+            <div style={{ marginTop: 8, padding: '7px 9px', borderRadius: 'var(--radius)', background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', fontSize: 'var(--fs-11)', fontWeight: 600 }}>
+              Données synthétiques de démonstration — BIC non connecté
             </div>
             {bicData && (
               <div style={{ marginTop: 12 }}>
@@ -460,20 +495,105 @@ function Section({ title, children }) {
   );
 }
 
-function EvidenceTab({ dossierId, evidence, onReload }) {
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => reject(new Error('Lecture du fichier impossible'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function evidenceMetadata(evidence) {
+  if (!evidence?.metadata) return {};
+  if (typeof evidence.metadata === 'object') return evidence.metadata;
+  try { return JSON.parse(evidence.metadata); } catch { return {}; }
+}
+
+function emptyEvidenceForm() {
+  return { category: 'VENTE', label: '', amount: '', source: '', source_detail: '', verification_level: 'D', evidence_date: '', file: null };
+}
+
+function EvidenceTab({ dossierId, dossierStatus, evidence, onReload }) {
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ category: 'VENTE', label: '', amount: '', source: '', source_detail: '', verification_level: 'D', evidence_date: '' });
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(emptyEvidenceForm);
   const [error, setError] = useState('');
 
-  async function handleAdd() {
+  function closeForm() {
+    setAdding(false);
+    setEditingId(null);
+    setForm(emptyEvidenceForm());
+  }
+
+  function editItem(item) {
+    setEditingId(item.id);
+    setAdding(true);
+    setForm({
+      category: item.category || 'VENTE', label: item.label || '', amount: item.amount || '',
+      source: item.source || '', source_detail: item.source_detail || '',
+      verification_level: ['C', 'D'].includes(item.verification_level) ? item.verification_level : 'C',
+      evidence_date: item.evidence_date || '', file: null,
+    });
+  }
+
+  async function handleSave() {
     setError('');
     try {
-      const data = { dossier_id: dossierId, ...form, amount: form.amount ? Number(form.amount) : null };
-      if (isOnline()) { await api.addEvidence(data); }
-      else { const id = crypto.randomUUID(); await saveEvidenceOffline({ id, ...data }); await addToSyncQueue({ operation: 'create', entity_type: 'evidence', entity_id: id, payload: data }); }
-      setAdding(false);
-      setForm({ category: 'VENTE', label: '', amount: '', source: '', source_detail: '', verification_level: 'D', evidence_date: '' });
-      onReload();
+      if (form.file && (form.file.size > 2 * 1024 * 1024 || !['application/pdf', 'image/jpeg', 'image/png'].includes(form.file.type))) {
+        throw new Error('Utilisez un fichier PDF, JPEG ou PNG de 2 Mo maximum.');
+      }
+      const evidenceId = editingId || crypto.randomUUID();
+      const { file, ...fields } = form;
+      const data = { id: evidenceId, dossier_id: dossierId, ...fields, amount: form.amount ? Number(form.amount) : null,
+        verification_level: file ? 'C' : form.verification_level,
+        metadata: file ? { file_name: file.name, file_type: file.type, file_size: file.size, upload_pending: true } : undefined };
+      if (isOnline()) {
+        if (editingId) await api.updateEvidence(evidenceId, fields);
+        else await api.addEvidence(data);
+        if (file) await api.saveEvidenceAttachment(evidenceId, {
+          original_name: file.name,
+          mime_type: file.type,
+          content_base64: await fileToBase64(file),
+        });
+      } else {
+        await saveEvidenceOffline({ ...data, metadata: file ? data.metadata : evidenceMetadata(evidence.find(item => item.id === evidenceId)) });
+        await addToSyncQueue({ operation: editingId ? 'update' : 'create', entity_type: 'evidence', entity_id: evidenceId, payload: data });
+        if (file) await addToSyncQueue({
+          operation: 'attachment', entity_type: 'evidence', entity_id: evidenceId,
+          payload: { dossier_id: dossierId, original_name: file.name, mime_type: file.type,
+            content_base64: await fileToBase64(file) },
+        });
+      }
+      closeForm();
+      await onReload();
+    } catch (err) { setError(err.message); }
+  }
+
+  async function downloadAttachment(item) {
+    try {
+      const { blob } = await api.downloadEvidenceAttachment(item.id);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = evidenceMetadata(item).file_name || 'piece-jointe';
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (err) { setError(err.message); }
+  }
+
+  async function deleteItem(item) {
+    if (!window.confirm(`Supprimer la preuve « ${item.label} » ?`)) return;
+    setError('');
+    try {
+      if (isOnline()) {
+        if (evidenceMetadata(item).file_name) await api.deleteEvidenceAttachment(item.id);
+        await api.deleteEvidence(item.id);
+      } else {
+        await deleteEvidenceOffline(item.id);
+        await addToSyncQueue({ operation: 'delete', entity_type: 'evidence', entity_id: item.id, payload: { dossier_id: dossierId } });
+      }
+      await onReload();
     } catch (err) { setError(err.message); }
   }
 
@@ -483,7 +603,10 @@ function EvidenceTab({ dossierId, evidence, onReload }) {
     <div>
       <div className="flex justify-between items-center mb-4">
         <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600 }}>Preuves au dossier ({evidence.length})</h2>
-        <button className="btn btn-primary btn-sm" onClick={() => setAdding(!adding)}><Plus size={14} /> Ajouter une preuve</button>
+          {['draft', 'incomplete'].includes(dossierStatus) && <button className="btn btn-primary btn-sm" onClick={() => {
+            if (adding) closeForm();
+            else { setAdding(true); setEditingId(null); setForm(emptyEvidenceForm()); }
+          }}><Plus size={14} /> {adding ? 'Fermer' : 'Ajouter une preuve'}</button>}
       </div>
 
       {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '8px 12px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
@@ -506,8 +629,10 @@ function EvidenceTab({ dossierId, evidence, onReload }) {
             <div className="field">
               <label className="field-label">Niveau de vérification</label>
               <select className="input" value={form.verification_level} onChange={e => setForm(f => ({ ...f, verification_level: e.target.value }))}>
-                {Object.entries(EVIDENCE_LEVELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                <option value="C">C — Document non vérifié</option>
+                <option value="D">D — Déclaration</option>
               </select>
+              <div className="field-hint">Les niveaux A et B sont attribués après vérification par un rôle habilité.</div>
             </div>
             <div className="field" style={{ gridColumn: '1 / -1' }}>
               <label className="field-label">Libellé *</label>
@@ -529,13 +654,27 @@ function EvidenceTab({ dossierId, evidence, onReload }) {
               <label className="field-label">Détail source</label>
               <input className="input" value={form.source_detail} onChange={e => setForm(f => ({ ...f, source_detail: e.target.value }))} placeholder="Référence, n° de document..." />
             </div>
+            <div className="field" style={{ gridColumn: '1 / -1' }}>
+              <label className="field-label">Pièce jointe sécurisée</label>
+              <input className="input" type="file" accept="application/pdf,image/jpeg,image/png" onChange={e => {
+                const file = e.target.files?.[0] || null;
+                if (file && file.size > 2 * 1024 * 1024) {
+                  setError('Le fichier dépasse la limite de 2 Mo.');
+                  e.target.value = '';
+                  return;
+                }
+                setError('');
+                setForm(f => ({ ...f, file, verification_level: file ? 'C' : f.verification_level }));
+              }} />
+              <div className="field-hint">PDF, JPEG ou PNG · 2 Mo maximum · téléchargement authentifié.</div>
+            </div>
           </div>
-          <div style={{ padding: 10, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius)', marginTop: 12, marginBottom: 12, fontSize: 'var(--fs-11)', color: '#92400e' }}>
-            <strong>Fichiers :</strong> Les pièces jointes (photos, PDF) sont enregistrées comme référence textuelle. Dans un déploiement réel, un module d'upload sera connecté.
+          <div style={{ padding: 10, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 'var(--radius)', marginTop: 12, marginBottom: 12, fontSize: 'var(--fs-11)', color: '#1e40af' }}>
+            <strong>Stockage protégé :</strong> le fichier est contrôlé, limité à 2 Mo, empreinté en SHA-256 et n’est jamais exposé par une URL publique.
           </div>
           <div className="flex gap-2">
-            <button className="btn btn-primary btn-sm" onClick={handleAdd} disabled={!form.label || !form.source}>Enregistrer</button>
-            <button className="btn btn-secondary btn-sm" onClick={() => setAdding(false)}>Annuler</button>
+            <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={!form.label || !form.source}>{editingId ? 'Enregistrer les modifications' : 'Enregistrer'}</button>
+            <button className="btn btn-secondary btn-sm" onClick={closeForm}>Annuler</button>
           </div>
         </div>
       )}
@@ -543,7 +682,9 @@ function EvidenceTab({ dossierId, evidence, onReload }) {
       {evidence.length === 0 ? (
         <div className="surface"><div className="empty-state"><div className="empty-state-title">Aucune preuve au dossier</div><div className="empty-state-desc">Ajoutez des preuves pour renforcer le dossier de crédit.</div></div></div>
       ) : (
-        evidence.map(e => (
+        evidence.map(e => {
+          const metadata = evidenceMetadata(e);
+          return (
           <div key={e.id} className="evidence-card">
             <div className="evidence-level-badge" style={{ background: levelColors[e.verification_level]?.bg, color: levelColors[e.verification_level]?.text }}>
               {e.verification_level}
@@ -555,9 +696,16 @@ function EvidenceTab({ dossierId, evidence, onReload }) {
                 {e.amount && <span className="evidence-amount" style={{ marginLeft: 8 }}>{formatCFA(e.amount)}</span>}
               </div>
               <div className="evidence-meta" style={{ marginTop: 4 }}>{EVIDENCE_LEVELS[e.verification_level]}</div>
+              {metadata.file_name && <div className="evidence-meta" style={{ marginTop: 4 }}>Fichier : {metadata.file_name} · {Math.ceil((metadata.file_size || 0) / 1024)} Ko</div>}
+            </div>
+            <div className="flex gap-2">
+              {metadata.file_name && <button className="btn btn-secondary btn-sm" onClick={() => downloadAttachment(e)}><Download size={13} /> Télécharger</button>}
+              {['draft', 'incomplete'].includes(dossierStatus) && <button className="btn btn-secondary btn-sm" onClick={() => editItem(e)}>Modifier / remplacer</button>}
+              {['draft', 'incomplete'].includes(dossierStatus) && <button className="btn btn-ghost btn-sm" onClick={() => deleteItem(e)} aria-label={`Supprimer ${e.label}`}><Trash2 size={13} /></button>}
             </div>
           </div>
-        ))
+          );
+        })
       )}
     </div>
   );

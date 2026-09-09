@@ -9,8 +9,8 @@ export function getDb() {
   const url = process.env.TURSO_DATABASE_URL;
   const authToken = process.env.TURSO_AUTH_TOKEN;
 
-  if (url && authToken) {
-    db = createClient({ url, authToken });
+  if (url) {
+    db = createClient(authToken ? { url, authToken } : { url });
   } else {
     db = createClient({ url: 'file:server/data/frescoop.db' });
   }
@@ -134,6 +134,23 @@ export async function initDb() {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    -- Authenticated evidence attachments (never exposed as public files)
+    CREATE TABLE IF NOT EXISTS evidence_attachments (
+      id TEXT PRIMARY KEY,
+      evidence_id TEXT NOT NULL REFERENCES evidence(id),
+      dossier_id TEXT NOT NULL REFERENCES dossiers(id),
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      original_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL CHECK(mime_type IN ('application/pdf','image/jpeg','image/png')),
+      size_bytes INTEGER NOT NULL,
+      sha256 TEXT NOT NULL,
+      content BLOB NOT NULL,
+      created_by TEXT NOT NULL REFERENCES users(id),
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(tenant_id, evidence_id)
+    );
+
     -- Cash-flow entries (monthly)
     CREATE TABLE IF NOT EXISTS cashflow_entries (
       id TEXT PRIMARY KEY,
@@ -212,6 +229,109 @@ export async function initDb() {
       days_late INTEGER DEFAULT 0,
       is_demo INTEGER DEFAULT 1,
       created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Agricultural project assessment (deterministic, explainable rules)
+    CREATE TABLE IF NOT EXISTS agricultural_project_assessments (
+      id TEXT PRIMARY KEY,
+      dossier_id TEXT NOT NULL REFERENCES dossiers(id),
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      crop_code TEXT,
+      crop_label TEXT,
+      variety TEXT,
+      crop_experience_years INTEGER DEFAULT 0,
+      completed_campaigns INTEGER DEFAULT 0,
+      previous_campaign_result TEXT,
+      project_surface_ha REAL DEFAULT 0,
+      land_access TEXT,
+      agro_zone TEXT,
+      soil_type TEXT,
+      soil_source TEXT,
+      season TEXT,
+      sowing_month INTEGER,
+      harvest_month INTEGER,
+      cultivation_mode TEXT,
+      water_source TEXT,
+      water_reliability TEXT,
+      expected_yield REAL DEFAULT 0,
+      expected_price REAL DEFAULT 0,
+      loss_percent REAL DEFAULT 0,
+      own_contribution INTEGER DEFAULT 0,
+      other_funding INTEGER DEFAULT 0,
+      market_channel TEXT,
+      expected_buyer TEXT,
+      climate_risks TEXT DEFAULT '[]',
+      mitigations TEXT DEFAULT '[]',
+      adequacy_status TEXT,
+      viability_status TEXT,
+      confidence_level TEXT,
+      orientation TEXT,
+      calculated_metrics TEXT DEFAULT '{}',
+      findings TEXT DEFAULT '[]',
+      rules_version INTEGER DEFAULT 1,
+      evaluated_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(tenant_id, dossier_id)
+    );
+
+    -- Detailed agricultural budget/input lines
+    CREATE TABLE IF NOT EXISTS agricultural_input_items (
+      id TEXT PRIMARY KEY,
+      dossier_id TEXT NOT NULL REFERENCES dossiers(id),
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      category TEXT NOT NULL,
+      label TEXT NOT NULL,
+      quantity REAL DEFAULT 0,
+      unit TEXT,
+      unit_cost INTEGER DEFAULT 0,
+      total_cost INTEGER DEFAULT 0,
+      supplier TEXT,
+      evidence_id TEXT REFERENCES evidence(id),
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Debts declared by the applicant, kept separate from simulated BIC data
+    CREATE TABLE IF NOT EXISTS declared_debts (
+      id TEXT PRIMARY KEY,
+      dossier_id TEXT NOT NULL REFERENCES dossiers(id),
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      institution TEXT,
+      credit_type TEXT,
+      source TEXT NOT NULL DEFAULT 'DECLAREE' CHECK(source IN ('DECLAREE','INTERNE','BIC')),
+      initial_amount INTEGER DEFAULT 0,
+      outstanding INTEGER DEFAULT 0,
+      periodic_payment INTEGER DEFAULT 0,
+      frequency TEXT DEFAULT 'mensuel',
+      start_date TEXT,
+      end_date TEXT,
+      status TEXT DEFAULT 'en_cours',
+      days_late INTEGER DEFAULT 0,
+      purpose TEXT,
+      reference TEXT,
+      evidence_id TEXT REFERENCES evidence(id),
+      consent_given INTEGER DEFAULT 0,
+      agent_comment TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Structured guarantors for third-party commitments
+    CREATE TABLE IF NOT EXISTS dossier_guarantors (
+      id TEXT PRIMARY KEY,
+      dossier_id TEXT NOT NULL REFERENCES dossiers(id),
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      full_name TEXT NOT NULL,
+      id_number TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      location TEXT NOT NULL,
+      relationship TEXT NOT NULL,
+      commitment_type TEXT NOT NULL,
+      commitment_amount INTEGER NOT NULL DEFAULT 0,
+      consent_given INTEGER NOT NULL DEFAULT 0,
+      consent_date TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
     );
 
     -- Stress test scenarios
@@ -327,6 +447,11 @@ export async function initDb() {
   try { await client.execute('ALTER TABLE dossiers ADD COLUMN prequalification_score INTEGER'); } catch {}
   try { await client.execute("ALTER TABLE dossiers ADD COLUMN prequalification_score_details TEXT DEFAULT '{}'"); } catch {}
   try { await client.execute('ALTER TABLE dossiers ADD COLUMN prequalification_score_version INTEGER'); } catch {}
+  try { await client.execute('CREATE INDEX IF NOT EXISTS idx_agricultural_project_tenant_dossier ON agricultural_project_assessments(tenant_id, dossier_id)'); } catch {}
+  try { await client.execute('CREATE INDEX IF NOT EXISTS idx_agricultural_inputs_tenant_dossier ON agricultural_input_items(tenant_id, dossier_id)'); } catch {}
+  try { await client.execute('CREATE INDEX IF NOT EXISTS idx_declared_debts_tenant_dossier ON declared_debts(tenant_id, dossier_id)'); } catch {}
+  try { await client.execute('CREATE INDEX IF NOT EXISTS idx_dossier_guarantors_tenant_dossier ON dossier_guarantors(tenant_id, dossier_id)'); } catch {}
+  try { await client.execute('CREATE INDEX IF NOT EXISTS idx_evidence_attachments_tenant_dossier ON evidence_attachments(tenant_id, dossier_id)'); } catch {}
 
   // Migration: add JURY and SUPPORT to role CHECK constraint
   try {

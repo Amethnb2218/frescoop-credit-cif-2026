@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 
-export const SCORE_VERSION = 2;
+export const SCORE_VERSION = 3;
 
 const EVIDENCE_WEIGHTS = { A: 1, B: 0.75, C: 0.4, D: 0.1 };
 const RISK_PENALTIES = { low: 3, medium: 5, high: 8, critical: 20 };
@@ -14,11 +14,30 @@ export function buildEvaluationContext(dossier, cashflow = [], evidence = [], bi
   const totalExpenses = cashflow.reduce((sum, entry) => sum + Number(entry.expenses || 0), 0);
   const totalDebt = cashflow.reduce((sum, entry) => sum + Number(entry.debt_payments || 0), 0);
   const netFlow = totalRevenue - totalExpenses - totalDebt;
+  const cashflowMonths = cashflow.length;
+  const averageMonthlyNet = cashflowMonths > 0 ? netFlow / cashflowMonths : 0;
+  const stressedNetFlow = totalRevenue * 0.8 - totalExpenses - totalDebt;
+  const stressedAverageMonthlyNet = cashflowMonths > 0 ? stressedNetFlow / cashflowMonths : 0;
   const amountRequested = Number(dossier.amount_requested || 0);
   const durationMonths = Number(dossier.duration_months || 0);
   const monthlyPayment = amountRequested > 0 && durationMonths > 0
     ? Math.ceil(amountRequested / durationMonths)
     : 0;
+  const normalizedSchedule = String(dossier.desired_schedule || '').toLowerCase();
+  const scheduleType = normalizedSchedule.includes('saisonnier')
+    ? 'SEASONAL'
+    : normalizedSchedule.includes('in fine')
+      ? 'BULLET'
+      : normalizedSchedule.includes('trimestriel')
+        ? 'QUARTERLY'
+        : 'MONTHLY';
+  const repaymentSchedule = buildRepaymentSchedule(scheduleType, amountRequested, durationMonths, cashflow);
+  const stressedCashflow = cashflow.map(entry => ({
+    ...entry,
+    revenue: Number(entry.revenue || 0) * 0.8,
+  }));
+  const seasonalCoverage = calculateScheduleCoverage(cashflow, repaymentSchedule);
+  const stressedSeasonalCoverage = calculateScheduleCoverage(stressedCashflow, repaymentSchedule);
   const evidenceCounts = { A: 0, B: 0, C: 0, D: 0 };
   evidence.forEach(item => {
     if (item.verification_level in evidenceCounts) evidenceCounts[item.verification_level] += 1;
@@ -29,7 +48,15 @@ export function buildEvaluationContext(dossier, cashflow = [], evidence = [], bi
     totalExpenses,
     totalDebt,
     netFlow,
+    cashflowMonths,
+    averageMonthlyNet,
+    stressedNetFlow,
+    stressedAverageMonthlyNet,
     monthlyPayment,
+    scheduleType,
+    repaymentSchedule,
+    seasonalCoverage,
+    stressedSeasonalCoverage,
     monthsWithRevenue: cashflow.filter(entry => Number(entry.revenue) > 0).length,
     amountRequested,
     durationMonths,
@@ -48,9 +75,80 @@ export function buildEvaluationContext(dossier, cashflow = [], evidence = [], bi
   };
 }
 
+export function buildRepaymentSchedule(scheduleType, amountRequested, durationMonths, cashflow = []) {
+  if (amountRequested <= 0 || durationMonths <= 0) return [];
+  const months = Math.min(durationMonths, Math.max(cashflow.length, durationMonths));
+  if (scheduleType === 'BULLET') {
+    return Array.from({ length: months }, (_, index) => index === months - 1 ? amountRequested : 0);
+  }
+  if (scheduleType === 'SEASONAL') {
+    const revenueMonths = cashflow
+      .map((entry, index) => ({ index, revenue: Number(entry.revenue || 0) }))
+      .filter(entry => entry.revenue > 0)
+      .sort((a, b) => b.revenue - a.revenue);
+    const paymentMonths = revenueMonths.slice(0, Math.min(3, revenueMonths.length)).map(entry => entry.index);
+    if (!paymentMonths.length) return Array.from({ length: months }, () => 0);
+    const payment = Math.ceil(amountRequested / paymentMonths.length);
+    let allocated = 0;
+    return Array.from({ length: months }, (_, index) => {
+      if (!paymentMonths.includes(index)) return 0;
+      const value = Math.min(payment, amountRequested - allocated);
+      allocated += value;
+      return value;
+    });
+  }
+  const interval = scheduleType === 'QUARTERLY' ? 3 : 1;
+  const paymentCount = Math.ceil(months / interval);
+  const payment = Math.ceil(amountRequested / paymentCount);
+  let allocated = 0;
+  return Array.from({ length: months }, (_, index) => {
+    if ((index + 1) % interval !== 0 && index !== months - 1) return 0;
+    const value = Math.min(payment, amountRequested - allocated);
+    allocated += value;
+    return value;
+  });
+}
+
+export function calculateScheduleCoverage(cashflow = [], repaymentSchedule = []) {
+  const paymentMonths = repaymentSchedule
+    .map((payment, index) => ({ payment: Number(payment || 0), index }))
+    .filter(item => item.payment > 0);
+  if (!paymentMonths.length) return null;
+  let cumulativeCash = 0;
+  let minimumCoverage = Infinity;
+  let minimumMargin = Infinity;
+  for (let index = 0; index < repaymentSchedule.length; index += 1) {
+    const entry = cashflow[index] || {};
+    cumulativeCash += Number(entry.revenue || 0) - Number(entry.expenses || 0) - Number(entry.debt_payments || 0);
+    const payment = Number(repaymentSchedule[index] || 0);
+    if (payment <= 0) continue;
+    const available = Math.max(cumulativeCash, 0);
+    minimumCoverage = Math.min(minimumCoverage, available / payment);
+    cumulativeCash -= payment;
+    minimumMargin = Math.min(minimumMargin, cumulativeCash);
+  }
+  return {
+    ratio: Number.isFinite(minimumCoverage) ? minimumCoverage : null,
+    minimum_margin: Number.isFinite(minimumMargin) ? Math.round(minimumMargin) : null,
+    payment_months: paymentMonths.map(item => item.index + 1),
+    payments: repaymentSchedule,
+  };
+}
+
 export function calculateCapacityRatio(context) {
-  if (!context.hasCashflow || context.monthlyPayment <= 0 || context.durationMonths <= 0) return null;
-  return (context.netFlow / context.durationMonths) / context.monthlyPayment;
+  if (context.scheduleType !== 'MONTHLY' && context.seasonalCoverage?.ratio != null) {
+    return context.seasonalCoverage.ratio;
+  }
+  if (!context.hasCashflow || context.monthlyPayment <= 0 || context.cashflowMonths <= 0) return null;
+  return context.averageMonthlyNet / context.monthlyPayment;
+}
+
+export function calculateStressedCapacityRatio(context) {
+  if (context.scheduleType !== 'MONTHLY' && context.stressedSeasonalCoverage?.ratio != null) {
+    return context.stressedSeasonalCoverage.ratio;
+  }
+  if (!context.hasCashflow || context.monthlyPayment <= 0 || context.cashflowMonths <= 0) return null;
+  return context.stressedAverageMonthlyNet / context.monthlyPayment;
 }
 
 export function classifyRepaymentCapacity(ratio) {
@@ -86,10 +184,7 @@ export function evaluateRule(rule, context, capacityRatio = calculateCapacityRat
     };
   }
   if (expr === 'CAPACITY_STRESSED') {
-    const stressedNet = context.totalRevenue * 0.8 - context.totalExpenses - context.totalDebt;
-    const ratio = context.monthlyPayment > 0 && context.durationMonths > 0
-      ? (stressedNet / context.durationMonths) / context.monthlyPayment
-      : null;
+    const ratio = calculateStressedCapacityRatio(context);
     return {
       triggered: ratio != null && ratio < 1,
       explanation: ratio == null
@@ -170,21 +265,14 @@ export function computePrequalificationScore(context, evaluations, prequalificat
   const risk = clamp(20 - penalties.reduce((sum, penalty) => sum + penalty.points, 0), 0, 20);
   const rawScore = clamp(identity + capacity + coverage + quality + risk, 0, 100);
 
-  const bands = {
-    NON_ELIGIBLE: { min: 0, max: 39 },
-    REVUE_REQUISE: { min: 40, max: 70 },
-    PREQUALIFIE: { min: 71, max: 100 },
-  };
-  const band = bands[prequalification];
-  const bandSize = band.max - band.min;
-  const score = Math.round(band.min + (rawScore / 100) * bandSize);
+  const score = Math.round(rawScore);
 
   return {
     score,
     details: {
       version: SCORE_VERSION,
       raw_score: rawScore,
-      decision_band: band,
+      decision_outcome: prequalification,
       capacity_ratio: capacityRatio == null ? null : Number(capacityRatio.toFixed(4)),
       components: {
         identity: { points: identity, maximum: 15 },
@@ -201,6 +289,7 @@ export function computePrequalificationScore(context, evaluations, prequalificat
 export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords, rules) {
   const context = buildEvaluationContext(dossier, cashflow, evidence, bicRecords);
   const capacityRatio = calculateCapacityRatio(context);
+  const stressedCapacityRatio = calculateStressedCapacityRatio(context);
   const repaymentCapacity = classifyRepaymentCapacity(capacityRatio);
   const evidenceConfidence = calculateEvidenceConfidence(context);
   const evaluations = [...rules]
@@ -217,15 +306,49 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
       };
     });
   const decision = determinePrequalification(evaluations, evidenceConfidence, repaymentCapacity);
-  const scoring = computePrequalificationScore(
-    context,
-    evaluations,
-    decision.prequalification,
-    capacityRatio,
+  const isComplete = Boolean(
+    dossier.applicant_name
+    && dossier.applicant_id_number
+    && dossier.sector === 'Agriculture'
+    && dossier.activity_type
+    && context.amountRequested > 0
+    && context.durationMonths > 0
+    && context.hasCashflow,
   );
+  const scoring = isComplete
+    ? computePrequalificationScore(context, evaluations, decision.prequalification, capacityRatio)
+    : {
+        score: null,
+        details: {
+          version: SCORE_VERSION,
+          status: 'INSUFFICIENT_DATA',
+          raw_score: null,
+          capacity_ratio: null,
+          stressed_capacity_ratio: null,
+          message: 'Non calculé — données insuffisantes',
+        },
+      };
+  const details = {
+    ...scoring.details,
+    stressed_capacity_ratio: stressedCapacityRatio == null ? null : Number(stressedCapacityRatio.toFixed(4)),
+    average_monthly_net: context.hasCashflow ? Math.round(context.averageMonthlyNet) : null,
+    stressed_average_monthly_net: context.hasCashflow ? Math.round(context.stressedAverageMonthlyNet) : null,
+    proposed_monthly_payment: context.monthlyPayment || null,
+    monthly_margin_after_payment: context.hasCashflow && context.monthlyPayment > 0
+      ? Math.round(context.averageMonthlyNet - context.monthlyPayment)
+      : null,
+    revenue_months: context.monthsWithRevenue,
+    schedule_type: context.scheduleType,
+    repayment_schedule: context.repaymentSchedule,
+    payment_months: context.seasonalCoverage?.payment_months || [],
+    schedule_minimum_margin: context.seasonalCoverage?.minimum_margin ?? null,
+    stressed_schedule_minimum_margin: context.stressedSeasonalCoverage?.minimum_margin ?? null,
+    seasonal_schedule: context.scheduleType === 'SEASONAL',
+  };
   return {
     ...decision,
     ...scoring,
+    details,
     evidenceConfidence,
     repaymentCapacity,
     evaluations,

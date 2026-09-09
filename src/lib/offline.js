@@ -1,6 +1,6 @@
 const DB_NAME = 'frescoop_offline';
-const DB_VERSION = 1;
-const STORES = ['dossiers', 'evidence', 'cashflow', 'sync_queue'];
+const DB_VERSION = 2;
+const STORES = ['dossiers', 'evidence', 'cashflow', 'agricultural_project', 'debts', 'attachments', 'sync_queue'];
 
 let db = null;
 
@@ -59,6 +59,18 @@ export async function saveEvidenceOffline(evidence) {
     const req = store.put({ ...evidence, _offline: true, _timestamp: Date.now() });
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
+  });
+}
+
+export async function deleteEvidenceOffline(id) {
+  const idb = await openDb();
+  const tx = idb.transaction(['evidence', 'attachments'], 'readwrite');
+  tx.objectStore('evidence').delete(id);
+  tx.objectStore('attachments').delete(id);
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
   });
 }
 
@@ -135,10 +147,12 @@ export function isOnline() {
 }
 
 export function onConnectivityChange(callback) {
-  window.addEventListener('online', () => callback(true));
-  window.addEventListener('offline', () => callback(false));
+  const handleOnline = () => callback(true);
+  const handleOffline = () => callback(false);
+  window.addEventListener('online', handleOnline);
+  window.addEventListener('offline', handleOffline);
   return () => {
-    window.removeEventListener('online', () => callback(true));
-    window.removeEventListener('offline', () => callback(false));
+    window.removeEventListener('online', handleOnline);
+    window.removeEventListener('offline', handleOffline);
   };
 }

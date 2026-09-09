@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildEvaluationContext,
+  buildRepaymentSchedule,
+  calculateScheduleCoverage,
   calculateCapacityRatio,
+  calculateStressedCapacityRatio,
   calculateEvidenceConfidence,
   classifyRepaymentCapacity,
   computePrequalificationScore,
@@ -13,6 +16,9 @@ import {
 
 const dossier = {
   applicant_name: 'Awa Faye',
+  applicant_id_number: 'SN-2024-78432',
+  sector: 'Agriculture',
+  activity_type: 'Maraîchage',
   amount_requested: 1300,
   duration_months: 1,
 };
@@ -30,6 +36,50 @@ function cashflow(net) {
 function evidence(levels) {
   return levels.map(verification_level => ({ verification_level }));
 }
+
+test('calcule la capacité sur le flux mensuel moyen observé', () => {
+  const annualCashflow = Array.from({ length: 12 }, () => ({ revenue: 200, expenses: 50, debt_payments: 20 }));
+  const context = buildEvaluationContext({ ...dossier, amount_requested: 1200, duration_months: 12 }, annualCashflow, [], []);
+  assert.equal(calculateCapacityRatio(context), 1.3);
+  assert.ok(Math.abs(calculateStressedCapacityRatio(context) - 0.9) < 1e-10);
+  assert.equal(context.averageMonthlyNet, 130);
+  assert.equal(context.monthlyPayment, 100);
+});
+
+test('un échéancier saisonnier place les remboursements sur les mois de recette', () => {
+  const seasonalCashflow = [
+    { revenue: 0, expenses: 100, debt_payments: 0 },
+    { revenue: 0, expenses: 100, debt_payments: 0 },
+    { revenue: 1500, expenses: 100, debt_payments: 0 },
+    { revenue: 900, expenses: 100, debt_payments: 0 },
+  ];
+  const schedule = buildRepaymentSchedule('SEASONAL', 1200, 4, seasonalCashflow);
+  assert.deepEqual(schedule, [0, 0, 600, 600]);
+  const coverage = calculateScheduleCoverage(seasonalCashflow, schedule);
+  assert.deepEqual(coverage.payment_months, [3, 4]);
+  assert.equal(coverage.ratio, 2);
+  assert.equal(coverage.minimum_margin, 600);
+});
+
+test('la capacité saisonnière contrôle chaque échéance et son stress', () => {
+  const seasonalCashflow = [
+    { revenue: 0, expenses: 100, debt_payments: 0 },
+    { revenue: 0, expenses: 100, debt_payments: 0 },
+    { revenue: 1000, expenses: 100, debt_payments: 0 },
+    { revenue: 700, expenses: 100, debt_payments: 0 },
+  ];
+  const context = buildEvaluationContext({
+    ...dossier,
+    amount_requested: 1200,
+    duration_months: 4,
+    desired_schedule: 'Saisonnier (post-récolte)',
+  }, seasonalCashflow, [], []);
+  assert.equal(context.scheduleType, 'SEASONAL');
+  assert.ok(Math.abs(calculateCapacityRatio(context) - (700 / 600)) < 1e-10);
+  assert.ok(Math.abs(calculateStressedCapacityRatio(context) - 0.6) < 1e-10);
+  assert.equal(classifyRepaymentCapacity(calculateCapacityRatio(context)), 'LIMIT');
+  assert.equal(classifyRepaymentCapacity(calculateStressedCapacityRatio(context)), 'INSUFFICIENT');
+});
 
 test('classifie exactement les seuils de capacité', () => {
   assert.equal(classifyRepaymentCapacity(1.3), 'SUFFICIENT');
@@ -62,25 +112,45 @@ test('un dossier complet atteint la tranche préqualifiée', () => {
 });
 
 test('deux dossiers non éligibles gardent des scores différents', () => {
-  const sansIdentite = evaluatePrequalification(
-    { ...dossier, applicant_name: null },
-    cashflow(1690),
+  const capaciteLimitee = evaluatePrequalification(
+    dossier,
+    cashflow(1000),
     evidence(['A', 'A', 'B']),
     [],
     rules,
   );
   const tresFaible = evaluatePrequalification(
-    { ...dossier, applicant_name: null },
-    cashflow(0),
+    { ...dossier, amount_requested: 2600 },
+    cashflow(1300),
+    evidence(['D']),
+    [],
+    rules,
+  );
+  assert.equal(capaciteLimitee.prequalification, 'NON_ELIGIBLE');
+  assert.equal(tresFaible.prequalification, 'NON_ELIGIBLE');
+  assert.ok(capaciteLimitee.score >= 0 && capaciteLimitee.score <= 100);
+  assert.ok(tresFaible.score >= 0 && tresFaible.score <= 100);
+  assert.notEqual(capaciteLimitee.score, tresFaible.score);
+});
+
+test('un dossier incomplet ne reçoit aucun score numérique', () => {
+  const result = evaluatePrequalification(
+    { ...dossier, applicant_id_number: null },
+    [],
     [],
     [],
     rules,
   );
-  assert.equal(sansIdentite.prequalification, 'NON_ELIGIBLE');
-  assert.equal(tresFaible.prequalification, 'NON_ELIGIBLE');
-  assert.ok(sansIdentite.score <= 39);
-  assert.ok(tresFaible.score >= 0);
-  assert.ok(sansIdentite.score > tresFaible.score);
+  assert.equal(result.score, null);
+  assert.equal(result.repaymentCapacity, 'UNKNOWN');
+  assert.equal(result.details.message, 'Non calculé — données insuffisantes');
+});
+
+test('la complétion puis le recalcul produit un score numérique', () => {
+  const incomplete = evaluatePrequalification({ ...dossier, activity_type: null }, cashflow(1690), evidence(['A']), [], rules);
+  const complete = evaluatePrequalification(dossier, cashflow(1690), evidence(['A']), [], rules);
+  assert.equal(incomplete.score, null);
+  assert.equal(typeof complete.score, 'number');
 });
 
 test('les pénalités se cumulent sans rendre le risque négatif', () => {
@@ -92,7 +162,7 @@ test('les pénalités se cumulent sans rendre le risque négatif', () => {
   ];
   const result = computePrequalificationScore(context, evaluations, 'NON_ELIGIBLE', 1);
   assert.equal(result.details.components.risk.points, 0);
-  assert.ok(result.score >= 0 && result.score <= 39);
+  assert.ok(result.score >= 0 && result.score <= 100);
 });
 
 test('le calcul est déterministe quel que soit l’ordre fourni des règles', () => {

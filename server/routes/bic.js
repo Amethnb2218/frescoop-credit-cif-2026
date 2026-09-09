@@ -24,7 +24,10 @@ router.get('/check/:idNumber', authMiddleware, tenantGuard, async (req, res) => 
 
     res.json({
       ok: true,
+      provider: 'BIC_SIMULATOR',
+      connected: false,
       is_demo: true,
+      disclaimer: 'Jeu de données synthétique. Aucune connexion à un BIC réel.',
       records,
       summary: {
         total_records: records.length,

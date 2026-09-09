@@ -22,10 +22,10 @@ export function logout() {
 }
 
 async function request(path, options = {}) {
-  const headers = { 'Content-Type': 'application/json' };
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE}${path}`, { headers, ...options });
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
 
   if (res.status === 401 && !path.includes('/auth/login')) {
     logout();
@@ -33,7 +33,7 @@ async function request(path, options = {}) {
     throw new Error('Session expirée');
   }
 
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Erreur serveur');
   return data;
 }
@@ -47,13 +47,30 @@ export const api = {
   getDossiers: (status) => request(`/api/dossiers${status ? `?status=${status}` : ''}`),
   getDossier: (id) => request(`/api/dossiers/${id}`),
   createDossier: (data) => request('/api/dossiers', { method: 'POST', body: JSON.stringify(data) }),
+  assessAgriculturalFeasibility: (data, signal) => request('/api/dossiers/agricultural-feasibility', {
+    method: 'POST', body: JSON.stringify(data), signal,
+  }),
   updateDossier: (id, data) => request(`/api/dossiers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   updateStatus: (id, status) => request(`/api/dossiers/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
   decideDossier: (id, data) => request(`/api/dossiers/${id}/decide`, { method: 'POST', body: JSON.stringify(data) }),
 
   getEvidence: (dossierId) => request(`/api/evidence/dossier/${dossierId}`),
   addEvidence: (data) => request('/api/evidence', { method: 'POST', body: JSON.stringify(data) }),
+  updateEvidence: (id, data) => request(`/api/evidence/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteEvidence: (id) => request(`/api/evidence/${id}`, { method: 'DELETE' }),
   verifyEvidence: (id, data) => request(`/api/evidence/${id}/verify`, { method: 'PUT', body: JSON.stringify(data) }),
+  saveEvidenceAttachment: (id, data) => request(`/api/evidence/${id}/attachment`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteEvidenceAttachment: (id) => request(`/api/evidence/${id}/attachment`, { method: 'DELETE' }),
+  downloadEvidenceAttachment: async (id) => {
+    const headers = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(`${API_BASE}/api/evidence/${id}/attachment`, { headers });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Téléchargement impossible');
+    }
+    return { blob: await res.blob(), disposition: res.headers.get('Content-Disposition') || '' };
+  },
 
   getCashflow: (dossierId) => request(`/api/cashflow/dossier/${dossierId}`),
   saveCashflow: (dossierId, entries) => request(`/api/cashflow/dossier/${dossierId}`, { method: 'POST', body: JSON.stringify({ entries }) }),
