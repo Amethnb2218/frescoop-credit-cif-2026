@@ -13,6 +13,7 @@ import {
 import { CROP_OPTIONS, OTHER_CROP_VALUE, resolveCrop } from '../lib/agriculturalProject';
 import { dossierDraftKey, restoreDraftEvidence, serializeDraftEvidence } from '../lib/dossierDraft';
 import { formatCFA } from '../lib/format';
+import { feasibilityReasonMessage } from '../../shared/agriculturalFeasibilityContract.js';
 import { Save, WifiOff, ArrowLeft, ArrowRight, MapPin, Plus, Trash2, Pencil } from 'lucide-react';
 
 const STEPS = [
@@ -636,8 +637,18 @@ function StepProjetAgricole({ form, update }) {
 
 function StepBudgetIntrants({ form, items, setItems }) {
   const [draft, setDraft] = useState({ category: 'Semences', label: '', quantity: '', unit: '', unit_cost: '', supplier: '' });
-  const budget = items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_cost || 0), 0);
-  const revenue = Number(form.project_surface_ha || 0) * Number(form.expected_yield || 0) * (1 - Number(form.loss_percent || 0) / 100) * Number(form.expected_price || 0);
+  const budget = items.length > 0
+    ? items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_cost || 0), 0)
+    : null;
+  const surface = num(form.project_surface_ha);
+  const expectedYield = num(form.expected_yield);
+  const lossPercent = num(form.loss_percent);
+  const expectedPrice = num(form.expected_price);
+  const revenue = surface != null && surface > 0 && expectedYield != null && expectedYield > 0
+    && lossPercent != null && lossPercent >= 0 && lossPercent <= 100
+    && expectedPrice != null && expectedPrice >= 0
+    ? surface * expectedYield * (1 - lossPercent / 100) * expectedPrice
+    : null;
   function addItem() {
     if (!Number(draft.quantity) || !Number(draft.unit_cost)) return;
     setItems(list => [...list, { ...draft, label: draft.category, id: crypto.randomUUID() }]);
@@ -657,21 +668,23 @@ function StepBudgetIntrants({ form, items, setItems }) {
       </div>
       <button type="button" className="btn btn-secondary btn-sm" onClick={addItem}><Plus size={14} /> Ajouter l'intrant</button>
       {items.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span>{item.category} · {item.quantity} {item.unit}</span><span><strong>{formatCFA(Number(item.quantity) * Number(item.unit_cost))}</strong> <button type="button" className="btn btn-ghost btn-sm" onClick={() => setItems(list => list.filter(x => x.id !== item.id))}><Trash2 size={13} /></button></span></div>)}
-      <div style={{ marginTop: 12, padding: 12, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)' }}><strong>Budget :</strong> {formatCFA(budget)} · <strong>Besoin net :</strong> {formatCFA(Math.max(0, budget - Number(form.own_contribution || 0) - Number(form.other_funding || 0)))} · <strong>Revenu estimé :</strong> {formatCFA(revenue)} · <strong>Marge :</strong> {formatCFA(revenue - budget)}</div>
+      <div style={{ marginTop: 12, padding: 12, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)' }}>
+        <strong>Budget :</strong> {budget == null ? 'Non calculé — ajoutez les intrants et leurs coûts' : formatCFA(budget)} ·{' '}
+        <strong>Besoin net :</strong> {budget == null ? 'Non calculé' : formatCFA(Math.max(0, budget - Number(form.own_contribution || 0) - Number(form.other_funding || 0)))} ·{' '}
+        <strong>Revenu estimé :</strong> {revenue == null ? 'Non calculé — renseignez surface, rendement, pertes et prix' : formatCFA(revenue)} ·{' '}
+        <strong>Marge :</strong> {revenue == null || budget == null ? 'Non calculée' : formatCFA(revenue - budget)}
+      </div>
     </div>
   );
 }
 
 function feasibilitySourceLabel(source = {}) {
-  if (source.mode === 'hybrid' || source.mode === 'hybrid_partial') {
-    return 'Moteur local FresCoop + Teranga AI';
-  }
-  if (source.mode === 'local_offline') {
-    return 'Moteur local FresCoop — hors connexion, Teranga AI sera consulté à la synchronisation';
-  }
-  if (source.mode === 'local_fallback' || source.fallback_used) {
-    return 'Moteur local FresCoop — repli sécurisé, sans pénalité liée à Teranga AI';
-  }
+  if (source.mode === 'hybrid') return 'Moteur local FresCoop enrichi par Teranga AI';
+  if (source.mode === 'hybrid_partial') return 'Moteur local FresCoop — données Teranga partielles';
+  if (source.mode === 'local_fallback') return `Moteur local FresCoop — ${feasibilityReasonMessage(source.fallback_reason)}`;
+  if (source.fallback_reason === 'offline') return 'Moteur local FresCoop — navigateur hors ligne';
+  if (source.fallback_reason === 'not_configured') return 'Moteur local FresCoop — Teranga non configuré';
+  if (source.fallback_reason === 'insufficient_context') return 'Moteur local FresCoop — contexte insuffisant pour Teranga';
   return 'Moteur local FresCoop';
 }
 
@@ -682,8 +695,20 @@ function firstMetric(metrics, keys) {
   return null;
 }
 
-function formatYield(value) {
-  return value == null ? 'Non disponible' : `${new Intl.NumberFormat('fr-FR').format(value)} kg/ha`;
+function formatYield(value, reason = '') {
+  return value == null
+    ? `Non calculé${reason ? ` — ${reason}` : ''}`
+    : `${new Intl.NumberFormat('fr-FR').format(value)} kg/ha`;
+}
+
+function missingLabels(missing = []) {
+  return missing.map(item => typeof item === 'string' ? item : item?.label).filter(Boolean);
+}
+
+function terangaYieldFromDetails(details = {}) {
+  const signal = details.external_signals?.find(item => item?.type === 'yield');
+  const value = signal?.predicted_yield_kg_ha;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function terangaRisk(details = {}) {
@@ -718,7 +743,7 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
           }, controller.signal);
         } catch (error) {
           if (error.name === 'AbortError') return;
-          result = buildLocalFeasibility(project, items, [], 'request_failed');
+          result = buildLocalFeasibility(project, items, [], 'unavailable');
         }
       }
       if (active) {
@@ -735,13 +760,18 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
   const details = current?.details || {};
   const metrics = details.metrics || {};
   const declaredYield = firstMetric(metrics, ['declared_yield', 'expected_yield']);
-  const terangaYield = firstMetric(metrics, ['teranga_yield', 'predicted_yield_kg_ha']);
-  const retainedYield = firstMetric(metrics, ['retained_yield']) ?? declaredYield;
+  const terangaYield = terangaYieldFromDetails(details);
+  const retainedYield = firstMetric(metrics, ['retained_yield']);
+  const expectedVolume = firstMetric(metrics, ['expected_volume', 'retained_production', 'saleable_production']);
   const declaredRevenue = firstMetric(metrics, ['declared_revenue', 'expected_revenue']);
-  const retainedRevenue = firstMetric(metrics, ['retained_revenue']) ?? declaredRevenue;
+  const retainedRevenue = firstMetric(metrics, ['retained_revenue']);
   const revenueAdjustment = firstMetric(metrics, ['revenue_adjustment'])
     ?? (declaredRevenue != null && retainedRevenue != null ? retainedRevenue - declaredRevenue : null);
   const risk = terangaRisk(details);
+  const terangaReason = terangaYield == null
+    ? feasibilityReasonMessage(current?.source?.fallback_reason)
+    : '';
+  const missing = missingLabels(details.missing_data);
   return (
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Faisabilité agronomique</h2>
@@ -754,18 +784,19 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
           <span className={`badge ${badgeClass}`} style={{ marginBottom: 10 }}>{current.label}</span>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>{current.summary}</div>
           <div className="text-sm text-muted">{feasibilitySourceLabel(current.source)}</div>
-          {current.source?.fallback_used && (
+          {current.source?.teranga?.attempted && !current.source?.teranga?.available && (
             <div style={{ marginTop: 10, padding: '8px 10px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius)', color: '#92400e', fontSize: 'var(--fs-11)' }}>
-              Teranga AI indisponible : le moteur local reste autoritaire et aucune réduction automatique n’est appliquée.
+              Tentative Teranga échouée : {feasibilityReasonMessage(current.source.fallback_reason)}. Le moteur local FresCoop reste autoritaire et aucune pénalité n’est appliquée.
             </div>
           )}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: 10, marginBottom: 14 }}>
-          <SummaryLine label="Rendement" value={formatYield(declaredYield)} />
-          <SummaryLine label="Rendement Teranga" value={formatYield(terangaYield)} color="#2563eb" />
-          <SummaryLine label="Rendement retenu" value={formatYield(retainedYield)} color="#1b6b52" />
-          <SummaryLine label="Revenu déclaré" value={declaredRevenue == null ? '—' : formatCFA(declaredRevenue)} />
-          <SummaryLine label="Revenu retenu" value={retainedRevenue == null ? '—' : formatCFA(retainedRevenue)} color="#1b6b52" />
+          <SummaryLine label="Rendement déclaré" value={formatYield(declaredYield, 'rendement attendu manquant')} />
+          <SummaryLine label="Rendement Teranga" value={formatYield(terangaYield, terangaReason)} color="#2563eb" />
+          <SummaryLine label="Rendement retenu" value={formatYield(retainedYield, 'rendement exploitable manquant')} color="#1b6b52" />
+          <SummaryLine label="Volume attendu" value={expectedVolume == null ? 'Non calculé — surface, rendement ou pertes manquants' : `${new Intl.NumberFormat('fr-FR').format(expectedVolume)} kg`} />
+          <SummaryLine label="Revenu déclaré" value={declaredRevenue == null ? 'Non calculé — surface, rendement, pertes ou prix manquants' : formatCFA(declaredRevenue)} />
+          <SummaryLine label="Revenu retenu" value={retainedRevenue == null ? 'Non calculé — données de revenu incomplètes' : formatCFA(retainedRevenue)} color="#1b6b52" />
           <SummaryLine label="Différence de revenu" value={revenueAdjustment == null ? '—' : formatCFA(revenueAdjustment)} color={revenueAdjustment < 0 ? '#d97706' : '#1b6b52'} />
         </div>
         {(risk.score != null || risk.level || risk.recommendation) && (
@@ -786,11 +817,12 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
         <details style={{ marginTop: 14, padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>
           <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Voir les constats et recommandations</summary>
           <div style={{ marginTop: 12, fontSize: 'var(--fs-12)' }}>
-            {details.missing_data?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Données manquantes :</strong> {details.missing_data.join(', ')}</div>}
+            {missing.length > 0 && <div style={{ marginBottom: 10 }}><strong>Données à compléter :</strong> {missing.join(', ')}</div>}
+            {current.report && <div style={{ marginBottom: 10 }}><strong>Rapport agronomique :</strong> <p style={{ marginTop: 5 }}>{current.report}</p></div>}
             {details.findings?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Constats :</strong><ul>{details.findings.map(item => <li key={item.code}>{item.explanation}</li>)}</ul></div>}
             {details.recommendations?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Recommandations :</strong><ul>{details.recommendations.map(item => <li key={item}>{item}</li>)}</ul></div>}
             {details.external_signals?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Informations agricoles complémentaires :</strong><ul>{details.external_signals.map((item, index) => <li key={`${item.type}-${index}`}>{item.explanation}</li>)}</ul></div>}
-            {current.source?.fallback_reason && <div className="text-muted">Certaines données externes ne sont pas disponibles ; le résultat repose sur l’analyse FresCoop.</div>}
+            {current.source?.fallback_reason && <div className="text-muted">Teranga : {feasibilityReasonMessage(current.source.fallback_reason)}. Le résultat repose sur l’analyse FresCoop.</div>}
           </div>
         </details>
       </>}

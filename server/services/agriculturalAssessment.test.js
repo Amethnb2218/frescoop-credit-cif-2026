@@ -35,6 +35,38 @@ test('les données manquantes demandent un complément, pas un faux rejet', () =
   assert.equal(result.adequacy_status, 'INSUFFICIENT_DATA');
   assert.equal(result.viability_status, 'INSUFFICIENT_DATA');
   assert.equal(result.orientation, 'COLLECTER_PREUVES');
+  assert.deepEqual(result.metrics, {
+    budget_total: null,
+    financing_gap: null,
+    gross_production: null,
+    saleable_production: null,
+    expected_revenue: null,
+    gross_margin: null,
+    campaign_roi: null,
+  });
+  assert.deepEqual(result.missing_data, [
+    { code: 'CROP_REQUIRED', field: 'crop_label', label: 'culture' },
+    { code: 'SURFACE_REQUIRED', field: 'project_surface_ha', label: 'surface du projet' },
+    { code: 'AGRO_ZONE_REQUIRED', field: 'agro_zone', label: 'zone agroécologique' },
+    { code: 'SOIL_TYPE_REQUIRED', field: 'soil_type', label: 'type de sol' },
+    { code: 'SEASON_REQUIRED', field: 'season', label: 'saison' },
+    { code: 'CULTIVATION_MODE_REQUIRED', field: 'cultivation_mode', label: 'mode de culture' },
+    { code: 'YIELD_REQUIRED', field: 'expected_yield', label: 'rendement attendu' },
+    { code: 'PRICE_REQUIRED', field: 'expected_price', label: 'prix de vente' },
+    { code: 'LOSS_PERCENT_REQUIRED', field: 'loss_percent', label: 'pertes estimées' },
+    { code: 'INPUT_REQUIRED', field: 'input_items', label: 'intrants du projet' },
+  ]);
+});
+
+test('distingue les intrants absents des intrants sans coût positif', () => {
+  const absent = assessAgriculturalProject(complete, [], []);
+  const noPositiveCost = assessAgriculturalProject(complete, [
+    { label: 'Semences', quantity: 1, unit_cost: 0 },
+  ], []);
+  assert.equal(absent.missing_data.at(-1).code, 'INPUT_REQUIRED');
+  assert.equal(noPositiveCost.missing_data.at(-1).code, 'POSITIVE_INPUT_COST_REQUIRED');
+  assert.equal(absent.metrics.budget_total, null);
+  assert.equal(noPositiveCost.metrics.budget_total, null);
 });
 
 test('le calcul reste déterministe quel que soit l’ordre des intrants', () => {

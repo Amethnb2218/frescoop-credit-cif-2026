@@ -59,8 +59,9 @@ test('le risque Teranga exige safety_score, niveau et recommandation normalisés
 test('sans configuration, le service retourne immédiatement le moteur local sans réduction', async () => {
   const result = await assessAgriculturalFeasibility({ project, input_items: inputItems });
   assert.equal(result.status, 'FEASIBLE');
-  assert.equal(result.source.mode, 'local_offline');
-  assert.equal(result.source.contract_version, 2);
+  assert.equal(result.source.mode, 'local');
+  assert.equal(result.source.contract_version, 3);
+  assert.equal(result.source.fallback_used, false);
   assert.equal(result.source.fallback_reason, 'not_configured');
   assert.equal(result.source.teranga.attempted, false);
   assert.equal(result.details.metrics.declared_yield, 4000);
@@ -69,6 +70,41 @@ test('sans configuration, le service retourne immédiatement le moteur local san
   assert.equal(result.details.metrics.declared_revenue, 1900000);
   assert.equal(result.details.metrics.retained_revenue, 1900000);
   assert.equal(result.details.metrics.revenue_adjustment, 0);
+});
+
+test('un projet partiel conserve ses constats et laisse les métriques impossibles à null', async () => {
+  const result = await assessAgriculturalFeasibility({
+    project: { crop_label: 'Riz', project_surface_ha: 2 },
+    input_items: [],
+  });
+  assert.equal(result.status, 'ADJUST');
+  assert.equal(result.details.metrics.gross_production, null);
+  assert.equal(result.details.metrics.expected_revenue, null);
+  assert.equal(result.details.metrics.retained_revenue, null);
+  assert.deepEqual(result.details.missing_data.map(item => item.code), [
+    'AGRO_ZONE_REQUIRED', 'SOIL_TYPE_REQUIRED', 'SEASON_REQUIRED',
+    'CULTIVATION_MODE_REQUIRED', 'YIELD_REQUIRED', 'PRICE_REQUIRED',
+    'LOSS_PERCENT_REQUIRED', 'INPUT_REQUIRED',
+  ]);
+  assert.match(result.report, /Aucun classement fiable de cultures/);
+});
+
+test('calcule le volume attendu et le rapport avec la formule prudente', async () => {
+  const result = await assessAgriculturalFeasibility({ project, input_items: inputItems });
+  assert.equal(result.details.metrics.expected_volume, 7600);
+  assert.equal(result.details.metrics.declared_revenue, 1900000);
+  assert.match(result.report, /Volume attendu sur 2 ha : 7600 kg/);
+  assert.match(result.report, /Rendement Teranga : non calculé — service Teranga non configuré/);
+});
+
+test('une indisponibilité réseau est distinguée des replis sans tentative', async () => {
+  const result = await assessAgriculturalFeasibility({
+    project, input_items: inputItems, context: { city: 'Saint-Louis' },
+  }, { baseUrl: 'https://teranga.example', fetchImpl: async () => { throw new Error('network'); } });
+  assert.equal(result.source.mode, 'local_fallback');
+  assert.equal(result.source.fallback_reason, 'unavailable');
+  assert.equal(result.source.teranga.attempted, true);
+  assert.equal(result.source.teranga.available, false);
 });
 
 test('les deux réponses Teranga produisent un résultat hybride sans altérer les métriques', async () => {
@@ -151,6 +187,19 @@ test('une réponse invalide active un repli explicite', async () => {
   assert.equal(result.details.external_signals.length, 0);
 });
 
+test('un JSON Teranga illisible est classé comme réponse invalide', async () => {
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => { throw new SyntaxError('json'); },
+  });
+  const result = await assessAgriculturalFeasibility({
+    project, input_items: inputItems, context: { city: 'Saint-Louis' },
+  }, { baseUrl: 'https://teranga.example', fetchImpl });
+  assert.equal(result.source.fallback_reason, 'invalid_response');
+  assert.equal(result.source.teranga.attempted, true);
+});
+
 test('un timeout des deux appels active le repli local', async () => {
   const fetchImpl = (_url, { signal }) => new Promise((_resolve, reject) => {
     signal.addEventListener('abort', () => {
@@ -173,5 +222,8 @@ test('un mois ou un contexte invalide empêche tout appel externe', async () => 
     context: { city: 'Saint-Louis' },
   }, { baseUrl: 'https://teranga.example', fetchImpl: async () => { called = true; } });
   assert.equal(called, false);
+  assert.equal(result.source.mode, 'local');
+  assert.equal(result.source.fallback_used, false);
+  assert.equal(result.source.teranga.attempted, false);
   assert.equal(result.source.fallback_reason, 'insufficient_context');
 });

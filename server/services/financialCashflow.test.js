@@ -88,6 +88,14 @@ test('fusionne une ancienne autre charge dans le ménage une seule fois', () => 
   assert.equal('other' in entries[0].expenses_detail, false);
 });
 
+test('ne crée pas de faux revenu agricole quand l’évaluation est incomplète', () => {
+  assert.deepEqual(buildFinancialCashflow({}, {
+    harvest_month: 4,
+    expected_revenue: null,
+    calculated_metrics: { retained_revenue: null, expected_revenue: null },
+  }), []);
+});
+
 test('ignore tout revenu agricole déclaré hors évaluation projet', () => {
   const entries = buildFinancialCashflow({
     agriculture_revenue: 999999,

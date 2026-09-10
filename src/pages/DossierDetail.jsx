@@ -6,6 +6,7 @@ import { EVIDENCE_LEVELS } from '../lib/tokens';
 import { isOnline, addToSyncQueue, saveEvidenceOffline, deleteEvidenceOffline } from '../lib/offline';
 import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff, Shield, MapPin, FileCheck, Printer, Download, Trash2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { feasibilityReasonMessage } from '../../shared/agriculturalFeasibilityContract.js';
 
 function getTabsForRole(role) {
   if (role === 'COMITE') return ['Mémo décision', 'Décision'];
@@ -349,14 +350,30 @@ function metricNumber(metrics, projectAssessment, keys) {
   return null;
 }
 
-function displayYield(value) {
-  return value == null ? 'Non disponible' : `${new Intl.NumberFormat('fr-FR').format(value)} kg/ha`;
+function displayYield(value, reason = '') {
+  return value == null
+    ? `Non calculé${reason ? ` — ${reason}` : ''}`
+    : `${new Intl.NumberFormat('fr-FR').format(value)} kg/ha`;
+}
+
+function agronomicMissingLabels(missing = []) {
+  return missing.map(item => typeof item === 'string' ? item : item?.label).filter(Boolean);
+}
+
+function terangaYieldFromAnalysis(analysis = {}) {
+  const signals = analysis.details?.external_signals || analysis.external_signals || [];
+  const signal = signals.find(item => item?.type === 'yield');
+  const value = signal?.predicted_yield_kg_ha;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function assessmentSourceLabel(source = {}) {
-  if (source.mode === 'hybrid' || source.mode === 'hybrid_partial') return 'Moteur local FresCoop + Teranga AI';
-  if (source.mode === 'local_offline') return 'Moteur local FresCoop — analyse hors connexion';
-  if (source.mode === 'local_fallback' || source.fallback_used) return 'Moteur local FresCoop — repli sécurisé sans pénalité Teranga AI';
+  if (source.mode === 'hybrid') return 'Moteur local FresCoop enrichi par Teranga AI';
+  if (source.mode === 'hybrid_partial') return 'Moteur local FresCoop — données Teranga partielles';
+  if (source.mode === 'local_fallback') return `Moteur local FresCoop — ${feasibilityReasonMessage(source.fallback_reason)}`;
+  if (source.fallback_reason === 'offline') return 'Moteur local FresCoop — navigateur hors ligne';
+  if (source.fallback_reason === 'not_configured') return 'Moteur local FresCoop — Teranga non configuré';
+  if (source.fallback_reason === 'insufficient_context') return 'Moteur local FresCoop — contexte insuffisant pour Teranga';
   return 'Moteur local FresCoop';
 }
 
@@ -364,11 +381,14 @@ function AgronomicAssessmentCard({ projectAssessment, compact = false }) {
   if (!projectAssessment) return null;
   const { analysis, metrics, source, status } = assessmentMetrics(projectAssessment);
   const declaredYield = metricNumber(metrics, projectAssessment, ['declared_yield', 'expected_yield']);
-  const terangaYield = metricNumber(metrics, projectAssessment, ['teranga_yield', 'predicted_yield_kg_ha']);
-  const retainedYield = metricNumber(metrics, projectAssessment, ['retained_yield']) ?? declaredYield;
+  const terangaYield = terangaYieldFromAnalysis(analysis);
+  const retainedYield = metricNumber(metrics, projectAssessment, ['retained_yield']);
+  const expectedVolume = metricNumber(metrics, projectAssessment, ['expected_volume', 'retained_production', 'saleable_production']);
   const declaredRevenue = metricNumber(metrics, projectAssessment, ['declared_revenue', 'expected_revenue']);
-  const retainedRevenue = metricNumber(metrics, projectAssessment, ['retained_revenue']) ?? declaredRevenue;
+  const retainedRevenue = metricNumber(metrics, projectAssessment, ['retained_revenue']);
   const recommendations = analysis.details?.recommendations || analysis.recommendations || [];
+  const missing = agronomicMissingLabels(analysis.details?.missing_data || analysis.missing_data || []);
+  const report = analysis.report || analysis.details?.report || '';
   const badgeClass = status === 'FEASIBLE' ? 'badge-success' : status === 'HUMAN_REVIEW' ? 'badge-error' : 'badge-warning';
   return (
     <div className="surface mb-4" style={{ borderLeft: `4px solid ${status === 'FEASIBLE' ? '#059669' : status === 'HUMAN_REVIEW' ? '#dc2626' : '#d97706'}` }}>
@@ -380,12 +400,19 @@ function AgronomicAssessmentCard({ projectAssessment, compact = false }) {
         {status && <span className={`badge ${badgeClass}`}>{status === 'FEASIBLE' ? 'Faisable' : status === 'ADJUST' ? 'À ajuster' : 'Revue humaine'}</span>}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${compact ? '125px' : '145px'}, 1fr))`, gap: 8 }}>
-        <div><div className="text-xs text-muted">Rendement</div><strong>{displayYield(declaredYield)}</strong></div>
-        <div><div className="text-xs text-muted">Rendement Teranga</div><strong>{displayYield(terangaYield)}</strong></div>
-        <div><div className="text-xs text-muted">Rendement retenu</div><strong>{displayYield(retainedYield)}</strong></div>
-        <div><div className="text-xs text-muted">Revenu déclaré</div><strong>{declaredRevenue == null ? '—' : formatCFA(declaredRevenue)}</strong></div>
-        <div><div className="text-xs text-muted">Revenu retenu</div><strong>{retainedRevenue == null ? '—' : formatCFA(retainedRevenue)}</strong></div>
+        <div><div className="text-xs text-muted">Rendement déclaré</div><strong>{displayYield(declaredYield, 'rendement attendu manquant')}</strong></div>
+        <div><div className="text-xs text-muted">Rendement Teranga</div><strong>{displayYield(terangaYield, feasibilityReasonMessage(source.fallback_reason))}</strong></div>
+        <div><div className="text-xs text-muted">Rendement retenu</div><strong>{displayYield(retainedYield, 'rendement exploitable manquant')}</strong></div>
+        <div><div className="text-xs text-muted">Volume attendu</div><strong>{expectedVolume == null ? 'Non calculé — données incomplètes' : `${new Intl.NumberFormat('fr-FR').format(expectedVolume)} kg`}</strong></div>
+        <div><div className="text-xs text-muted">Revenu déclaré</div><strong>{declaredRevenue == null ? 'Non calculé — données incomplètes' : formatCFA(declaredRevenue)}</strong></div>
+        <div><div className="text-xs text-muted">Revenu retenu</div><strong>{retainedRevenue == null ? 'Non calculé — données incomplètes' : formatCFA(retainedRevenue)}</strong></div>
       </div>
+      {missing.length > 0 && (
+        <div className="text-xs" style={{ marginTop: 12 }}><strong>Données à compléter :</strong> {missing.join(' · ')}</div>
+      )}
+      {report && (
+        <div className="text-xs" style={{ marginTop: 12, lineHeight: 1.6 }}><strong>Rapport agronomique :</strong> {report}</div>
+      )}
       {recommendations.length > 0 && (
         <div className="text-xs" style={{ marginTop: 12 }}><strong>Recommandations :</strong> {recommendations.join(' · ')}</div>
       )}
