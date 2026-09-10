@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { getDb } from '../db.js';
-import { authMiddleware, tenantGuard } from '../auth.js';
+import { authMiddleware, tenantGuard, requireRole } from '../auth.js';
 import { logAudit } from './audit.js';
 import { evaluateDossier } from '../services/prequalification.js';
+import { findAccessibleDossier } from '../services/dossierAccess.js';
 
 const router = Router();
 
@@ -19,10 +20,14 @@ router.get('/', authMiddleware, tenantGuard, async (req, res) => {
   }
 });
 
-router.post('/evaluate/:dossierId', authMiddleware, tenantGuard, async (req, res) => {
+router.post('/evaluate/:dossierId', authMiddleware, tenantGuard,
+  requireRole('SUPERVISEUR', 'RISK_MANAGER', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
     const db = getDb();
     const { dossierId } = req.params;
+    if (!await findAccessibleDossier(db, dossierId, req)) {
+      return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
+    }
     const previous = await db.execute({
       sql: 'SELECT prequalification_score, prequalification_score_version FROM dossiers WHERE id = ? AND tenant_id = ?',
       args: [dossierId, req.tenantId],

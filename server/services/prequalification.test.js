@@ -37,6 +37,27 @@ function evidence(levels) {
   return levels.map(verification_level => ({ verification_level }));
 }
 
+const agriculturalProject = {
+  crop_code: 'TOMATO',
+  crop_label: 'Tomate',
+  project_surface_ha: 1,
+  expected_yield: 15000,
+  expected_price: 350,
+};
+const agriculturalInputs = [{ total_cost: 250000 }];
+
+function evaluateComplete(inputDossier, inputCashflow, inputEvidence, inputRules = rules) {
+  return evaluatePrequalification(
+    inputDossier,
+    inputCashflow,
+    inputEvidence,
+    [],
+    inputRules,
+    agriculturalProject,
+    agriculturalInputs,
+  );
+}
+
 test('calcule la capacité sur le flux mensuel moyen observé', () => {
   const annualCashflow = Array.from({ length: 12 }, () => ({ revenue: 200, expenses: 50, debt_payments: 20 }));
   const context = buildEvaluationContext({ ...dossier, amount_requested: 1200, duration_months: 12 }, annualCashflow, [], []);
@@ -105,26 +126,22 @@ test('calcule la confiance selon le volume et la qualité des preuves', () => {
 });
 
 test('un dossier complet atteint la tranche préqualifiée', () => {
-  const result = evaluatePrequalification(dossier, cashflow(1690), evidence(['A', 'A', 'A']), [], rules);
+  const result = evaluateComplete(dossier, cashflow(1690), evidence(['A', 'A', 'A']));
   assert.equal(result.prequalification, 'PREQUALIFIE');
   assert.equal(result.score, 100);
   assert.equal(result.details.components.capacity.points, 35);
 });
 
 test('deux dossiers non éligibles gardent des scores différents', () => {
-  const capaciteLimitee = evaluatePrequalification(
+  const capaciteLimitee = evaluateComplete(
     dossier,
     cashflow(1000),
     evidence(['A', 'A', 'B']),
-    [],
-    rules,
   );
-  const tresFaible = evaluatePrequalification(
+  const tresFaible = evaluateComplete(
     { ...dossier, amount_requested: 2600 },
     cashflow(1300),
     evidence(['D']),
-    [],
-    rules,
   );
   assert.equal(capaciteLimitee.prequalification, 'NON_ELIGIBLE');
   assert.equal(tresFaible.prequalification, 'NON_ELIGIBLE');
@@ -147,8 +164,8 @@ test('un dossier incomplet ne reçoit aucun score numérique', () => {
 });
 
 test('la complétion puis le recalcul produit un score numérique', () => {
-  const incomplete = evaluatePrequalification({ ...dossier, activity_type: null }, cashflow(1690), evidence(['A']), [], rules);
-  const complete = evaluatePrequalification(dossier, cashflow(1690), evidence(['A']), [], rules);
+  const incomplete = evaluateComplete({ ...dossier, activity_type: null }, cashflow(1690), evidence(['A']));
+  const complete = evaluateComplete(dossier, cashflow(1690), evidence(['A']));
   assert.equal(incomplete.score, null);
   assert.equal(typeof complete.score, 'number');
 });
@@ -166,9 +183,8 @@ test('les pénalités se cumulent sans rendre le risque négatif', () => {
 });
 
 test('le calcul est déterministe quel que soit l’ordre fourni des règles', () => {
-  const input = [dossier, cashflow(1690), evidence(['A', 'B', 'A']), []];
-  const first = evaluatePrequalification(...input, rules);
-  const second = evaluatePrequalification(...input, [...rules].reverse());
+  const first = evaluateComplete(dossier, cashflow(1690), evidence(['A', 'B', 'A']), rules);
+  const second = evaluateComplete(dossier, cashflow(1690), evidence(['A', 'B', 'A']), [...rules].reverse());
   assert.equal(first.score, second.score);
   assert.deepEqual(first.details, second.details);
   assert.deepEqual(first.reasons, second.reasons);

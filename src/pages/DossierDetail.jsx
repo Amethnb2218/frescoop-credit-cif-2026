@@ -30,6 +30,7 @@ export default function DossierDetail() {
   const [tab, setTab] = useState(null);
   const [loading, setLoading] = useState(true);
   const [bicData, setBicData] = useState(null);
+  const [actionError, setActionError] = useState('');
 
   useEffect(() => { loadDossier(); }, [id]);
 
@@ -58,8 +59,8 @@ export default function DossierDetail() {
   }
 
   async function checkBic() {
-    if (!dossier?.applicant_id_number) return;
-    try { const res = await api.checkBic(dossier.applicant_id_number); setBicData(res); } catch {}
+    if (!dossier?.id) return;
+    try { const res = await api.checkBic(dossier.id); setBicData(res); } catch {}
   }
 
   async function runStressTest() {

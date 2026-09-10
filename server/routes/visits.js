@@ -2,12 +2,16 @@ import { Router } from 'express';
 import { getDb, uuid } from '../db.js';
 import { authMiddleware, tenantGuard, requireRole } from '../auth.js';
 import { logAudit } from './audit.js';
+import { findAccessibleDossier } from '../services/dossierAccess.js';
 
 const router = Router();
 
 router.get('/dossier/:dossierId', authMiddleware, tenantGuard, async (req, res) => {
   try {
     const db = getDb();
+    if (!await findAccessibleDossier(db, req.params.dossierId, req)) {
+      return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
+    }
     const result = await db.execute({
       sql: 'SELECT * FROM field_visits WHERE dossier_id = ? AND tenant_id = ? ORDER BY visit_date DESC',
       args: [req.params.dossierId, req.tenantId],
@@ -25,6 +29,9 @@ router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR'
 
     if (!dossier_id) {
       return res.status(400).json({ error: 'dossier_id requis' });
+    }
+    if (!await findAccessibleDossier(db, dossier_id, req)) {
+      return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
     }
 
     const actualDate = visit_date || new Date().toISOString().split('T')[0];

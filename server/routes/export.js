@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb } from '../db.js';
 import { authMiddleware, tenantGuard } from '../auth.js';
 import { logAudit } from './audit.js';
+import { findAccessibleDossier, hasBicConsent } from '../services/dossierAccess.js';
 
 const router = Router();
 
@@ -10,6 +11,9 @@ router.get('/memo/:dossierId/json', authMiddleware, tenantGuard, async (req, res
     const db = getDb();
     const { dossierId } = req.params;
 
+    if (!await findAccessibleDossier(db, dossierId, req)) {
+      return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
+    }
     const memo = await buildMemo(db, dossierId, req.tenantId);
     if (!memo) return res.status(404).json({ error: 'Dossier introuvable' });
 
@@ -25,6 +29,9 @@ router.get('/memo/:dossierId/csv', authMiddleware, tenantGuard, async (req, res)
     const db = getDb();
     const { dossierId } = req.params;
 
+    if (!await findAccessibleDossier(db, dossierId, req)) {
+      return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
+    }
     const memo = await buildMemo(db, dossierId, req.tenantId);
     if (!memo) return res.status(404).json({ error: 'Dossier introuvable' });
 
@@ -50,6 +57,8 @@ router.get('/memo/:dossierId/csv', authMiddleware, tenantGuard, async (req, res)
       `Évaluation,Confiance preuves,${esc(memo.prequalification.evidence_confidence)}`,
       `Évaluation,Capacité remboursement,${esc(memo.prequalification.repayment_capacity)}`,
       `Évaluation,Préqualification,${esc(memo.prequalification.result)}`,
+      `BIC,Avertissement,${esc('Données synthétiques de démonstration — BIC non connecté')}`,
+      `BIC,Consentement explicite,${memo.bic.consent_given ? 'Oui' : 'Non'}`,
       `BIC,Crédits trouvés,${memo.bic.records_found}`,
       `BIC,Encours total,${memo.bic.total_outstanding}`,
       `BIC,Retards,${memo.bic.has_late_payments ? 'Oui' : 'Non'}`,
@@ -87,7 +96,11 @@ async function buildMemo(db, dossierId, tenantId) {
 
   const evidenceResult = await db.execute({ sql: 'SELECT * FROM evidence WHERE dossier_id = ? AND tenant_id = ?', args: [dossierId, tenantId] });
   const cashflowResult = await db.execute({ sql: 'SELECT * FROM cashflow_entries WHERE dossier_id = ? AND tenant_id = ?', args: [dossierId, tenantId] });
-  const bicResult = await db.execute({ sql: 'SELECT * FROM bic_records WHERE tenant_id = ? AND applicant_id_number = ?', args: [tenantId, dossier.applicant_id_number || ''] });
+  const bicAllowed = await hasBicConsent(db, dossierId, tenantId);
+  const bicResult = bicAllowed ? await db.execute({
+    sql: 'SELECT * FROM bic_records WHERE tenant_id = ? AND applicant_id_number = ?',
+    args: [tenantId, dossier.applicant_id_number || ''],
+  }) : { rows: [] };
   const stressResult = await db.execute({ sql: 'SELECT * FROM stress_tests WHERE dossier_id = ? AND tenant_id = ? ORDER BY computed_at DESC LIMIT 5', args: [dossierId, tenantId] });
   const flagsResult = await db.execute({ sql: 'SELECT * FROM risk_flags WHERE dossier_id = ? AND tenant_id = ?', args: [dossierId, tenantId] });
 
@@ -108,7 +121,15 @@ async function buildMemo(db, dossierId, tenantId) {
     activity: { sector: dossier.sector, type: dossier.activity_type, experience_years: dossier.years_experience, surface_ha: dossier.surface_ha },
     cashflow_summary: { total_revenue: totalRevenue, total_expenses: totalExpenses, total_debt: totalDebt, net_flow: totalRevenue - totalExpenses - totalDebt, monthly_payment: monthlyPayment },
     evidence_summary: { total: evidence.length, by_level: { A: evidence.filter(e => e.verification_level === 'A').length, B: evidence.filter(e => e.verification_level === 'B').length, C: evidence.filter(e => e.verification_level === 'C').length, D: evidence.filter(e => e.verification_level === 'D').length } },
-    bic: { records_found: bicRecords.length, total_outstanding: bicRecords.reduce((s, r) => s + (r.outstanding || 0), 0), has_late_payments: bicRecords.some(r => r.days_late > 30) },
+    bic: {
+      records_found: bicRecords.length,
+      total_outstanding: bicRecords.reduce((s, r) => s + (r.outstanding || 0), 0),
+      has_late_payments: bicRecords.some(r => r.days_late > 30),
+      consent_given: bicAllowed,
+      connected: false,
+      is_simulated: true,
+      disclaimer: 'Données synthétiques de démonstration — BIC non connecté',
+    },
     stress_tests: stressResult.rows.map(s => ({ scenario: s.description, can_repay: !!s.can_repay, margin_percent: s.margin_percent })),
     risk_flags: flagsResult.rows.map(f => ({ code: f.code, label: f.label, severity: f.severity })),
     prequalification: { result: dossier.prequalification, evidence_confidence: dossier.evidence_confidence, repayment_capacity: dossier.repayment_capacity, reasons: JSON.parse(dossier.prequalification_reasons || '[]') },

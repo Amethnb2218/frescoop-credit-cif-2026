@@ -79,7 +79,7 @@ export const api = {
   getRules: () => request('/api/rules'),
   evaluateRules: (dossierId) => request(`/api/rules/evaluate/${dossierId}`, { method: 'POST' }),
 
-  checkBic: (idNumber) => request(`/api/bic/check/${idNumber}`),
+  checkBic: (dossierId) => request(`/api/bic/check/${dossierId}`),
 
   getAuditLog: (params = {}) => {
     const qs = new URLSearchParams(params).toString();

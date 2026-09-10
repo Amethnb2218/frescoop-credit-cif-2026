@@ -1,33 +1,69 @@
 import jwt from 'jsonwebtoken';
-import { createHash } from 'crypto';
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
+import { getDb } from './db.js';
 
-const SECRET = process.env.TOKEN_SECRET || 'frescoop-dev-secret-change-in-prod';
+const DEVELOPMENT_SECRET = 'frescoop-dev-secret-change-in-prod';
 const TOKEN_EXPIRY = '24h';
 
+function getSecret() {
+  if (process.env.TOKEN_SECRET) return process.env.TOKEN_SECRET;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('TOKEN_SECRET est requis en production');
+  }
+  return DEVELOPMENT_SECRET;
+}
+
 export function hashPassword(password) {
-  return createHash('sha256').update(password).digest('hex');
+  const salt = randomBytes(16).toString('hex');
+  const derivedKey = scryptSync(password, salt, 64).toString('hex');
+  return `scrypt:${salt}:${derivedKey}`;
+}
+
+export function verifyPassword(password, storedHash) {
+  if (!storedHash) return false;
+  if (!storedHash.startsWith('scrypt:')) {
+    const legacy = createHash('sha256').update(password).digest('hex');
+    const expected = Buffer.from(storedHash, 'hex');
+    const actual = Buffer.from(legacy, 'hex');
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
+  }
+  const [, salt, expectedHex] = storedHash.split(':');
+  if (!salt || !expectedHex) return false;
+  const actual = scryptSync(password, salt, 64);
+  const expected = Buffer.from(expectedHex, 'hex');
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 export function generateToken(user) {
   return jwt.sign(
     { id: user.id, tenant_id: user.tenant_id, role: user.role, name: user.name },
-    SECRET,
+    getSecret(),
     { expiresIn: TOKEN_EXPIRY }
   );
 }
 
 export function verifyToken(token) {
-  return jwt.verify(token, SECRET);
+  return jwt.verify(token, getSecret());
 }
 
-export function authMiddleware(req, res, next) {
+export async function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Token requis' });
   }
   try {
     const payload = verifyToken(header.slice(7));
-    req.user = payload;
+    const db = getDb();
+    const result = await db.execute({
+      sql: `SELECT id, tenant_id, name, role FROM users
+            WHERE id = ? AND tenant_id = ? AND active = 1`,
+      args: [payload.id, payload.tenant_id],
+    });
+    const user = result.rows[0];
+    if (!user) {
+      return res.status(401).json({ error: 'Compte inexistant ou désactivé' });
+    }
+    req.user = user;
     next();
   } catch {
     return res.status(401).json({ error: 'Token invalide ou expiré' });

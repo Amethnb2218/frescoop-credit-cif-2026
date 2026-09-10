@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getDb, uuid } from '../db.js';
-import { hashPassword, generateToken, authMiddleware } from '../auth.js';
+import { hashPassword, verifyPassword, generateToken, authMiddleware, tenantGuard, requireRole } from '../auth.js';
 import { logAudit } from './audit.js';
 
 const router = Router();
@@ -19,8 +19,14 @@ router.post('/login', async (req, res) => {
     });
 
     const user = result.rows[0];
-    if (!user || user.password_hash !== hashPassword(password)) {
+    if (!user || !verifyPassword(password, user.password_hash)) {
       return res.status(401).json({ error: 'Identifiants incorrects' });
+    }
+    if (!user.password_hash.startsWith('scrypt:')) {
+      await db.execute({
+        sql: 'UPDATE users SET password_hash = ?, updated_at = datetime(\'now\') WHERE id = ? AND tenant_id = ?',
+        args: [hashPassword(password), user.id, user.tenant_id],
+      });
     }
 
     const token = generateToken(user);
@@ -51,22 +57,27 @@ router.get('/me', authMiddleware, async (req, res) => {
   }
 });
 
-router.post('/register', async (req, res) => {
+router.post('/register', authMiddleware, tenantGuard, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
-    const { email, password, name, role, phone, agency, tenant_id } = req.body;
-    if (!email || !password || !name || !role || !tenant_id) {
+    const { email, password, name, role, phone, agency } = req.body;
+    const tenant_id = req.tenantId;
+    if (!email || !password || !name || !role) {
       return res.status(400).json({ error: 'Champs obligatoires manquants' });
     }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Le mot de passe doit faire au moins 8 caractères' });
+    }
 
-    const validRoles = ['SUPERADMIN', 'AGENT', 'SUPERVISEUR', 'COMITE', 'RISK_MANAGER', 'ADMIN', 'AUDITEUR', 'SUPPORT', 'JURY'];
+    const validRoles = ['AGENT', 'SUPERVISEUR', 'COMITE', 'RISK_MANAGER', 'AUDITEUR', 'SUPPORT', 'JURY'];
+    if (req.user.role === 'SUPERADMIN') validRoles.push('ADMIN', 'SUPERADMIN');
     if (!validRoles.includes(role)) {
       return res.status(400).json({ error: 'Rôle invalide' });
     }
 
     const db = getDb();
     const existing = await db.execute({
-      sql: 'SELECT id FROM users WHERE tenant_id = ? AND email = ?',
-      args: [tenant_id, email.toLowerCase().trim()],
+      sql: 'SELECT id FROM users WHERE email = ?',
+      args: [email.toLowerCase().trim()],
     });
     if (existing.rows.length > 0) {
       return res.status(409).json({ error: 'Cet email existe déjà' });
@@ -79,12 +90,10 @@ router.post('/register', async (req, res) => {
       args: [id, tenant_id, email.toLowerCase().trim(), hashPassword(password), name, role, phone || null, agency || null],
     });
 
-    const token = generateToken({ id, tenant_id, role, name });
-    await logAudit(tenant_id, id, name, role, 'REGISTER', 'user', id, { email }, req);
+    await logAudit(tenant_id, req.user.id, req.user.name, req.user.role, 'USER_CREATED', 'user', id, { email, role }, req);
 
-    res.json({
+    res.status(201).json({
       ok: true,
-      token,
       user: { id, name, email: email.toLowerCase().trim(), role, tenant_id, agency },
     });
   } catch (err) {
@@ -97,11 +106,11 @@ router.put('/password', authMiddleware, async (req, res) => {
   try {
     const { current_password, new_password } = req.body;
     if (!current_password || !new_password) return res.status(400).json({ error: 'Mot de passe actuel et nouveau requis' });
-    if (new_password.length < 6) return res.status(400).json({ error: 'Le nouveau mot de passe doit faire au moins 6 caractères' });
+    if (new_password.length < 8) return res.status(400).json({ error: 'Le nouveau mot de passe doit faire au moins 8 caractères' });
 
     const db = getDb();
-    const result = await db.execute({ sql: 'SELECT password_hash FROM users WHERE id = ?', args: [req.user.id] });
-    if (!result.rows[0] || result.rows[0].password_hash !== hashPassword(current_password)) {
+    const result = await db.execute({ sql: 'SELECT password_hash FROM users WHERE id = ? AND tenant_id = ?', args: [req.user.id, req.user.tenant_id] });
+    if (!result.rows[0] || !verifyPassword(current_password, result.rows[0].password_hash)) {
       return res.status(401).json({ error: 'Mot de passe actuel incorrect' });
     }
 
@@ -112,43 +121,49 @@ router.put('/password', authMiddleware, async (req, res) => {
 });
 
 // Admin: reset user password
-router.put('/users/:userId/reset-password', authMiddleware, async (req, res) => {
+router.put('/users/:userId/reset-password', authMiddleware, tenantGuard, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
-    if (!['ADMIN', 'SUPERADMIN'].includes(req.user.role)) return res.status(403).json({ error: 'Accès refusé' });
     const { new_password } = req.body;
     if (!new_password) return res.status(400).json({ error: 'Nouveau mot de passe requis' });
-    if (new_password.length < 6) return res.status(400).json({ error: 'Le mot de passe doit faire au moins 6 caractères' });
+    if (new_password.length < 8) return res.status(400).json({ error: 'Le mot de passe doit faire au moins 8 caractères' });
 
     const db = getDb();
-    const user = await db.execute({ sql: 'SELECT id, name FROM users WHERE id = ? AND tenant_id = ?', args: [req.params.userId, req.user.tenant_id] });
+    const user = await db.execute({ sql: 'SELECT id, name, role FROM users WHERE id = ? AND tenant_id = ?', args: [req.params.userId, req.tenantId] });
     if (!user.rows[0]) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    if (req.user.role !== 'SUPERADMIN' && ['ADMIN', 'SUPERADMIN'].includes(user.rows[0].role)) {
+      return res.status(403).json({ error: 'Seul un SuperAdmin peut gérer ce compte' });
+    }
 
-    await db.execute({ sql: 'UPDATE users SET password_hash = ? WHERE id = ?', args: [hashPassword(new_password), req.params.userId] });
-    await logAudit(req.user.tenant_id, req.user.id, req.user.name, req.user.role, 'PASSWORD_RESET', 'user', req.params.userId, { target_name: user.rows[0].name }, req);
+    await db.execute({ sql: 'UPDATE users SET password_hash = ? WHERE id = ? AND tenant_id = ?', args: [hashPassword(new_password), req.params.userId, req.tenantId] });
+    await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, 'PASSWORD_RESET', 'user', req.params.userId, { target_name: user.rows[0].name }, req);
     res.json({ ok: true, message: `Mot de passe réinitialisé pour ${user.rows[0].name}` });
   } catch { res.status(500).json({ error: 'Erreur serveur' }); }
 });
 
 // Admin: list users
-router.get('/users', authMiddleware, async (req, res) => {
+router.get('/users', authMiddleware, tenantGuard, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
-    if (!['ADMIN', 'SUPERADMIN'].includes(req.user.role)) return res.status(403).json({ error: 'Accès refusé' });
     const db = getDb();
-    const result = await db.execute({ sql: 'SELECT id, email, name, role, phone, agency, active, created_at FROM users WHERE tenant_id = ? ORDER BY name', args: [req.user.tenant_id] });
+    const result = await db.execute({ sql: 'SELECT id, email, name, role, phone, agency, active, created_at FROM users WHERE tenant_id = ? ORDER BY name', args: [req.tenantId] });
     res.json({ ok: true, users: result.rows });
   } catch { res.status(500).json({ error: 'Erreur serveur' }); }
 });
 
 // Admin: toggle user active
-router.put('/users/:userId/toggle', authMiddleware, async (req, res) => {
+router.put('/users/:userId/toggle', authMiddleware, tenantGuard, requireRole('ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
-    if (!['ADMIN', 'SUPERADMIN'].includes(req.user.role)) return res.status(403).json({ error: 'Accès refusé' });
     const db = getDb();
-    const user = await db.execute({ sql: 'SELECT id, name, active FROM users WHERE id = ? AND tenant_id = ?', args: [req.params.userId, req.user.tenant_id] });
+    const user = await db.execute({ sql: 'SELECT id, name, role, active FROM users WHERE id = ? AND tenant_id = ?', args: [req.params.userId, req.tenantId] });
     if (!user.rows[0]) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    if (req.params.userId === req.user.id) {
+      return res.status(400).json({ error: 'Vous ne pouvez pas désactiver votre propre compte' });
+    }
+    if (req.user.role !== 'SUPERADMIN' && ['ADMIN', 'SUPERADMIN'].includes(user.rows[0].role)) {
+      return res.status(403).json({ error: 'Seul un SuperAdmin peut gérer ce compte' });
+    }
     const newActive = user.rows[0].active ? 0 : 1;
-    await db.execute({ sql: 'UPDATE users SET active = ? WHERE id = ?', args: [newActive, req.params.userId] });
-    await logAudit(req.user.tenant_id, req.user.id, req.user.name, req.user.role, newActive ? 'USER_ACTIVATED' : 'USER_DEACTIVATED', 'user', req.params.userId, { target_name: user.rows[0].name }, req);
+    await db.execute({ sql: 'UPDATE users SET active = ? WHERE id = ? AND tenant_id = ?', args: [newActive, req.params.userId, req.tenantId] });
+    await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, newActive ? 'USER_ACTIVATED' : 'USER_DEACTIVATED', 'user', req.params.userId, { target_name: user.rows[0].name }, req);
     res.json({ ok: true, active: !!newActive });
   } catch { res.status(500).json({ error: 'Erreur serveur' }); }
 });

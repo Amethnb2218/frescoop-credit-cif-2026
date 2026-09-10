@@ -69,7 +69,7 @@ export async function seedIfEmpty() {
     });
   }
 
-  const agentId = users[0].id;
+  const agentId = users.find(user => user.role === 'AGENT').id;
 
   // Rules
   const rules = [

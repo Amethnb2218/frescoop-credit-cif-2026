@@ -45,7 +45,8 @@ export async function initDb() {
       active INTEGER DEFAULT 1,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now')),
-      UNIQUE(tenant_id, email)
+      UNIQUE(tenant_id, email),
+      UNIQUE(email)
     );
 
     -- Credit Dossiers
@@ -452,6 +453,9 @@ export async function initDb() {
   try { await client.execute('CREATE INDEX IF NOT EXISTS idx_declared_debts_tenant_dossier ON declared_debts(tenant_id, dossier_id)'); } catch {}
   try { await client.execute('CREATE INDEX IF NOT EXISTS idx_dossier_guarantors_tenant_dossier ON dossier_guarantors(tenant_id, dossier_id)'); } catch {}
   try { await client.execute('CREATE INDEX IF NOT EXISTS idx_evidence_attachments_tenant_dossier ON evidence_attachments(tenant_id, dossier_id)'); } catch {}
+  try { await client.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_global ON users(email)'); } catch (e) {
+    throw new Error(`Migration unicité globale des emails impossible: ${e.message}`);
+  }
 
   // Migration: add JURY and SUPPORT to role CHECK constraint
   try {
@@ -471,7 +475,8 @@ export async function initDb() {
         active INTEGER DEFAULT 1,
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT DEFAULT (datetime('now')),
-        UNIQUE(tenant_id, email)
+        UNIQUE(tenant_id, email),
+        UNIQUE(email)
       )`);
       await client.execute('INSERT OR IGNORE INTO users_new SELECT id, tenant_id, email, password_hash, name, role, phone, agency, active, created_at, updated_at FROM users');
       await client.execute('DROP TABLE users');

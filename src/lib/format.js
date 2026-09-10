@@ -15,28 +15,38 @@ export function formatDateTime(dateStr) {
 
 export const STATUS_LABELS = {
   draft: 'Brouillon',
+  incomplete: 'À compléter',
   submitted: 'Soumis',
   verification: 'Vérification',
   review: 'Revue',
+  review_required: 'Revue requise',
+  prequalified: 'Préqualifié',
+  committee_ready: 'Prêt pour le comité',
   committee: 'Comité',
   decided: 'Décidé',
   exported: 'Exporté',
   disbursed: 'Décaissé',
   monitoring: 'Suivi',
   closed: 'Clôturé',
+  cancelled: 'Annulé',
 };
 
 export const STATUS_COLORS = {
   draft: 'gray',
+  incomplete: 'amber',
   submitted: 'amber',
   verification: 'amber',
   review: 'amber',
+  review_required: 'amber',
+  prequalified: 'green',
+  committee_ready: 'amber',
   committee: 'amber',
   decided: 'green',
   exported: 'green',
   disbursed: 'green',
   monitoring: 'green',
   closed: 'gray',
+  cancelled: 'red',
 };
 
 export const ROLE_LABELS = {

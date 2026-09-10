@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname, join, resolve } from 'path';
 import { getDb, initDb } from './db.js';
 import { recalculateOutdatedScores } from './services/prequalification.js';
 
@@ -22,7 +22,7 @@ import exportRoutes from './routes/export.js';
 import statsRoutes from './routes/stats.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const app = express();
+export const app = express();
 
 app.use(cors({ origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : true }));
 app.use(express.json({ limit: '5mb' }));
@@ -57,7 +57,7 @@ app.get('*', (req, res) => {
 const PORT = process.env.PORT || 4174;
 const HOST = process.env.FRESCOOP_HOST || '0.0.0.0';
 
-async function start() {
+export async function start() {
   await initDb();
   console.log('[FresCoop] Base de données initialisée');
 
@@ -67,18 +67,21 @@ async function start() {
 
   const scoreMigration = await recalculateOutdatedScores(getDb());
   if (scoreMigration.found > 0) {
-    console.log(`[FresCoop] Scores v2: ${scoreMigration.updated}/${scoreMigration.found} recalculés`);
+    console.log(`[FresCoop] Scores v3: ${scoreMigration.updated}/${scoreMigration.found} recalculés`);
   }
   if (scoreMigration.errors.length > 0) {
     console.error('[FresCoop] Échecs de recalcul des scores:', scoreMigration.errors);
   }
 
-  app.listen(PORT, HOST, () => {
+  const server = app.listen(PORT, HOST, () => {
     console.log(`[FresCoop] Serveur démarré sur http://${HOST}:${PORT}`);
   });
+  return server;
 }
 
-start().catch(err => {
-  console.error('[FresCoop] Erreur au démarrage:', err);
-  process.exit(1);
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  start().catch(err => {
+    console.error('[FresCoop] Erreur au démarrage:', err);
+    process.exit(1);
+  });
+}

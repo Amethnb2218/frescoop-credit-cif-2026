@@ -5,6 +5,7 @@ import { logAudit } from './audit.js';
 import { assessAgriculturalProject } from '../services/agriculturalAssessment.js';
 import { assessAgriculturalFeasibility } from '../services/agriculturalFeasibility.js';
 import { buildFinancialCashflow } from '../services/financialCashflow.js';
+import { findAccessibleDossier, isEditableDraft, scoreInvalidationStatement } from '../services/dossierAccess.js';
 
 const router = Router();
 const ALLOWED_ACTIVITY_TYPES = new Set([
@@ -15,6 +16,45 @@ const ALLOWED_ACTIVITY_TYPES = new Set([
   'Horticulture',
 ]);
 const THIRD_PARTY_GUARANTEES = new Set(['Caution personnelle', 'Mixte']);
+
+export const VALID_STATUS_TRANSITIONS = Object.freeze({
+  draft: ['incomplete', 'submitted', 'cancelled'],
+  incomplete: ['draft', 'submitted', 'cancelled'],
+  submitted: ['verification', 'draft', 'cancelled'],
+  verification: ['review', 'review_required', 'prequalified', 'submitted', 'cancelled'],
+  review: ['review_required', 'prequalified', 'committee_ready', 'committee', 'verification', 'cancelled'],
+  review_required: ['verification', 'prequalified', 'committee_ready', 'committee', 'cancelled'],
+  prequalified: ['committee_ready', 'committee', 'review', 'cancelled'],
+  committee_ready: ['review', 'cancelled'],
+  committee: ['review', 'cancelled'],
+  decided: ['exported', 'cancelled'],
+  exported: ['disbursed'],
+  disbursed: ['monitoring'],
+  monitoring: ['closed'],
+  closed: [],
+  cancelled: [],
+});
+
+const AGENT_STATUS_TRANSITIONS = Object.freeze({
+  draft: ['incomplete', 'submitted', 'cancelled'],
+  incomplete: ['draft', 'submitted', 'cancelled'],
+});
+
+const REVIEW_STATUS_SOURCES = new Set([
+  'draft', 'incomplete', 'submitted', 'verification', 'review',
+  'review_required', 'prequalified', 'committee_ready', 'committee',
+]);
+
+export function canTransitionDossierStatus(role, current, target, ownsDossier = false) {
+  if (!(VALID_STATUS_TRANSITIONS[current] || []).includes(target) || target === 'decided') return false;
+  if (role === 'AGENT') {
+    return ownsDossier && (AGENT_STATUS_TRANSITIONS[current] || []).includes(target);
+  }
+  if (['SUPERVISEUR', 'RISK_MANAGER'].includes(role)) {
+    return REVIEW_STATUS_SOURCES.has(current);
+  }
+  return ['ADMIN', 'SUPERADMIN'].includes(role);
+}
 
 function normalizeIdNumber(value) {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
@@ -134,7 +174,9 @@ router.get('/:id', authMiddleware, tenantGuard, async (req, res) => {
       args: [req.params.id, req.tenantId],
     });
     const dossier = result.rows[0];
-    if (!dossier) return res.status(404).json({ error: 'Dossier introuvable' });
+    if (!dossier || (req.user.role === 'AGENT' && dossier.agent_id !== req.user.id)) {
+      return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
+    }
 
     const [evidence, cashflow, flags, stressTests, ruleEvals, project, inputItems, declaredDebts, guarantors] = await Promise.all([
       db.execute({ sql: 'SELECT * FROM evidence WHERE dossier_id = ? AND tenant_id = ? ORDER BY created_at DESC', args: [req.params.id, req.tenantId] }),
@@ -347,19 +389,16 @@ router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR'
   }
 });
 
-router.put('/:id', authMiddleware, tenantGuard, async (req, res) => {
+router.put('/:id', authMiddleware, tenantGuard,
+  requireRole('AGENT', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
     const db = getDb();
     const { id } = req.params;
 
-    const existing = await db.execute({
-      sql: 'SELECT * FROM dossiers WHERE id = ? AND tenant_id = ?',
-      args: [id, req.tenantId],
-    });
-    if (!existing.rows[0]) return res.status(404).json({ error: 'Dossier introuvable' });
-
-    if (req.user.role === 'AGENT' && existing.rows[0].agent_id !== req.user.id) {
-      return res.status(403).json({ error: 'Ce dossier ne vous appartient pas' });
+    const dossier = await findAccessibleDossier(db, id, req);
+    if (!dossier) return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
+    if (!isEditableDraft(dossier)) {
+      return res.status(409).json({ error: 'Le dossier ne peut être modifié que sur un brouillon' });
     }
 
     const data = req.body;
@@ -418,6 +457,7 @@ router.put('/:id', authMiddleware, tenantGuard, async (req, res) => {
         });
       }
     }
+    statements.push(scoreInvalidationStatement(id, req.tenantId));
     await db.batch(statements, 'write');
 
     await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, 'DOSSIER_UPDATED', 'dossier', id, { fields: Object.keys(req.body) }, req);
@@ -433,34 +473,19 @@ router.put('/:id/status', authMiddleware, tenantGuard, async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
-    const validTransitions = {
-      draft: ['incomplete', 'submitted', 'cancelled'],
-      incomplete: ['draft', 'submitted', 'cancelled'],
-      submitted: ['verification', 'draft', 'cancelled'],
-      verification: ['review', 'review_required', 'submitted', 'cancelled'],
-      review: ['committee', 'verification', 'cancelled'],
-      review_required: ['verification', 'committee_ready', 'committee', 'cancelled'],
-      prequalified: ['committee_ready', 'committee', 'cancelled'],
-      committee_ready: ['decided', 'review', 'cancelled'],
-      committee: ['decided', 'review', 'cancelled'],
-      decided: ['exported', 'committee', 'cancelled'],
-      exported: ['disbursed'],
-      disbursed: ['monitoring'],
-      monitoring: ['closed'],
-      closed: [],
-      cancelled: [],
-    };
-
     const existing = await db.execute({
-      sql: 'SELECT status FROM dossiers WHERE id = ? AND tenant_id = ?',
+      sql: 'SELECT status, agent_id FROM dossiers WHERE id = ? AND tenant_id = ?',
       args: [id, req.tenantId],
     });
     if (!existing.rows[0]) return res.status(404).json({ error: 'Dossier introuvable' });
 
     const current = existing.rows[0].status;
-    const allowed = validTransitions[current] || [];
-    if (!allowed.includes(status)) {
-      return res.status(400).json({ error: `Transition ${current} → ${status} non autorisée` });
+    const ownsDossier = existing.rows[0].agent_id === req.user.id;
+    if (req.user.role === 'AGENT' && !ownsDossier) {
+      return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
+    }
+    if (!canTransitionDossierStatus(req.user.role, current, status, ownsDossier)) {
+      return res.status(403).json({ error: `Transition ${current} → ${status} non autorisée pour ce rôle` });
     }
 
     await db.execute({
@@ -475,7 +500,7 @@ router.put('/:id/status', authMiddleware, tenantGuard, async (req, res) => {
   }
 });
 
-router.post('/:id/decide', authMiddleware, tenantGuard, requireRole('COMITE', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
+router.post('/:id/decide', authMiddleware, tenantGuard, requireRole('COMITE', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
     const db = getDb();
     const { id } = req.params;
@@ -483,6 +508,9 @@ router.post('/:id/decide', authMiddleware, tenantGuard, requireRole('COMITE', 'S
 
     if (!decision || !motif) {
       return res.status(400).json({ error: 'Décision et motif requis' });
+    }
+    if (!['approved', 'refused', 'complement', 'modified'].includes(decision)) {
+      return res.status(400).json({ error: 'Décision invalide' });
     }
 
     const existing = await db.execute({
@@ -492,19 +520,24 @@ router.post('/:id/decide', authMiddleware, tenantGuard, requireRole('COMITE', 'S
     if (!existing.rows[0]) return res.status(404).json({ error: 'Dossier introuvable' });
 
     const dossier = existing.rows[0];
+    if (!['committee_ready', 'committee'].includes(dossier.status)) {
+      return res.status(409).json({ error: 'Le dossier doit être transmis au comité avant la décision finale' });
+    }
     const isOverride = dossier.prequalification &&
       ((decision === 'approved' && dossier.prequalification === 'NON_ELIGIBLE') ||
        (decision === 'refused' && dossier.prequalification === 'PREQUALIFIE') ||
        (amount && amount !== dossier.amount_requested));
 
+    const nextStatus = decision === 'complement' ? 'incomplete' : 'decided';
     await db.execute({
       sql: `UPDATE dossiers SET
             decision = ?, decision_amount = ?, decision_duration = ?,
             decision_schedule = ?, decision_motif = ?,
             decided_by = ?, decided_at = datetime('now'),
-            status = 'decided', updated_at = datetime('now')
+            status = ?, updated_at = datetime('now')
             WHERE id = ? AND tenant_id = ?`,
-      args: [decision, amount || null, duration || null, schedule || null, motif, req.user.id, id, req.tenantId],
+      args: [decision, amount || null, duration || null, schedule || null, motif,
+        req.user.id, nextStatus, id, req.tenantId],
     });
 
     const auditAction = isOverride ? 'DECISION_OVERRIDE' : 'DECISION_MADE';
@@ -514,7 +547,7 @@ router.post('/:id/decide', authMiddleware, tenantGuard, requireRole('COMITE', 'S
       override: isOverride,
     }, req);
 
-    res.json({ ok: true, id, decision, override: isOverride });
+    res.json({ ok: true, id, decision, status: nextStatus, override: isOverride });
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });
   }

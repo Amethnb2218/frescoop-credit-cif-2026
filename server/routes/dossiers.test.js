@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  canTransitionDossierStatus,
   normalizeGuarantors,
   validateDossierFields,
   validateGuarantors,
@@ -39,4 +40,25 @@ test('exige un garant structuré pour tout engagement de tiers', () => {
   assert.equal(guarantors[0].commitment_amount, 300000);
   assert.match(validateGuarantors(data, []), /garant/i);
   assert.match(validateGuarantors(data, [{ ...guarantors[0], consent_given: false }]), /consentement/i);
+});
+
+test('limite les transitions de statut des agents à leurs propres brouillons', () => {
+  assert.equal(canTransitionDossierStatus('AGENT', 'draft', 'submitted', true), true);
+  assert.equal(canTransitionDossierStatus('AGENT', 'incomplete', 'draft', true), true);
+  assert.equal(canTransitionDossierStatus('AGENT', 'draft', 'submitted', false), false);
+  assert.equal(canTransitionDossierStatus('AGENT', 'submitted', 'verification', true), false);
+});
+
+test('réserve le workflow de revue aux rôles habilités', () => {
+  assert.equal(canTransitionDossierStatus('SUPERVISEUR', 'submitted', 'verification'), true);
+  assert.equal(canTransitionDossierStatus('RISK_MANAGER', 'verification', 'review'), true);
+  assert.equal(canTransitionDossierStatus('COMITE', 'review', 'committee'), false);
+  assert.equal(canTransitionDossierStatus('AUDITEUR', 'submitted', 'verification'), false);
+  assert.equal(canTransitionDossierStatus('ADMIN', 'exported', 'disbursed'), true);
+});
+
+test('impose la route de décision humaine pour atteindre le statut décidé', () => {
+  assert.equal(canTransitionDossierStatus('SUPERADMIN', 'committee', 'decided'), false);
+  assert.equal(canTransitionDossierStatus('ADMIN', 'committee_ready', 'decided'), false);
+  assert.equal(canTransitionDossierStatus('ADMIN', 'draft', 'closed'), false);
 });

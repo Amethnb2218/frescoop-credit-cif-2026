@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { getDb, uuid } from '../db.js';
 import { authMiddleware, tenantGuard, requireRole } from '../auth.js';
 import { logAudit } from './audit.js';
+import { scoreInvalidationStatement } from '../services/dossierAccess.js';
 
 const router = Router();
 const VALID_LEVELS = ['A', 'B', 'C', 'D'];
@@ -11,7 +12,7 @@ const VALID_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png'])
 const MAX_ATTACHMENT_SIZE = 2 * 1024 * 1024;
 const MAX_DOSSIER_ATTACHMENTS_SIZE = 10 * 1024 * 1024;
 
-function decodeAttachment(data) {
+export function decodeAttachment(data) {
   const mimeType = String(data.mime_type || '').toLowerCase();
   if (!VALID_MIME_TYPES.has(mimeType)) throw new Error('Type de fichier invalide. Utilisez PDF, JPEG ou PNG.');
   if (typeof data.content_base64 !== 'string' || !data.content_base64) throw new Error('Contenu du fichier requis.');

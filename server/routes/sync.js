@@ -453,6 +453,9 @@ async function processCashflowOp(db, operation, entityId, payload, req) {
   }
   const dossier = await ownedDossier(db, entityId, req);
   if (!dossier) throw new Error('Dossier introuvable ou non autorisé');
+  if (!['draft', 'incomplete'].includes(dossier.status)) {
+    throw new Error('Le cash-flow ne peut être modifié que sur un brouillon');
+  }
   await replaceCashflow(db, entityId, payload.entries || [], req.tenantId);
 }
 

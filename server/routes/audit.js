@@ -5,25 +5,23 @@ import { authMiddleware, tenantGuard, requireRole } from '../auth.js';
 const router = Router();
 
 export async function logAudit(tenantId, userId, userName, userRole, action, entityType, entityId, details = {}, req = null) {
-  try {
-    const db = getDb();
-    await db.execute({
-      sql: `INSERT INTO audit_log (id, tenant_id, user_id, user_name, user_role, action, entity_type, entity_id, details, ip_address)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [
-        uuid(),
-        tenantId,
-        userId,
-        userName,
-        userRole,
-        action,
-        entityType || null,
-        entityId || null,
-        JSON.stringify(details),
-        req?.ip || null,
-      ],
-    });
-  } catch {}
+  const db = getDb();
+  await db.execute({
+    sql: `INSERT INTO audit_log (id, tenant_id, user_id, user_name, user_role, action, entity_type, entity_id, details, ip_address)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      uuid(),
+      tenantId,
+      userId,
+      userName,
+      userRole,
+      action,
+      entityType || null,
+      entityId || null,
+      JSON.stringify(details),
+      req?.ip || null,
+    ],
+  });
 }
 
 router.get('/', authMiddleware, tenantGuard, requireRole('ADMIN', 'AUDITEUR', 'RISK_MANAGER', 'SUPERVISEUR', 'SUPERADMIN'), async (req, res) => {
@@ -49,9 +47,17 @@ router.get('/', authMiddleware, tenantGuard, requireRole('ADMIN', 'AUDITEUR', 'R
   }
 });
 
-router.get('/dossier/:dossierId', authMiddleware, tenantGuard, async (req, res) => {
+router.get('/dossier/:dossierId', authMiddleware, tenantGuard,
+  requireRole('ADMIN', 'AUDITEUR', 'RISK_MANAGER', 'SUPERVISEUR', 'SUPERADMIN'), async (req, res) => {
   try {
     const db = getDb();
+    const dossier = await db.execute({
+      sql: 'SELECT id FROM dossiers WHERE id = ? AND tenant_id = ?',
+      args: [req.params.dossierId, req.tenantId],
+    });
+    if (!dossier.rows[0]) {
+      return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
+    }
     const result = await db.execute({
       sql: 'SELECT * FROM audit_log WHERE tenant_id = ? AND entity_id = ? ORDER BY created_at ASC',
       args: [req.tenantId, req.params.dossierId],

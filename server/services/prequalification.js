@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { hasBicConsent } from './dossierAccess.js';
 
 export const SCORE_VERSION = 3;
 
@@ -286,7 +287,7 @@ export function computePrequalificationScore(context, evaluations, prequalificat
   };
 }
 
-export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords, rules) {
+export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords, rules, agriculturalProject = null, agriculturalInputs = []) {
   const context = buildEvaluationContext(dossier, cashflow, evidence, bicRecords);
   const capacityRatio = calculateCapacityRatio(context);
   const stressedCapacityRatio = calculateStressedCapacityRatio(context);
@@ -306,6 +307,15 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
       };
     });
   const decision = determinePrequalification(evaluations, evidenceConfidence, repaymentCapacity);
+  const hasAgriculturalProject = Boolean(
+    agriculturalProject
+    && (agriculturalProject.crop_code || agriculturalProject.crop_label)
+    && Number(agriculturalProject.project_surface_ha || 0) > 0
+    && Number(agriculturalProject.expected_yield || 0) > 0
+    && Number(agriculturalProject.expected_price || 0) > 0
+    && agriculturalInputs.length > 0
+    && agriculturalInputs.some(item => Number(item.total_cost || 0) > 0),
+  );
   const isComplete = Boolean(
     dossier.applicant_name
     && dossier.applicant_id_number
@@ -313,7 +323,9 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
     && dossier.activity_type
     && context.amountRequested > 0
     && context.durationMonths > 0
-    && context.hasCashflow,
+    && context.hasCashflow
+    && context.monthsWithRevenue > 0
+    && hasAgriculturalProject,
   );
   const scoring = isComplete
     ? computePrequalificationScore(context, evaluations, decision.prequalification, capacityRatio)
@@ -357,24 +369,31 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
 }
 
 export async function evaluateDossier(db, tenantId, dossierId) {
-  const [dossierResult, cashflowResult, evidenceResult, rulesResult] = await Promise.all([
+  const [dossierResult, cashflowResult, evidenceResult, rulesResult, projectResult, inputsResult] = await Promise.all([
     db.execute({ sql: 'SELECT * FROM dossiers WHERE id = ? AND tenant_id = ?', args: [dossierId, tenantId] }),
     db.execute({ sql: 'SELECT * FROM cashflow_entries WHERE dossier_id = ? AND tenant_id = ? ORDER BY year, month', args: [dossierId, tenantId] }),
     db.execute({ sql: 'SELECT * FROM evidence WHERE dossier_id = ? AND tenant_id = ?', args: [dossierId, tenantId] }),
     db.execute({ sql: 'SELECT * FROM rules WHERE tenant_id = ? AND active = 1 ORDER BY code', args: [tenantId] }),
+    db.execute({ sql: 'SELECT * FROM agricultural_project_assessments WHERE dossier_id = ? AND tenant_id = ?', args: [dossierId, tenantId] }),
+    db.execute({ sql: 'SELECT * FROM agricultural_input_items WHERE dossier_id = ? AND tenant_id = ?', args: [dossierId, tenantId] }),
   ]);
   const dossier = dossierResult.rows[0];
   if (!dossier) return null;
-  const bicResult = await db.execute({
-    sql: 'SELECT * FROM bic_records WHERE tenant_id = ? AND applicant_id_number = ?',
-    args: [tenantId, dossier.applicant_id_number || ''],
-  });
+  const bicAllowed = await hasBicConsent(db, dossierId, tenantId);
+  const bicResult = bicAllowed
+    ? await db.execute({
+        sql: 'SELECT * FROM bic_records WHERE tenant_id = ? AND applicant_id_number = ?',
+        args: [tenantId, dossier.applicant_id_number || ''],
+      })
+    : { rows: [] };
   const result = evaluatePrequalification(
     dossier,
     cashflowResult.rows,
     evidenceResult.rows,
     bicResult.rows,
     rulesResult.rows,
+    projectResult.rows[0] || null,
+    inputsResult.rows,
   );
 
   const statements = [
@@ -405,8 +424,8 @@ export async function evaluateDossier(db, tenantId, dossierId) {
 export async function recalculateOutdatedScores(db) {
   const dossiers = await db.execute({
     sql: `SELECT id, tenant_id FROM dossiers
-          WHERE prequalification_score IS NOT NULL
-          AND COALESCE(prequalification_score_version, 1) < ?`,
+          WHERE prequalification_score IS NULL
+             OR COALESCE(prequalification_score_version, 1) < ?`,
     args: [SCORE_VERSION],
   });
   let updated = 0;

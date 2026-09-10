@@ -75,7 +75,7 @@ export default function DossierNew() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({
     amount_requested: '', credit_purpose: '', duration_months: '', desired_schedule: '',
-    applicant_name: '', applicant_phone: '', applicant_id_number: '', applicant_location: '', applicant_activity: 'Agriculteur', bic_consent: false,
+    applicant_name: '', applicant_phone: '', applicant_id_number: '', applicant_location: '', applicant_activity: 'Agriculteur',
     sector: 'Agriculture', activity_type: '', years_experience: '', surface_ha: '', production_cycle_start: '', production_cycle_end: '', production_cycle: '',
     crop_name: '', crop_variety: '', crop_experience_years: '', project_surface_ha: '', land_access: '', agro_zone: '', soil_type: '', soil_source: '', season: '', irrigation_mode: '', water_source: '', water_reliability: '', expected_yield: '', expected_price: '', loss_percent: '', own_contribution: '', other_funding: '', climate_risks: '', mitigations: '',
     revenue_commerce: '', commerce_revenue_frequency: 'mensuel', revenue_other: '', other_revenue_frequency: 'mensuel', main_buyer: '',
@@ -172,7 +172,6 @@ export default function DossierNew() {
           consent_given: form.guarantor_consent,
         } : null,
         agent_note: form.agent_note,
-        bic_consent: form.bic_consent,
         project_assessment: projectAssessment,
         input_items: inputItems,
         declared_debts: declaredDebts,
@@ -239,7 +238,7 @@ export default function DossierNew() {
         {step === 3 && <StepFaisabiliteAgronomique form={form} items={inputItems} />}
         {step === 4 && <StepRevenus form={form} update={update} />}
         {step === 5 && <StepCharges form={form} update={update} />}
-        {step === 6 && <StepDettes debts={declaredDebts} setDebts={setDeclaredDebts} applicantId={form.applicant_id_number} bicConsent={form.bic_consent} />}
+        {step === 6 && <StepDettes debts={declaredDebts} setDebts={setDeclaredDebts} />}
         {step === 7 && <StepGaranties form={form} update={update} />}
         {step === 8 && <StepPreuves evidence={initialEvidence} setEvidence={setInitialEvidence} />}
         {step === 9 && <StepAnalyse form={form} items={inputItems} debts={declaredDebts} />}
@@ -620,26 +619,18 @@ function StepCharges({ form, update }) {
   );
 }
 
-function StepDettes({ debts, setDebts, applicantId, bicConsent }) {
+function StepDettes({ debts, setDebts }) {
   const [draft, setDraft] = useState({ institution: '', credit_type: '', source: 'DECLAREE', initial_amount: '', outstanding: '', periodic_payment: '', frequency: 'mensuel', status: 'en_cours', days_late: '', purpose: '', consent_given: false });
-  const [bicMessage, setBicMessage] = useState('');
   function addDebt() {
     if (!draft.institution || !Number(draft.outstanding)) return;
     setDebts(list => [...list, { ...draft, id: crypto.randomUUID() }]);
     setDraft({ institution: '', credit_type: '', source: 'DECLAREE', initial_amount: '', outstanding: '', periodic_payment: '', frequency: 'mensuel', status: 'en_cours', days_late: '', purpose: '', consent_given: false });
   }
-  async function checkBic() {
-    if (!applicantId || !bicConsent) { setBicMessage('Le numéro de CNI et le consentement BIC sont requis.'); return; }
-    try {
-      const result = await api.checkBic(applicantId);
-      setBicMessage(result.disclaimer || 'Données synthétiques de démonstration — BIC non connecté');
-    } catch (err) { setBicMessage(err.message); }
-  }
   return (
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Dettes déclarées et BIC</h2>
-      <p className="text-sm text-muted" style={{ marginBottom: 12 }}>Ajoutez chaque dette séparément. Les données BIC sont exclusivement synthétiques.</p>
-      <div style={{ padding: 10, background: 'var(--c-warning-bg)', color: 'var(--c-warning)', borderRadius: 'var(--radius)', marginBottom: 16, fontSize: 'var(--fs-12)' }}><strong>Données synthétiques de démonstration — BIC non connecté</strong> <button type="button" className="btn btn-ghost btn-sm" onClick={checkBic}>Vérifier la démo BIC</button>{bicMessage && <div>{bicMessage}</div>}</div>
+      <p className="text-sm text-muted" style={{ marginBottom: 12 }}>Ajoutez chaque dette séparément. La consultation BIC synthétique sera disponible sur le dossier après enregistrement d’un consentement explicite.</p>
+      <div style={{ padding: 10, background: 'var(--c-warning-bg)', color: 'var(--c-warning)', borderRadius: 'var(--radius)', marginBottom: 16, fontSize: 'var(--fs-12)' }}><strong>Données synthétiques de démonstration — BIC non connecté</strong></div>
       <div className="grid-2">
         <div className="field"><label className="field-label">Institution</label><input className="input" value={draft.institution} onChange={e => setDraft(d => ({ ...d, institution: e.target.value }))} /></div>
         <div className="field"><label className="field-label">Type de crédit</label><input className="input" value={draft.credit_type} onChange={e => setDraft(d => ({ ...d, credit_type: e.target.value }))} /></div>

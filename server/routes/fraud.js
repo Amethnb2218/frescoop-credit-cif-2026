@@ -1,13 +1,17 @@
 import { Router } from 'express';
 import { getDb, uuid } from '../db.js';
-import { authMiddleware, tenantGuard } from '../auth.js';
+import { authMiddleware, tenantGuard, requireRole } from '../auth.js';
 import { logAudit } from './audit.js';
+import { findAccessibleDossier } from '../services/dossierAccess.js';
 
 const router = Router();
 
 router.get('/dossier/:dossierId', authMiddleware, tenantGuard, async (req, res) => {
   try {
     const db = getDb();
+    if (!await findAccessibleDossier(db, req.params.dossierId, req)) {
+      return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
+    }
     const result = await db.execute({
       sql: 'SELECT * FROM fraud_checks WHERE dossier_id = ? AND tenant_id = ? ORDER BY created_at DESC',
       args: [req.params.dossierId, req.tenantId],
@@ -18,17 +22,14 @@ router.get('/dossier/:dossierId', authMiddleware, tenantGuard, async (req, res) 
   }
 });
 
-router.post('/check/:dossierId', authMiddleware, tenantGuard, async (req, res) => {
+router.post('/check/:dossierId', authMiddleware, tenantGuard,
+  requireRole('SUPERVISEUR', 'RISK_MANAGER', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
     const db = getDb();
     const { dossierId } = req.params;
 
-    const dossierResult = await db.execute({
-      sql: 'SELECT * FROM dossiers WHERE id = ? AND tenant_id = ?',
-      args: [dossierId, req.tenantId],
-    });
-    if (!dossierResult.rows[0]) return res.status(404).json({ error: 'Dossier introuvable' });
-    const dossier = dossierResult.rows[0];
+    const dossier = await findAccessibleDossier(db, dossierId, req);
+    if (!dossier) return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
 
     const evidenceResult = await db.execute({
       sql: 'SELECT * FROM evidence WHERE dossier_id = ? AND tenant_id = ?',

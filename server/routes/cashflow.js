@@ -2,12 +2,16 @@ import { Router } from 'express';
 import { getDb, uuid } from '../db.js';
 import { authMiddleware, tenantGuard, requireRole } from '../auth.js';
 import { logAudit } from './audit.js';
+import { findAccessibleDossier, isEditableDraft, scoreInvalidationStatement } from '../services/dossierAccess.js';
 
 const router = Router();
 
 router.get('/dossier/:dossierId', authMiddleware, tenantGuard, async (req, res) => {
   try {
     const db = getDb();
+    if (!await findAccessibleDossier(db, req.params.dossierId, req)) {
+      return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
+    }
     const result = await db.execute({
       sql: 'SELECT * FROM cashflow_entries WHERE dossier_id = ? AND tenant_id = ? ORDER BY year, month',
       args: [req.params.dossierId, req.tenantId],
@@ -22,19 +26,24 @@ router.post('/dossier/:dossierId', authMiddleware, tenantGuard, requireRole('AGE
   try {
     const db = getDb();
     const { dossierId } = req.params;
+    const dossier = await findAccessibleDossier(db, dossierId, req);
+    if (!dossier) return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
+    if (!isEditableDraft(dossier)) {
+      return res.status(409).json({ error: 'Le cash-flow ne peut être modifié que sur un brouillon' });
+    }
     const { entries } = req.body;
 
     if (!Array.isArray(entries) || entries.length === 0) {
       return res.status(400).json({ error: 'Entrées de cash-flow requises' });
     }
 
-    await db.execute({
+    const statements = [{
       sql: 'DELETE FROM cashflow_entries WHERE dossier_id = ? AND tenant_id = ?',
       args: [dossierId, req.tenantId],
-    });
+    }];
 
     for (const entry of entries) {
-      await db.execute({
+      statements.push({
         sql: `INSERT INTO cashflow_entries (id, dossier_id, tenant_id, month, year, revenue, revenue_detail, expenses, expenses_detail, debt_payments)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
@@ -46,6 +55,8 @@ router.post('/dossier/:dossierId', authMiddleware, tenantGuard, requireRole('AGE
         ],
       });
     }
+    statements.push(scoreInvalidationStatement(dossierId, req.tenantId));
+    await db.batch(statements, 'write');
 
     await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, 'CASHFLOW_UPDATED', 'dossier', dossierId, { months: entries.length }, req);
     res.json({ ok: true });
@@ -54,25 +65,21 @@ router.post('/dossier/:dossierId', authMiddleware, tenantGuard, requireRole('AGE
   }
 });
 
-router.post('/dossier/:dossierId/stress-test', authMiddleware, tenantGuard, async (req, res) => {
+router.post('/dossier/:dossierId/stress-test', authMiddleware, tenantGuard,
+  requireRole('SUPERVISEUR', 'RISK_MANAGER', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
     const db = getDb();
     const { dossierId } = req.params;
+    const dossierRecord = await findAccessibleDossier(db, dossierId, req);
+    if (!dossierRecord) return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
 
     const cashflow = await db.execute({
       sql: 'SELECT * FROM cashflow_entries WHERE dossier_id = ? AND tenant_id = ? ORDER BY year, month',
       args: [dossierId, req.tenantId],
     });
 
-    const dossier = await db.execute({
-      sql: 'SELECT amount_requested, duration_months FROM dossiers WHERE id = ? AND tenant_id = ?',
-      args: [dossierId, req.tenantId],
-    });
-
-    if (!dossier.rows[0]) return res.status(404).json({ error: 'Dossier introuvable' });
-
     const entries = cashflow.rows;
-    const { amount_requested, duration_months } = dossier.rows[0];
+    const { amount_requested, duration_months } = dossierRecord;
     const monthlyPayment = amount_requested && duration_months ? Math.ceil(amount_requested / duration_months) : 0;
 
     const totalRevenue = entries.reduce((s, e) => s + (e.revenue || 0), 0);

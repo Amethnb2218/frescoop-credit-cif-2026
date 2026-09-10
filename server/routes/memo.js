@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getDb } from '../db.js';
 import { authMiddleware, tenantGuard } from '../auth.js';
+import { findAccessibleDossier, hasBicConsent } from '../services/dossierAccess.js';
 
 const router = Router();
 
@@ -9,12 +10,8 @@ router.get('/:dossierId', authMiddleware, tenantGuard, async (req, res) => {
     const db = getDb();
     const { dossierId } = req.params;
 
-    const dossierResult = await db.execute({
-      sql: 'SELECT * FROM dossiers WHERE id = ? AND tenant_id = ?',
-      args: [dossierId, req.tenantId],
-    });
-    if (!dossierResult.rows[0]) return res.status(404).json({ error: 'Dossier introuvable' });
-    const dossier = dossierResult.rows[0];
+    const dossier = await findAccessibleDossier(db, dossierId, req);
+    if (!dossier) return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
 
     const evidenceResult = await db.execute({
       sql: 'SELECT * FROM evidence WHERE dossier_id = ? AND tenant_id = ? ORDER BY verification_level, created_at DESC',
@@ -36,15 +33,18 @@ router.get('/:dossierId', authMiddleware, tenantGuard, async (req, res) => {
       args: [dossierId, req.tenantId],
     });
 
-    const bicResult = await db.execute({
+    const bicAllowed = await hasBicConsent(db, dossierId, req.tenantId);
+    const bicResult = bicAllowed ? await db.execute({
       sql: 'SELECT * FROM bic_records WHERE tenant_id = ? AND applicant_id_number = ?',
       args: [req.tenantId, dossier.applicant_id_number || ''],
-    });
+    }) : { rows: [] };
 
     const ruleEvalsResult = await db.execute({
-      sql: `SELECT re.*, r.code, r.name FROM rule_evaluations re JOIN rules r ON re.rule_id = r.id
-            WHERE re.dossier_id = ? AND re.triggered = 1 ORDER BY re.evaluated_at DESC`,
-      args: [dossierId],
+      sql: `SELECT re.*, r.code, r.name FROM rule_evaluations re
+            JOIN rules r ON re.rule_id = r.id AND r.tenant_id = re.tenant_id
+            WHERE re.dossier_id = ? AND re.tenant_id = ? AND re.triggered = 1
+            ORDER BY re.evaluated_at DESC`,
+      args: [dossierId, req.tenantId],
     });
 
     const evidence = evidenceResult.rows;
@@ -132,7 +132,10 @@ router.get('/:dossierId', authMiddleware, tenantGuard, async (req, res) => {
         records_found: bicRecords.length,
         total_outstanding: bicRecords.reduce((s, r) => s + (r.outstanding || 0), 0),
         has_late_payments: bicRecords.some(r => r.days_late > 30),
+        consent_given: bicAllowed,
+        connected: false,
         is_simulated: true,
+        disclaimer: 'Données synthétiques de démonstration — BIC non connecté',
       },
 
       risk_flags: flags.map(f => ({ code: f.code, label: f.label, severity: f.severity, status: f.status })),
