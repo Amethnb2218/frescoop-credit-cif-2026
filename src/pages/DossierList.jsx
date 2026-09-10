@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
-import { formatCFA, formatDate, STATUS_LABELS, prequalLabel, prequalColor, scoreStyle } from '../lib/format';
+import { formatCFA, formatDate, STATUS_LABELS, prequalLabel, prequalColor, scoreStyle, getMissingScoreData, isScoreAvailable } from '../lib/format';
 import { Plus, Search, Filter } from 'lucide-react';
 
 export default function DossierList() {
@@ -95,9 +95,9 @@ export default function DossierList() {
                     </td>
                     <td style={{ fontWeight: 600 }}>{formatCFA(d.amount_requested)}</td>
                     <td>
-                      {d.prequalification_score != null ? (
+                      {isScoreAvailable(d.prequalification_score) ? (
                         <ScoreBadge score={d.prequalification_score} prequalification={d.prequalification} />
-                      ) : <span className="text-xs text-muted">Non calculé — données insuffisantes</span>}
+                      ) : <MissingScoreSummary scoreDetails={d.prequalification_score_details} />}
                     </td>
                     <td>
                       <span className={`badge badge-${d.status === 'draft' ? 'neutral' : ['decided','exported','disbursed','closed'].includes(d.status) ? 'success' : 'warning'}`}>
@@ -121,6 +121,23 @@ export default function DossierList() {
         )}
       </div>
     </div>
+  );
+}
+
+function MissingScoreSummary({ scoreDetails }) {
+  const missing = getMissingScoreData(scoreDetails);
+  if (missing.length === 0) {
+    return <span className="text-xs text-muted">Non calculé — données insuffisantes</span>;
+  }
+
+  const visible = missing.slice(0, 2).map(item => item.label);
+  const remaining = missing.length - visible.length;
+  const fullDescription = `Données à compléter : ${missing.map(item => item.label).join(', ')}`;
+  return (
+    <span className="text-xs text-muted" title={fullDescription} aria-label={fullDescription}>
+      <strong style={{ color: 'var(--c-text)' }}>À compléter :</strong> {visible.join(', ')}
+      {remaining > 0 ? ` +${remaining}` : ''}
+    </span>
   );
 }
 

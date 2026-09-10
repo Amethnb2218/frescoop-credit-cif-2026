@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
-import { formatCFA, formatDate, formatDateTime, STATUS_LABELS, MONTHS, prequalLabel, prequalColor, scoreStyle, parseScoreDetails } from '../lib/format';
+import { formatCFA, formatDate, formatDateTime, STATUS_LABELS, MONTHS, prequalLabel, prequalColor, scoreStyle, parseScoreDetails, getMissingScoreData, isScoreAvailable } from '../lib/format';
 import { EVIDENCE_LEVELS } from '../lib/tokens';
 import { isOnline, addToSyncQueue, saveEvidenceOffline, deleteEvidenceOffline } from '../lib/offline';
 import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff, Shield, MapPin, FileCheck, Printer, Download, Trash2 } from 'lucide-react';
@@ -98,6 +98,8 @@ export default function DossierDetail() {
     return canAdvance(next) ? next : null;
   };
 
+  const missingScoreData = getMissingScoreData(dossier.prequalification_score_details);
+  const hasScore = isScoreAvailable(dossier.prequalification_score);
   const ns = nextStatus();
   const nextLabel = { submitted: 'Soumettre', verification: 'Lancer vérification', review: 'Passer en revue', committee: 'Transmettre au comité' };
 
@@ -113,7 +115,7 @@ export default function DossierDetail() {
           <div>
             <h1 className="page-title">{dossier.applicant_name || 'Dossier'}</h1>
             <p className="page-subtitle">{dossier.applicant_location} · {dossier.activity_type || dossier.sector} · {formatCFA(dossier.amount_requested)}</p>
-            {dossier.prequalification_score == null && <p className="text-xs text-muted" style={{ marginTop: 4 }}>Non calculé — données insuffisantes</p>}
+            {!hasScore && <p className="text-xs text-muted" style={{ marginTop: 4 }}>Non calculé — données insuffisantes</p>}
           </div>
         </div>
         <div className="flex gap-2">
@@ -122,7 +124,9 @@ export default function DossierDetail() {
         </div>
       </div>
 
-      {dossier.prequalification_score != null && (() => {
+      {!hasScore && <MissingDataPanel missing={missingScoreData} />}
+
+      {hasScore && (() => {
         const style = scoreStyle(dossier.prequalification_score);
         return (
           <div style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '10px 16px', background: '#f9fafb', borderRadius: 'var(--radius-md)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid var(--c-border-light)' }}>
@@ -160,8 +164,28 @@ export default function DossierDetail() {
   );
 }
 
+function MissingDataPanel({ missing, compact = false }) {
+  if (missing.length === 0) {
+    return (
+      <div style={{ padding: compact ? 10 : 14, marginBottom: 12, borderRadius: 'var(--radius-md)', background: '#f8fafc', border: '1px solid #cbd5e1' }}>
+        <strong style={{ fontSize: 'var(--fs-12)' }}>Données à compléter</strong>
+        <p className="text-xs text-muted" style={{ marginTop: 4 }}>Le diagnostic détaillé sera disponible après un nouveau calcul du dossier.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: compact ? 10 : 14, marginBottom: 12, borderRadius: 'var(--radius-md)', background: '#fffbeb', border: '1px solid #fcd34d' }}>
+      <strong style={{ fontSize: 'var(--fs-12)', color: '#92400e' }}>Données à compléter</strong>
+      <ul style={{ margin: '6px 0 0 18px', fontSize: 'var(--fs-12)', color: '#78350f' }}>
+        {missing.map(item => <li key={item.code || item.field || item.label}>{item.label}</li>)}
+      </ul>
+    </div>
+  );
+}
+
 function ScoreCircle({ score }) {
-  if (score == null) return null;
+  if (!isScoreAvailable(score)) return null;
   const style = scoreStyle(score);
   return (
     <div aria-label={`${style.label}, score technique ${score} sur 100`} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 56, height: 56, borderRadius: '50%', background: style.background, border: `3px solid ${style.border}`, flexShrink: 0 }}>
@@ -377,13 +401,14 @@ function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, o
   const totalExpenses = cashflow.reduce((s, e) => s + (e.expenses || 0), 0);
   const totalDebt = cashflow.reduce((s, e) => s + (e.debt_payments || 0), 0);
   const fluxNet = totalRevenue - totalExpenses - totalDebt;
-  const monthlyPayment = dossier.amount_requested && dossier.duration_months ? Math.ceil(dossier.amount_requested / dossier.duration_months) : 0;
   const scoreVisual = scoreStyle(dossier.prequalification_score);
   const scoreDetails = parseScoreDetails(dossier.prequalification_score_details) || {};
+  const missingScoreData = getMissingScoreData(scoreDetails);
   const capacityRatio = scoreDetails.capacity_ratio;
   const stressedRatio = scoreDetails.stressed_capacity_ratio;
   const averageMonthlyNet = scoreDetails.average_monthly_net;
   const monthlyMargin = scoreDetails.monthly_margin_after_payment;
+  const monthlyPayment = scoreDetails.proposed_monthly_payment;
   const paymentMonths = Array.isArray(scoreDetails.payment_months) ? scoreDetails.payment_months : [];
   const scheduleMinimumMargin = scoreDetails.schedule_minimum_margin;
   const stressedScheduleMinimumMargin = scoreDetails.stressed_schedule_minimum_margin;
@@ -391,22 +416,27 @@ function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, o
 
   return (
     <div>
-      <div style={{ marginBottom: 20, padding: 18, borderRadius: 'var(--radius-md)', background: capacityKnown && capacityRatio >= 1.3 ? '#ecfdf5' : capacityKnown && capacityRatio >= 1 ? '#fffbeb' : '#fef2f2', border: `2px solid ${capacityKnown && capacityRatio >= 1.3 ? '#6ee7b7' : capacityKnown && capacityRatio >= 1 ? '#fcd34d' : '#fca5a5'}` }}>
+      <div style={{ marginBottom: 20, padding: 18, borderRadius: 'var(--radius-md)', background: !capacityKnown ? '#f8fafc' : capacityRatio >= 1.3 ? '#ecfdf5' : capacityRatio >= 1 ? '#fffbeb' : '#fef2f2', border: `2px solid ${!capacityKnown ? '#cbd5e1' : capacityRatio >= 1.3 ? '#6ee7b7' : capacityRatio >= 1 ? '#fcd34d' : '#fca5a5'}` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
           <div>
             <div style={{ fontSize: 'var(--fs-xs)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.6px', color: '#475569' }}>Capacité de remboursement</div>
             <div style={{ fontSize: 'var(--fs-xl)', fontWeight: 800, marginTop: 3 }}>{capacityKnown ? `${capacityRatio.toFixed(2)}× l’échéance` : 'Non calculé — données insuffisantes'}</div>
           </div>
-          <span className={`badge ${dossier.repayment_capacity === 'SUFFICIENT' ? 'badge-success' : dossier.repayment_capacity === 'LIMIT' ? 'badge-warning' : 'badge-danger'}`}>
+          <span className={`badge ${dossier.repayment_capacity === 'SUFFICIENT' ? 'badge-success' : dossier.repayment_capacity === 'LIMIT' ? 'badge-warning' : dossier.repayment_capacity === 'INSUFFICIENT' ? 'badge-danger' : 'badge-neutral'}`}>
             {dossier.repayment_capacity === 'SUFFICIENT' ? 'Suffisante' : dossier.repayment_capacity === 'LIMIT' ? 'Limite' : dossier.repayment_capacity === 'INSUFFICIENT' ? 'Insuffisante' : 'Non calculable'}
           </span>
         </div>
         <div className="capacity-metrics">
           <div><div className="text-xs text-muted">Flux net mensuel moyen</div><strong>{averageMonthlyNet == null ? '—' : formatCFA(averageMonthlyNet)}</strong></div>
-          <div><div className="text-xs text-muted">Échéance proposée</div><strong>{monthlyPayment ? formatCFA(monthlyPayment) : '—'}</strong></div>
+          <div><div className="text-xs text-muted">Échéance proposée</div><strong>{monthlyPayment == null ? '—' : formatCFA(monthlyPayment)}</strong></div>
           <div><div className="text-xs text-muted">Marge après échéance</div><strong>{monthlyMargin == null ? '—' : formatCFA(monthlyMargin)}</strong></div>
           <div><div className="text-xs text-muted">Stress revenus −20 %</div><strong>{stressedRatio == null ? '—' : `${stressedRatio.toFixed(2)}×`}</strong></div>
         </div>
+        {!capacityKnown && (
+          <div style={{ marginTop: 12 }}>
+            <MissingDataPanel missing={missingScoreData} compact />
+          </div>
+        )}
         <div className="text-xs text-muted" style={{ marginTop: 12 }}>
           Calendrier : {scoreDetails.seasonal_schedule ? 'saisonnier prévu' : dossier.desired_schedule || 'non renseigné'} · Revenus observés sur {scoreDetails.revenue_months ?? '—'} mois.
           {paymentMonths.length > 0 && <> · Mois d’échéance : <strong>{paymentMonths.join(', ')}</strong></>}
