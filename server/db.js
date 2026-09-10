@@ -18,6 +18,37 @@ export function getDb() {
   return db;
 }
 
+export async function migrateAuditLogSchema(client = getDb()) {
+  const requiredColumns = [
+    ['user_name', 'TEXT'],
+    ['user_role', 'TEXT'],
+    ['details', "TEXT DEFAULT '{}'"],
+    ['ip_address', 'TEXT'],
+  ];
+  const tableInfo = await client.execute('PRAGMA table_info(audit_log)');
+  const existingColumns = new Set(tableInfo.rows.map(row => String(row.name)));
+  const addedColumns = [];
+
+  for (const [column, definition] of requiredColumns) {
+    if (existingColumns.has(column)) continue;
+    await client.execute(`ALTER TABLE audit_log ADD COLUMN ${column} ${definition}`);
+    addedColumns.push(column);
+  }
+
+  const migratedInfo = await client.execute('PRAGMA table_info(audit_log)');
+  const migratedColumns = new Set(migratedInfo.rows.map(row => String(row.name)));
+  const missingColumns = requiredColumns
+    .map(([column]) => column)
+    .filter(column => !migratedColumns.has(column));
+  if (missingColumns.length > 0) {
+    throw new Error(`Migration audit_log incomplète: ${missingColumns.join(', ')}`);
+  }
+  if (addedColumns.length > 0) {
+    console.log(`[FresCoop] Migration audit_log: ${addedColumns.join(', ')}`);
+  }
+  return addedColumns;
+}
+
 export async function initDb() {
   const client = getDb();
 
@@ -454,6 +485,8 @@ export async function initDb() {
       created_at TEXT DEFAULT (datetime('now'))
     );
   `);
+
+  await migrateAuditLogSchema(client);
 
   // Migrations for existing databases
   try { await client.execute('ALTER TABLE dossiers ADD COLUMN prequalification_score INTEGER'); } catch {}

@@ -6,11 +6,16 @@ const DEVELOPMENT_SECRET = 'frescoop-dev-secret-change-in-prod';
 const TOKEN_EXPIRY = '24h';
 
 function getSecret() {
-  if (process.env.TOKEN_SECRET) return process.env.TOKEN_SECRET;
+  const secret = process.env.TOKEN_SECRET;
+  if (secret?.trim()) return secret;
   if (process.env.NODE_ENV === 'production') {
     throw new Error('TOKEN_SECRET est requis en production');
   }
   return DEVELOPMENT_SECRET;
+}
+
+export function assertAuthConfiguration() {
+  getSecret();
 }
 
 export function hashPassword(password) {

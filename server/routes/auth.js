@@ -6,12 +6,14 @@ import { logAudit } from './audit.js';
 const router = Router();
 
 router.post('/login', async (req, res) => {
+  let stage = 'validation';
   try {
     const { email, password } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: 'Email et mot de passe requis' });
     }
 
+    stage = 'user_lookup';
     const db = getDb();
     const result = await db.execute({
       sql: 'SELECT * FROM users WHERE email = ? AND active = 1',
@@ -23,13 +25,16 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Identifiants incorrects' });
     }
     if (!user.password_hash.startsWith('scrypt:')) {
+      stage = 'password_hash_upgrade';
       await db.execute({
         sql: 'UPDATE users SET password_hash = ?, updated_at = datetime(\'now\') WHERE id = ? AND tenant_id = ?',
         args: [hashPassword(password), user.id, user.tenant_id],
       });
     }
 
+    stage = 'token_generation';
     const token = generateToken(user);
+    stage = 'audit_write';
     await logAudit(user.tenant_id, user.id, user.name, user.role, 'LOGIN', 'user', user.id, {}, req);
 
     res.json({
@@ -38,6 +43,12 @@ router.post('/login', async (req, res) => {
       user: { id: user.id, name: user.name, email: user.email, role: user.role, tenant_id: user.tenant_id, agency: user.agency },
     });
   } catch (err) {
+    console.error('[FresCoop] auth.login failed', {
+      stage,
+      name: err?.name || 'Error',
+      message: err?.message || 'Unknown error',
+      stack: err?.stack,
+    });
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });

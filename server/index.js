@@ -3,6 +3,7 @@ import cors from 'cors';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 import { getDb, initDb } from './db.js';
+import { assertAuthConfiguration } from './auth.js';
 import { recalculateOutdatedScores } from './services/prequalification.js';
 
 import authRoutes from './routes/auth.js';
@@ -58,6 +59,7 @@ const PORT = process.env.PORT || 4174;
 const HOST = process.env.FRESCOOP_HOST || '0.0.0.0';
 
 export async function start() {
+  assertAuthConfiguration();
   await initDb();
   console.log('[FresCoop] Base de données initialisée');
 
