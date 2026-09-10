@@ -461,14 +461,14 @@ function StepProjetAgricole({ form, update, items, setItems }) {
   const budget = items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_cost || 0), 0);
   const revenue = Number(form.project_surface_ha || 0) * Number(form.expected_yield || 0) * (1 - Number(form.loss_percent || 0) / 100) * Number(form.expected_price || 0);
   function addItem() {
-    if (!draft.label || !Number(draft.quantity) || !Number(draft.unit_cost)) return;
-    setItems(list => [...list, { ...draft, id: crypto.randomUUID() }]);
+    if (!Number(draft.quantity) || !Number(draft.unit_cost)) return;
+    setItems(list => [...list, { ...draft, label: draft.category, id: crypto.randomUUID() }]);
     setDraft({ category: 'Semences', label: '', quantity: '', unit: '', unit_cost: '', supplier: '' });
   }
   return (
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Projet agricole et besoin réel</h2>
-      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Décrivez la faisabilité technique, le budget et les hypothèses prudentes du projet.</p>
+      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Décrivez la faisabilité technique, le budget et les estimations du projet.</p>
       <div className="grid-2">
         <div className="field"><label className="field-label">Culture *</label><input className="input" value={form.crop_name} onChange={e => update('crop_name', e.target.value)} placeholder="Ex : maïs, arachide, tomate" /></div>
         <div className="field"><label className="field-label">Variété</label><input className="input" value={form.crop_variety} onChange={e => update('crop_variety', e.target.value)} /></div>
@@ -484,8 +484,8 @@ function StepProjetAgricole({ form, update, items, setItems }) {
         <div className="field"><label className="field-label">Fiabilité de l'eau</label><select className="input" value={form.water_reliability} onChange={e => update('water_reliability', e.target.value)}><option value="">Sélectionner</option><option value="sécurisée">Sécurisée</option><option value="partielle">Partielle</option><option value="incertaine">Incertaine</option></select></div>
       </div>
       <div className="grid-2" style={{ marginTop: 16 }}>
-        <div className="field"><label className="field-label">Rendement prudent (kg/ha)</label><input className="input" type="number" min="0" value={form.expected_yield} onChange={e => update('expected_yield', e.target.value)} /></div>
-        <div className="field"><label className="field-label">Prix prudent (FCFA/kg)</label><input className="input" type="number" min="0" value={form.expected_price} onChange={e => update('expected_price', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Rendement (kg/ha)</label><input className="input" type="number" min="0" value={form.expected_yield} onChange={e => update('expected_yield', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Prix (FCFA/kg)</label><input className="input" type="number" min="0" value={form.expected_price} onChange={e => update('expected_price', e.target.value)} /></div>
         <div className="field"><label className="field-label">Pertes estimées (%)</label><input className="input" type="number" min="0" max="100" value={form.loss_percent} onChange={e => update('loss_percent', e.target.value)} /></div>
         <div className="field"><label className="field-label">Apport personnel (FCFA)</label><input className="input" type="number" min="0" value={form.own_contribution} onChange={e => update('own_contribution', e.target.value)} /></div>
         <div className="field"><label className="field-label">Autres financements (FCFA)</label><input className="input" type="number" min="0" value={form.other_funding} onChange={e => update('other_funding', e.target.value)} /></div>
@@ -495,25 +495,23 @@ function StepProjetAgricole({ form, update, items, setItems }) {
       <h3 style={{ fontSize: 'var(--fs-14)', margin: '20px 0 10px' }}>Intrants et charges du projet</h3>
       <div className="grid-2">
         <div className="field"><label className="field-label">Catégorie</label><select className="input" value={draft.category} onChange={e => setDraft(d => ({ ...d, category: e.target.value }))}><option>Semences</option><option>Engrais</option><option>Produits phytosanitaires</option><option>Main-d'œuvre</option><option>Matériel</option><option>Transport</option><option>Autre</option></select></div>
-        <div className="field"><label className="field-label">Désignation</label><input className="input" value={draft.label} onChange={e => setDraft(d => ({ ...d, label: e.target.value }))} /></div>
         <div className="field"><label className="field-label">Quantité</label><input className="input" type="number" min="0" value={draft.quantity} onChange={e => setDraft(d => ({ ...d, quantity: e.target.value }))} /></div>
         <div className="field"><label className="field-label">Unité</label><input className="input" value={draft.unit} onChange={e => setDraft(d => ({ ...d, unit: e.target.value }))} placeholder="kg, sac, jour…" /></div>
         <div className="field"><label className="field-label">Coût unitaire (FCFA)</label><input className="input" type="number" min="0" value={draft.unit_cost} onChange={e => setDraft(d => ({ ...d, unit_cost: e.target.value }))} /></div>
         <div className="field"><label className="field-label">Fournisseur</label><input className="input" value={draft.supplier} onChange={e => setDraft(d => ({ ...d, supplier: e.target.value }))} /></div>
       </div>
       <button type="button" className="btn btn-secondary btn-sm" onClick={addItem}><Plus size={14} /> Ajouter l'intrant</button>
-      {items.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span>{item.category} · {item.label} · {item.quantity} {item.unit}</span><span><strong>{formatCFA(Number(item.quantity) * Number(item.unit_cost))}</strong> <button type="button" className="btn btn-ghost btn-sm" onClick={() => setItems(list => list.filter(x => x.id !== item.id))}><Trash2 size={13} /></button></span></div>)}
-      <div style={{ marginTop: 12, padding: 12, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)' }}><strong>Budget :</strong> {formatCFA(budget)} · <strong>Besoin net :</strong> {formatCFA(Math.max(0, budget - Number(form.own_contribution || 0) - Number(form.other_funding || 0)))} · <strong>Revenu prudent :</strong> {formatCFA(revenue)} · <strong>Marge :</strong> {formatCFA(revenue - budget)}</div>
+      {items.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span>{item.category} · {item.quantity} {item.unit}</span><span><strong>{formatCFA(Number(item.quantity) * Number(item.unit_cost))}</strong> <button type="button" className="btn btn-ghost btn-sm" onClick={() => setItems(list => list.filter(x => x.id !== item.id))}><Trash2 size={13} /></button></span></div>)}
+      <div style={{ marginTop: 12, padding: 12, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)' }}><strong>Budget :</strong> {formatCFA(budget)} · <strong>Besoin net :</strong> {formatCFA(Math.max(0, budget - Number(form.own_contribution || 0) - Number(form.other_funding || 0)))} · <strong>Revenu estimé :</strong> {formatCFA(revenue)} · <strong>Marge :</strong> {formatCFA(revenue - budget)}</div>
     </div>
   );
 }
 
 function feasibilitySourceLabel(source = {}) {
-  if (source.mode === 'hybrid') return 'Moteur FresCoop + signaux Teranga';
-  if (source.mode === 'hybrid_partial') return 'Moteur FresCoop + réponse Teranga partielle';
-  if (source.mode === 'local_offline') return 'Analyse locale uniquement — navigateur hors ligne';
-  if (source.mode === 'local_fallback') return 'Analyse locale uniquement — Teranga indisponible';
-  return 'Analyse locale uniquement';
+  if (source.mode === 'hybrid' || source.mode === 'hybrid_partial') {
+    return 'Analyse réalisée à partir des informations du projet et de données agricoles complémentaires.';
+  }
+  return 'Analyse réalisée à partir des informations renseignées dans le projet.';
 }
 
 function StepFaisabiliteAgronomique({ form, items }) {
@@ -544,7 +542,7 @@ function StepFaisabiliteAgronomique({ form, items }) {
         }
       }
       if (active) {
-        setAnalysis({ fingerprint, result });
+        setAnalysis({ fingerprint, result, updatedAt: new Date() });
         setLoading(false);
       }
     }
@@ -568,18 +566,22 @@ function StepFaisabiliteAgronomique({ form, items }) {
           <div style={{ fontWeight: 600, marginBottom: 6 }}>{current.summary}</div>
           <div className="text-sm text-muted">{feasibilitySourceLabel(current.source)}</div>
         </div>
-        <button type="button" className="btn btn-secondary btn-sm" onClick={() => setRun(value => value + 1)}>
-          Relancer l’analyse
+        <button type="button" className="btn btn-secondary btn-sm" disabled={loading} onClick={() => setRun(value => value + 1)}>
+          {loading ? 'Analyse en cours…' : 'Relancer l’analyse'}
         </button>
+        {analysis?.updatedAt && (
+          <span className="text-sm text-muted" style={{ marginLeft: 10 }}>
+            Analyse mise à jour à {analysis.updatedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          </span>
+        )}
         <details style={{ marginTop: 14, padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Voir les constats et la provenance</summary>
+          <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Voir les constats et recommandations</summary>
           <div style={{ marginTop: 12, fontSize: 'var(--fs-12)' }}>
             {details.missing_data?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Données manquantes :</strong> {details.missing_data.join(', ')}</div>}
             {details.findings?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Constats :</strong><ul>{details.findings.map(item => <li key={item.code}>{item.explanation}</li>)}</ul></div>}
             {details.recommendations?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Recommandations :</strong><ul>{details.recommendations.map(item => <li key={item}>{item}</li>)}</ul></div>}
-            {details.external_signals?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Signaux Teranga :</strong><ul>{details.external_signals.map((item, index) => <li key={`${item.type}-${index}`}>{item.explanation}</li>)}</ul></div>}
-            <div><strong>Moteur :</strong> {current.source?.engine} v{current.source?.engine_version} · règles locales v{current.source?.local_rules_version}</div>
-            {current.source?.fallback_reason && <div><strong>Repli :</strong> {current.source.fallback_reason}</div>}
+            {details.external_signals?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Informations agricoles complémentaires :</strong><ul>{details.external_signals.map((item, index) => <li key={`${item.type}-${index}`}>{item.explanation}</li>)}</ul></div>}
+            {current.source?.fallback_reason && <div className="text-muted">Certaines données externes ne sont pas disponibles ; le résultat repose sur l’analyse FresCoop.</div>}
           </div>
         </details>
       </>}
@@ -764,7 +766,7 @@ function StepAnalyse({ form, items = [], debts = [] }) {
       <p className="text-sm text-muted" style={{ marginBottom: 16 }}>
         Résumé calculé automatiquement. Il ne s'agit pas encore de la décision humaine du comité.
       </p>
-      {!calculable && <div style={{ padding: 14, background: 'var(--c-warning-bg)', color: 'var(--c-warning)', borderRadius: 'var(--radius-md)', marginBottom: 16 }}><strong>Non calculé — données insuffisantes</strong><div className="text-sm">Complétez le rendement, le prix prudent et le budget détaillé du projet. Aucun score numérique n'est produit.</div></div>}
+      {!calculable && <div style={{ padding: 14, background: 'var(--c-warning-bg)', color: 'var(--c-warning)', borderRadius: 'var(--radius-md)', marginBottom: 16 }}><strong>Non calculé — données insuffisantes</strong><div className="text-sm">Complétez le rendement, le prix et le budget détaillé du projet. Aucun score numérique n'est produit.</div></div>}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
         <SummaryLine label="Revenus annuels estimés" value={formatCFA(totalRevAnnuel)} color="var(--c-success)" />
