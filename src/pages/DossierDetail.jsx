@@ -21,6 +21,7 @@ export default function DossierDetail() {
   const navigate = useNavigate();
   const user = getUser();
   const [dossier, setDossier] = useState(null);
+  const [projectAssessment, setProjectAssessment] = useState(null);
   const [evidence, setEvidence] = useState([]);
   const [cashflow, setCashflow] = useState([]);
   const [stressTests, setStressTests] = useState([]);
@@ -45,6 +46,7 @@ export default function DossierDetail() {
     try {
       const res = await api.getDossier(id);
       setDossier(res.dossier);
+      setProjectAssessment(res.project_assessment || null);
       setEvidence(res.evidence || []);
       setCashflow(res.cashflow || []);
       setStressTests(res.stress_tests || []);
@@ -145,12 +147,12 @@ export default function DossierDetail() {
         {getTabsForRole(role).map(t => <button key={t} className={`tab-item ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>{t}</button>)}
       </div>
 
-      {tab === 'Résumé' && <SummaryTab dossier={dossier} evidence={evidence} cashflow={cashflow} bicData={bicData} onCheckBic={checkBic} />}
+      {tab === 'Résumé' && <SummaryTab dossier={dossier} projectAssessment={projectAssessment} evidence={evidence} cashflow={cashflow} bicData={bicData} onCheckBic={checkBic} />}
       {tab === 'Mémo décision' && <MemoTab dossier={dossier} evidence={evidence} cashflow={cashflow} ruleEvals={ruleEvals} />}
       {tab === 'Preuves' && <EvidenceTab dossierId={id} dossierStatus={dossier.status} evidence={evidence} onReload={loadDossier} />}
       {tab === 'Cash-flow' && <CashflowTab dossierId={id} cashflow={cashflow} dossier={dossier} onReload={loadDossier} />}
       {tab === 'Stress test' && <StressTab stressTests={stressTests} onRun={runStressTest} />}
-      {tab === 'Préqualification' && <PrequalTab dossier={dossier} ruleEvals={ruleEvals} onEvaluate={evaluateRules} />}
+      {tab === 'Préqualification' && <PrequalTab dossier={dossier} projectAssessment={projectAssessment} ruleEvals={ruleEvals} onEvaluate={evaluateRules} />}
       {tab === 'Contrôles' && <ControlsTab dossierId={id} dossier={dossier} />}
       {tab === 'Décision' && <DecisionTab dossier={dossier} onReload={loadDossier} />}
       {tab === 'Audit' && <AuditTab logs={auditLogs} />}
@@ -298,7 +300,79 @@ function MemoSection({ title, children }) {
   );
 }
 
-function SummaryTab({ dossier, evidence, cashflow, bicData, onCheckBic }) {
+function parseJsonObject(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value) || {}; } catch { return {}; }
+}
+
+function assessmentMetrics(projectAssessment) {
+  const analysis = parseJsonObject(projectAssessment?.feasibility_analysis);
+  const metrics = analysis.details?.metrics || analysis.metrics || {};
+  return {
+    analysis,
+    metrics,
+    source: analysis.source || {},
+    status: analysis.status || projectAssessment?.feasibility_status || projectAssessment?.status || null,
+  };
+}
+
+function metricNumber(metrics, projectAssessment, keys) {
+  for (const key of keys) {
+    const value = metrics?.[key] ?? projectAssessment?.[key];
+    if (value != null && Number.isFinite(Number(value))) return Number(value);
+  }
+  return null;
+}
+
+function displayYield(value) {
+  return value == null ? 'Non disponible' : `${new Intl.NumberFormat('fr-FR').format(value)} kg/ha`;
+}
+
+function assessmentSourceLabel(source = {}) {
+  if (source.mode === 'hybrid' || source.mode === 'hybrid_partial') return 'Moteur local FresCoop + Teranga AI';
+  if (source.mode === 'local_offline') return 'Moteur local FresCoop — analyse hors connexion';
+  if (source.mode === 'local_fallback' || source.fallback_used) return 'Moteur local FresCoop — repli sécurisé sans pénalité Teranga AI';
+  return 'Moteur local FresCoop';
+}
+
+function AgronomicAssessmentCard({ projectAssessment, compact = false }) {
+  if (!projectAssessment) return null;
+  const { analysis, metrics, source, status } = assessmentMetrics(projectAssessment);
+  const declaredYield = metricNumber(metrics, projectAssessment, ['declared_yield', 'expected_yield']);
+  const terangaYield = metricNumber(metrics, projectAssessment, ['teranga_yield', 'predicted_yield_kg_ha']);
+  const retainedYield = metricNumber(metrics, projectAssessment, ['retained_yield']) ?? declaredYield;
+  const declaredRevenue = metricNumber(metrics, projectAssessment, ['declared_revenue', 'expected_revenue']);
+  const retainedRevenue = metricNumber(metrics, projectAssessment, ['retained_revenue']) ?? declaredRevenue;
+  const recommendations = analysis.details?.recommendations || analysis.recommendations || [];
+  const badgeClass = status === 'FEASIBLE' ? 'badge-success' : status === 'HUMAN_REVIEW' ? 'badge-error' : 'badge-warning';
+  return (
+    <div className="surface mb-4" style={{ borderLeft: `4px solid ${status === 'FEASIBLE' ? '#059669' : status === 'HUMAN_REVIEW' ? '#dc2626' : '#d97706'}` }}>
+      <div className="flex justify-between items-center" style={{ gap: 10, marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.4px' }}>Faisabilité agronomique persistée</div>
+          <div style={{ fontWeight: 700, marginTop: 3 }}>{assessmentSourceLabel(source)}</div>
+        </div>
+        {status && <span className={`badge ${badgeClass}`}>{status === 'FEASIBLE' ? 'Faisable' : status === 'ADJUST' ? 'À ajuster' : 'Revue humaine'}</span>}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${compact ? '125px' : '145px'}, 1fr))`, gap: 8 }}>
+        <div><div className="text-xs text-muted">Rendement</div><strong>{displayYield(declaredYield)}</strong></div>
+        <div><div className="text-xs text-muted">Rendement Teranga</div><strong>{displayYield(terangaYield)}</strong></div>
+        <div><div className="text-xs text-muted">Rendement retenu</div><strong>{displayYield(retainedYield)}</strong></div>
+        <div><div className="text-xs text-muted">Revenu déclaré</div><strong>{declaredRevenue == null ? '—' : formatCFA(declaredRevenue)}</strong></div>
+        <div><div className="text-xs text-muted">Revenu retenu</div><strong>{retainedRevenue == null ? '—' : formatCFA(retainedRevenue)}</strong></div>
+      </div>
+      {recommendations.length > 0 && (
+        <div className="text-xs" style={{ marginTop: 12 }}><strong>Recommandations :</strong> {recommendations.join(' · ')}</div>
+      )}
+      <div className="text-xs text-muted" style={{ marginTop: 10 }}>
+        {analysis.evaluated_at || projectAssessment.evaluated_at ? `Évalué le ${formatDateTime(analysis.evaluated_at || projectAssessment.evaluated_at)} · ` : ''}Avis explicable — décision finale humaine.
+      </div>
+    </div>
+  );
+}
+
+function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, onCheckBic }) {
   const totalRevenue = cashflow.reduce((s, e) => s + (e.revenue || 0), 0);
   const totalExpenses = cashflow.reduce((s, e) => s + (e.expenses || 0), 0);
   const totalDebt = cashflow.reduce((s, e) => s + (e.debt_payments || 0), 0);
@@ -341,6 +415,8 @@ function SummaryTab({ dossier, evidence, cashflow, bicData, onCheckBic }) {
           {' '}L’orientation reste explicable et la décision finale appartient au comité habilité.
         </div>
       </div>
+
+      <AgronomicAssessmentCard projectAssessment={projectAssessment} />
 
       {/* Score + Key metrics banner */}
       <div className={`summary-score-grid ${dossier.prequalification_score == null ? 'no-score' : ''}`}>
@@ -829,10 +905,11 @@ function StressTab({ stressTests, onRun }) {
   );
 }
 
-function PrequalTab({ dossier, ruleEvals, onEvaluate }) {
+function PrequalTab({ dossier, projectAssessment, ruleEvals, onEvaluate }) {
   const scoreVisual = scoreStyle(dossier.prequalification_score);
   const scoreDetails = parseScoreDetails(dossier.prequalification_score_details);
   const components = scoreDetails?.components;
+  const agronomicImpact = scoreDetails?.agronomic_impact;
 
   return (
     <div>
@@ -840,6 +917,27 @@ function PrequalTab({ dossier, ruleEvals, onEvaluate }) {
         <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600 }}>Préqualification</h2>
         <button className="btn btn-primary btn-sm" onClick={onEvaluate}><Play size={14} /> Évaluer les règles</button>
       </div>
+
+      <AgronomicAssessmentCard projectAssessment={projectAssessment} compact />
+
+      {agronomicImpact && (
+        <div className="surface mb-4" style={{ background: '#f8fafc' }}>
+          <div className="surface-title">Impact agronomique sur la capacité</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginTop: 12 }}>
+            <div><div className="text-xs text-muted">Capacité avec revenu déclaré</div><strong>{agronomicImpact.declared_capacity_ratio == null ? '—' : `${Number(agronomicImpact.declared_capacity_ratio).toFixed(2)}×`}</strong></div>
+            <div><div className="text-xs text-muted">Capacité avec Revenu retenu</div><strong>{agronomicImpact.retained_capacity_ratio == null ? '—' : `${Number(agronomicImpact.retained_capacity_ratio).toFixed(2)}×`}</strong></div>
+            <div><div className="text-xs text-muted">Capacité stressée déclarée</div><strong>{agronomicImpact.declared_stressed_capacity_ratio == null ? '—' : `${Number(agronomicImpact.declared_stressed_capacity_ratio).toFixed(2)}×`}</strong></div>
+            <div><div className="text-xs text-muted">Capacité stressée retenue</div><strong>{agronomicImpact.retained_stressed_capacity_ratio == null ? '—' : `${Number(agronomicImpact.retained_stressed_capacity_ratio).toFixed(2)}×`}</strong></div>
+          </div>
+          {(agronomicImpact.rule || agronomicImpact.explanation) && (
+            <div className="text-xs text-muted" style={{ marginTop: 12 }}>
+              {agronomicImpact.rule && <><strong>Règle :</strong> {agronomicImpact.rule} · </>}
+              {agronomicImpact.explanation}
+            </div>
+          )}
+          <div className="text-xs text-muted" style={{ marginTop: 8 }}>Teranga AI ne décide jamais seul d’un refus : tout écart impose une explication et, si nécessaire, une revue humaine.</div>
+        </div>
+      )}
 
       {dossier.prequalification_score != null && (
         <div className="surface mb-4" style={{ padding: 20 }}>

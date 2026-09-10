@@ -5,7 +5,13 @@ import { authMiddleware, tenantGuard, requireRole } from '../auth.js';
 import { logAudit } from './audit.js';
 import { normalizeGuarantors, validateDossierFields, validateGuarantors } from './dossiers.js';
 import { assessAgriculturalProject } from '../services/agriculturalAssessment.js';
+import { assessAgriculturalFeasibility } from '../services/agriculturalFeasibility.js';
+import {
+  agriculturalAssessmentStatement,
+  agriculturalFeasibilityRecord,
+} from '../services/agriculturalFeasibilityPersistence.js';
 import { buildFinancialCashflow } from '../services/financialCashflow.js';
+import { evaluateDossier } from '../services/prequalification.js';
 
 const router = Router();
 const VALID_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
@@ -166,6 +172,7 @@ async function processDossierOp(db, operation, entityId, payload, req) {
     });
     try {
       await syncDossierChildren(db, entityId, payload, guarantors, req);
+      await evaluateDossier(db, req.tenantId, entityId);
     } catch (error) {
       await cleanupOfflineDossier(db, entityId, req.tenantId);
       throw error;
@@ -198,6 +205,16 @@ async function processDossierOp(db, operation, entityId, payload, req) {
         args,
       });
     }
+    const derivedInputsChanged = payload.project_assessment !== undefined
+      || payload.input_items !== undefined
+      || payload.financial_summary !== undefined
+      || payload.declared_debts !== undefined
+      || payload.applicant_location !== undefined
+      || payload.amount_requested !== undefined;
+    if (derivedInputsChanged) {
+      await replaceDossierChildren(db, entityId, payload, req);
+    }
+    await evaluateDossier(db, req.tenantId, entityId);
     return;
   }
   throw new Error(`Opération dossier non prise en charge: ${operation}`);
@@ -211,36 +228,124 @@ async function cleanupOfflineDossier(db, dossierId, tenantId) {
   await db.execute({ sql: 'DELETE FROM dossiers WHERE id = ? AND tenant_id = ? AND created_offline = 1', args: [dossierId, tenantId] });
 }
 
+async function replaceDossierChildren(db, dossierId, payload, req) {
+  const [dossierResult, projectResult, inputsResult, debtsResult, cashflowResult, evidenceResult] = await Promise.all([
+    db.execute({ sql: 'SELECT * FROM dossiers WHERE id = ? AND tenant_id = ?', args: [dossierId, req.tenantId] }),
+    db.execute({ sql: 'SELECT * FROM agricultural_project_assessments WHERE dossier_id = ? AND tenant_id = ?', args: [dossierId, req.tenantId] }),
+    db.execute({ sql: 'SELECT * FROM agricultural_input_items WHERE dossier_id = ? AND tenant_id = ? ORDER BY created_at', args: [dossierId, req.tenantId] }),
+    db.execute({ sql: 'SELECT * FROM declared_debts WHERE dossier_id = ? AND tenant_id = ?', args: [dossierId, req.tenantId] }),
+    db.execute({ sql: 'SELECT * FROM cashflow_entries WHERE dossier_id = ? AND tenant_id = ? ORDER BY year, month', args: [dossierId, req.tenantId] }),
+    db.execute({ sql: 'SELECT * FROM evidence WHERE dossier_id = ? AND tenant_id = ?', args: [dossierId, req.tenantId] }),
+  ]);
+  const dossier = dossierResult.rows[0] || {};
+  const currentProject = projectResult.rows[0] || {};
+  const project = {
+    ...currentProject,
+    ...(payload.project_assessment || {}),
+    amount_requested: payload.amount_requested ?? dossier.amount_requested,
+  };
+  const inputItems = Array.isArray(payload.input_items) ? payload.input_items : inputsResult.rows;
+  const debts = Array.isArray(payload.declared_debts) ? payload.declared_debts : debtsResult.rows;
+  const assessment = assessAgriculturalProject(project, inputItems, evidenceResult.rows);
+  const analysis = await assessAgriculturalFeasibility({
+    project,
+    input_items: inputItems,
+    evidence: evidenceResult.rows,
+    context: { city: payload.applicant_location ?? dossier.applicant_location },
+  });
+  const feasibility = agriculturalFeasibilityRecord(analysis);
+
+  await db.execute({
+    sql: 'DELETE FROM agricultural_project_assessments WHERE dossier_id = ? AND tenant_id = ?',
+    args: [dossierId, req.tenantId],
+  });
+  if (payload.project_assessment || projectResult.rows[0]) {
+    await db.execute(agriculturalAssessmentStatement({
+      dossierId,
+      tenantId: req.tenantId,
+      project,
+      local: assessment,
+      analysis,
+      feasibility,
+      id: uuid(),
+    }));
+  }
+  if (Array.isArray(payload.input_items)) {
+    await db.execute({
+      sql: 'DELETE FROM agricultural_input_items WHERE dossier_id = ? AND tenant_id = ?',
+      args: [dossierId, req.tenantId],
+    });
+    for (const item of inputItems) {
+      const quantity = number(item.quantity);
+      const unitCost = number(item.unit_cost);
+      await db.execute({
+        sql: `INSERT INTO agricultural_input_items
+              (id, dossier_id, tenant_id, category, label, quantity, unit, unit_cost, total_cost, supplier, evidence_id)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [item.id || uuid(), dossierId, req.tenantId, item.category || 'autre', item.label || 'Intrant',
+          quantity, item.unit || null, unitCost, Math.round(quantity * unitCost), item.supplier || null,
+          item.evidence_id || null],
+      });
+    }
+  }
+  if (Array.isArray(payload.declared_debts)) {
+    await db.execute({
+      sql: 'DELETE FROM declared_debts WHERE dossier_id = ? AND tenant_id = ?',
+      args: [dossierId, req.tenantId],
+    });
+    for (const debt of debts) await insertDebt(db, dossierId, debt, req.tenantId);
+  }
+
+  const previousDetail = cashflowResult.rows
+    .map(entry => {
+      try { return JSON.parse(entry.revenue_detail || '{}'); } catch { return {}; }
+    })
+    .find(detail => detail.derived)?.financial_inputs || {};
+  const suppliedFinancial = payload.financial_summary || {};
+  const financial = {
+    ...previousDetail,
+    ...suppliedFinancial,
+    commerce_revenue: payload.revenue_commerce ?? suppliedFinancial.commerce_revenue ?? previousDetail.commerce_revenue,
+    commerce_revenue_frequency: payload.commerce_revenue_frequency ?? suppliedFinancial.commerce_revenue_frequency ?? previousDetail.commerce_revenue_frequency,
+    other_revenue: payload.revenue_other ?? suppliedFinancial.other_revenue ?? previousDetail.other_revenue,
+    other_revenue_frequency: payload.other_revenue_frequency ?? suppliedFinancial.other_revenue_frequency ?? previousDetail.other_revenue_frequency,
+    agricultural_expenses: payload.expenses_agriculture ?? suppliedFinancial.agricultural_expenses ?? previousDetail.agricultural_expenses,
+    household_expenses: payload.expenses_household ?? suppliedFinancial.household_expenses ?? previousDetail.household_expenses,
+    other_expenses: payload.expenses_other ?? suppliedFinancial.other_expenses ?? previousDetail.other_expenses,
+  };
+  const entries = buildFinancialCashflow(financial, {
+    ...project,
+    expected_revenue: assessment.metrics.expected_revenue,
+    declared_revenue: feasibility.declared_revenue,
+    retained_revenue: feasibility.retained_revenue,
+    revenue_adjustment: analysis.details?.metrics?.revenue_adjustment ?? null,
+  }, debts, payload.cashflow_year);
+  await replaceCashflow(db, dossierId, entries, req.tenantId);
+}
+
 async function syncDossierChildren(db, dossierId, payload, guarantors, req) {
   const project = { ...(payload.project_assessment || {}), amount_requested: payload.amount_requested };
   const inputItems = Array.isArray(payload.input_items) ? payload.input_items : [];
   const debts = Array.isArray(payload.declared_debts) ? payload.declared_debts : [];
   const evidence = Array.isArray(payload.initial_evidence) ? payload.initial_evidence : [];
   const assessment = assessAgriculturalProject(project, inputItems, evidence);
+  const feasibilityAnalysis = await assessAgriculturalFeasibility({
+    project,
+    input_items: inputItems,
+    evidence,
+    context: { city: payload.applicant_location },
+  });
+  const feasibility = agriculturalFeasibilityRecord(feasibilityAnalysis);
   if (payload.project_assessment) {
-    await db.execute({
-      sql: `INSERT INTO agricultural_project_assessments
-            (id, dossier_id, tenant_id, crop_code, crop_label, variety, crop_experience_years,
-             completed_campaigns, previous_campaign_result, project_surface_ha, land_access, agro_zone,
-             soil_type, soil_source, season, sowing_month, harvest_month, cultivation_mode, water_source,
-             water_reliability, expected_yield, expected_price, loss_percent, own_contribution, other_funding,
-             market_channel, expected_buyer, climate_risks, mitigations, adequacy_status, viability_status,
-             confidence_level, orientation, calculated_metrics, findings, rules_version, evaluated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-      args: [uuid(), dossierId, req.tenantId, project.crop_code || null, project.crop_label || null,
-        project.variety || null, number(project.crop_experience_years), number(project.completed_campaigns),
-        project.previous_campaign_result || null, number(project.project_surface_ha), project.land_access || null,
-        project.agro_zone || null, project.soil_type || null, project.soil_source || null, project.season || null,
-        project.sowing_month || null, project.harvest_month || null, project.cultivation_mode || null,
-        project.water_source || null, project.water_reliability || null, number(project.expected_yield),
-        number(project.expected_price), number(project.loss_percent), number(project.own_contribution),
-        number(project.other_funding), project.market_channel || null, project.expected_buyer || null,
-        JSON.stringify(project.climate_risks || []), JSON.stringify(project.mitigations || []),
-        assessment.adequacy_status, assessment.viability_status, assessment.confidence_level,
-        assessment.orientation, JSON.stringify(assessment.metrics), JSON.stringify(assessment.findings),
-        assessment.rules_version],
-    });
+    await db.execute(agriculturalAssessmentStatement({
+      dossierId,
+      tenantId: req.tenantId,
+      project,
+      local: assessment,
+      analysis: feasibilityAnalysis,
+      feasibility,
+      id: uuid(),
+    }));
   }
   for (const item of inputItems) {
     const quantity = number(item.quantity);
@@ -280,6 +385,9 @@ async function syncDossierChildren(db, dossierId, payload, guarantors, req) {
   const entries = buildFinancialCashflow(financial, {
     ...project,
     expected_revenue: assessment.metrics.expected_revenue,
+    declared_revenue: feasibility.declared_revenue,
+    retained_revenue: feasibility.retained_revenue,
+    revenue_adjustment: feasibilityAnalysis.details?.metrics?.revenue_adjustment ?? null,
   }, debts, payload.cashflow_year);
   await replaceCashflow(db, dossierId, entries, req.tenantId);
 }

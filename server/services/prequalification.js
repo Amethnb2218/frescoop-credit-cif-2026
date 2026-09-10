@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { hasBicConsent } from './dossierAccess.js';
 
-export const SCORE_VERSION = 3;
+export const SCORE_VERSION = 4;
 
 const EVIDENCE_WEIGHTS = { A: 1, B: 0.75, C: 0.4, D: 0.1 };
 const RISK_PENALTIES = { low: 3, medium: 5, high: 8, critical: 20 };
@@ -10,7 +10,79 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-export function buildEvaluationContext(dossier, cashflow = [], evidence = [], bicRecords = []) {
+function numberOrNull(value) {
+  if (value === '' || value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function parseJsonObject(value) {
+  if (value && typeof value === 'object') return value;
+  try {
+    const parsed = JSON.parse(value || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildAgronomicContext(project = null, cashflow = []) {
+  const analysis = parseJsonObject(project?.feasibility_analysis);
+  const metrics = analysis.metrics || analysis.details?.metrics || {};
+  const declaredRevenue = numberOrNull(project?.declared_revenue ?? metrics.declared_revenue);
+  const retainedRevenue = numberOrNull(project?.retained_revenue ?? metrics.retained_revenue);
+  const declaredYield = numberOrNull(project?.expected_yield ?? metrics.declared_yield);
+  const terangaYield = numberOrNull(project?.teranga_yield ?? metrics.teranga_yield);
+  const retainedYield = numberOrNull(project?.retained_yield ?? metrics.retained_yield);
+  const status = project?.feasibility_status || analysis.status || null;
+  const sourceMode = project?.feasibility_mode || analysis.source?.mode || null;
+  const fallbackUsed = Boolean(analysis.source?.fallback_used)
+    || ['local', 'local_offline', 'local_fallback'].includes(sourceMode);
+  const agricultureByEntry = cashflow.map(entry => {
+    const detail = parseJsonObject(entry.revenue_detail);
+    return Number(detail.agriculture || 0);
+  });
+  const retainedAgriculture = agricultureByEntry.reduce((sum, amount) => sum + amount, 0);
+  const revenueDelta = declaredRevenue != null && retainedRevenue != null
+    ? Math.max(declaredRevenue - retainedRevenue, 0)
+    : 0;
+  let declaredCashflow = cashflow;
+  if (revenueDelta > 0 && cashflow.length > 0) {
+    if (retainedAgriculture > 0) {
+      declaredCashflow = cashflow.map((entry, index) => ({
+        ...entry,
+        revenue: Number(entry.revenue || 0)
+          + revenueDelta * (agricultureByEntry[index] / retainedAgriculture),
+      }));
+    } else {
+      const harvestIndex = cashflow.reduce(
+        (best, entry, index, entries) => Number(entry.revenue || 0) > Number(entries[best].revenue || 0) ? index : best,
+        0,
+      );
+      declaredCashflow = cashflow.map((entry, index) => index === harvestIndex
+        ? { ...entry, revenue: Number(entry.revenue || 0) + revenueDelta }
+        : entry);
+    }
+  }
+
+  return {
+    status,
+    sourceMode,
+    fallbackUsed,
+    declaredYield,
+    terangaYield,
+    retainedYield,
+    declaredRevenue,
+    retainedRevenue,
+    revenueDelta,
+    declaredCashflow,
+    terangaAdjusted: terangaYield != null && retainedRevenue != null && declaredRevenue != null
+      && retainedRevenue < declaredRevenue && !fallbackUsed,
+  };
+}
+
+export function buildEvaluationContext(dossier, cashflow = [], evidence = [], bicRecords = [], agriculturalProject = null) {
+  const agronomic = buildAgronomicContext(agriculturalProject, cashflow);
   const totalRevenue = cashflow.reduce((sum, entry) => sum + Number(entry.revenue || 0), 0);
   const totalExpenses = cashflow.reduce((sum, entry) => sum + Number(entry.expenses || 0), 0);
   const totalDebt = cashflow.reduce((sum, entry) => sum + Number(entry.debt_payments || 0), 0);
@@ -39,6 +111,22 @@ export function buildEvaluationContext(dossier, cashflow = [], evidence = [], bi
   }));
   const seasonalCoverage = calculateScheduleCoverage(cashflow, repaymentSchedule);
   const stressedSeasonalCoverage = calculateScheduleCoverage(stressedCashflow, repaymentSchedule);
+  const declaredStressedCashflow = agronomic.declaredCashflow.map(entry => ({
+    ...entry,
+    revenue: Number(entry.revenue || 0) * 0.8,
+  }));
+  const declaredTotalRevenue = agronomic.declaredCashflow.reduce(
+    (sum, entry) => sum + Number(entry.revenue || 0),
+    0,
+  );
+  const declaredNetFlow = declaredTotalRevenue - totalExpenses - totalDebt;
+  const declaredAverageMonthlyNet = cashflowMonths > 0 ? declaredNetFlow / cashflowMonths : 0;
+  const declaredStressedNetFlow = declaredTotalRevenue * 0.8 - totalExpenses - totalDebt;
+  const declaredStressedAverageMonthlyNet = cashflowMonths > 0
+    ? declaredStressedNetFlow / cashflowMonths
+    : 0;
+  const declaredSeasonalCoverage = calculateScheduleCoverage(agronomic.declaredCashflow, repaymentSchedule);
+  const declaredStressedSeasonalCoverage = calculateScheduleCoverage(declaredStressedCashflow, repaymentSchedule);
   const evidenceCounts = { A: 0, B: 0, C: 0, D: 0 };
   evidence.forEach(item => {
     if (item.verification_level in evidenceCounts) evidenceCounts[item.verification_level] += 1;
@@ -58,6 +146,12 @@ export function buildEvaluationContext(dossier, cashflow = [], evidence = [], bi
     repaymentSchedule,
     seasonalCoverage,
     stressedSeasonalCoverage,
+    declaredTotalRevenue,
+    declaredAverageMonthlyNet,
+    declaredStressedAverageMonthlyNet,
+    declaredSeasonalCoverage,
+    declaredStressedSeasonalCoverage,
+    agronomic,
     monthsWithRevenue: cashflow.filter(entry => Number(entry.revenue) > 0).length,
     amountRequested,
     durationMonths,
@@ -152,6 +246,22 @@ export function calculateStressedCapacityRatio(context) {
   return context.stressedAverageMonthlyNet / context.monthlyPayment;
 }
 
+export function calculateDeclaredCapacityRatio(context) {
+  if (context.scheduleType !== 'MONTHLY' && context.declaredSeasonalCoverage?.ratio != null) {
+    return context.declaredSeasonalCoverage.ratio;
+  }
+  if (!context.hasCashflow || context.monthlyPayment <= 0 || context.cashflowMonths <= 0) return null;
+  return context.declaredAverageMonthlyNet / context.monthlyPayment;
+}
+
+export function calculateDeclaredStressedCapacityRatio(context) {
+  if (context.scheduleType !== 'MONTHLY' && context.declaredStressedSeasonalCoverage?.ratio != null) {
+    return context.declaredStressedSeasonalCoverage.ratio;
+  }
+  if (!context.hasCashflow || context.monthlyPayment <= 0 || context.cashflowMonths <= 0) return null;
+  return context.declaredStressedAverageMonthlyNet / context.monthlyPayment;
+}
+
 export function classifyRepaymentCapacity(ratio) {
   if (ratio == null || !Number.isFinite(ratio)) return 'UNKNOWN';
   if (ratio >= 1.3) return 'SUFFICIENT';
@@ -177,11 +287,20 @@ export function evaluateRule(rule, context, capacityRatio = calculateCapacityRat
     return { triggered: !context.hasCashflow, explanation: 'Aucun flux de trésorerie renseigné' };
   }
   if (expr === 'CAPACITY_INSUFFICIENT') {
+    const declaredRatio = calculateDeclaredCapacityRatio(context);
+    const terangaOnlyShortfall = context.agronomic.terangaAdjusted
+      && declaredRatio != null
+      && declaredRatio >= 1
+      && capacityRatio != null
+      && capacityRatio < 1;
     return {
-      triggered: capacityRatio != null && capacityRatio < 1,
+      triggered: capacityRatio != null && capacityRatio < 1 && !terangaOnlyShortfall,
+      neutralized: terangaOnlyShortfall,
       explanation: capacityRatio == null
         ? 'Capacité non calculable — données insuffisantes'
-        : `Flux net insuffisant pour couvrir l'échéance (ratio: ${capacityRatio.toFixed(2)})`,
+        : terangaOnlyShortfall
+          ? `Refus automatique neutralisé : capacité déclarée ${declaredRatio.toFixed(2)}, capacité retenue ${capacityRatio.toFixed(2)} — revue agronomique humaine requise`
+          : `Flux net insuffisant pour couvrir l'échéance (ratio: ${capacityRatio.toFixed(2)})`,
     };
   }
   if (expr === 'CAPACITY_STRESSED') {
@@ -191,6 +310,24 @@ export function evaluateRule(rule, context, capacityRatio = calculateCapacityRat
       explanation: ratio == null
         ? 'Capacité stressée non calculable — données insuffisantes'
         : `Capacité insuffisante sous scénario prudent -20% (ratio: ${ratio.toFixed(2)})`,
+    };
+  }
+  if (expr === 'AGRONOMIC_ADJUSTMENT') {
+    const triggered = context.agronomic.status === 'ADJUST' && !context.agronomic.fallbackUsed;
+    return {
+      triggered,
+      explanation: triggered
+        ? 'Rendement ajusté par le signal Teranga — revue agronomique humaine requise'
+        : 'Aucun ajustement agronomique Teranga nécessitant une revue',
+    };
+  }
+  if (expr === 'AGRONOMIC_HUMAN_REVIEW') {
+    const triggered = context.agronomic.status === 'HUMAN_REVIEW' && !context.agronomic.fallbackUsed;
+    return {
+      triggered,
+      explanation: triggered
+        ? 'Signaux agronomiques divergents ou sensibles — décision humaine obligatoire'
+        : 'Aucun signal Teranga imposant une revue humaine',
     };
   }
   if (expr === 'HIGH_EXISTING_DEBT') {
@@ -288,9 +425,11 @@ export function computePrequalificationScore(context, evaluations, prequalificat
 }
 
 export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords, rules, agriculturalProject = null, agriculturalInputs = []) {
-  const context = buildEvaluationContext(dossier, cashflow, evidence, bicRecords);
+  const context = buildEvaluationContext(dossier, cashflow, evidence, bicRecords, agriculturalProject);
   const capacityRatio = calculateCapacityRatio(context);
   const stressedCapacityRatio = calculateStressedCapacityRatio(context);
+  const declaredCapacityRatio = calculateDeclaredCapacityRatio(context);
+  const declaredStressedCapacityRatio = calculateDeclaredStressedCapacityRatio(context);
   const repaymentCapacity = classifyRepaymentCapacity(capacityRatio);
   const evidenceConfidence = calculateEvidenceConfidence(context);
   const evaluations = [...rules]
@@ -340,9 +479,53 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
           message: 'Non calculé — données insuffisantes',
         },
       };
+  const agronomicRuleCodes = evaluations
+    .filter(item => item.triggered && ['AGRONOMIC_ADJUSTMENT', 'AGRONOMIC_HUMAN_REVIEW'].includes(
+      rules.find(rule => rule.id === item.rule_id)?.condition_expr,
+    ))
+    .map(item => item.rule_code);
+  const capacityRule = evaluations.find(item => item.rule_code === 'RULE-CAP-001');
+  const agronomicImpact = {
+    status: context.agronomic.status,
+    source_mode: context.agronomic.sourceMode,
+    fallback_used: context.agronomic.fallbackUsed,
+    declared_yield: context.agronomic.declaredYield,
+    teranga_yield: context.agronomic.terangaYield,
+    retained_yield: context.agronomic.retainedYield,
+    declared_revenue: context.agronomic.declaredRevenue,
+    retained_revenue: context.agronomic.retainedRevenue,
+    revenue_adjustment: context.agronomic.revenueDelta,
+    declared_capacity_ratio: declaredCapacityRatio == null ? null : Number(declaredCapacityRatio.toFixed(4)),
+    retained_capacity_ratio: capacityRatio == null ? null : Number(capacityRatio.toFixed(4)),
+    declared_stressed_capacity_ratio: declaredStressedCapacityRatio == null
+      ? null
+      : Number(declaredStressedCapacityRatio.toFixed(4)),
+    retained_stressed_capacity_ratio: stressedCapacityRatio == null
+      ? null
+      : Number(stressedCapacityRatio.toFixed(4)),
+    teranga_adjusted: context.agronomic.terangaAdjusted,
+    capacity_rule_neutralized: Boolean(capacityRule?.neutralized),
+    review_rules: agronomicRuleCodes,
+    explanation: context.agronomic.fallbackUsed
+      ? 'Repli local FresCoop : aucune pénalité liée à l’indisponibilité de Teranga.'
+      : capacityRule?.neutralized
+        ? 'La baisse issue de Teranga impose une revue humaine sans refus automatique.'
+        : context.agronomic.terangaAdjusted
+          ? 'Le score utilise le Revenu retenu ; les valeurs déclarées restent visibles pour la décision humaine.'
+          : 'Aucun ajustement Teranga ne modifie la capacité de remboursement.',
+  };
   const details = {
     ...scoring.details,
+    declared_capacity_ratio: declaredCapacityRatio == null ? null : Number(declaredCapacityRatio.toFixed(4)),
+    retained_capacity_ratio: capacityRatio == null ? null : Number(capacityRatio.toFixed(4)),
     stressed_capacity_ratio: stressedCapacityRatio == null ? null : Number(stressedCapacityRatio.toFixed(4)),
+    declared_stressed_capacity_ratio: declaredStressedCapacityRatio == null
+      ? null
+      : Number(declaredStressedCapacityRatio.toFixed(4)),
+    retained_stressed_capacity_ratio: stressedCapacityRatio == null
+      ? null
+      : Number(stressedCapacityRatio.toFixed(4)),
+    agronomic_impact: agronomicImpact,
     average_monthly_net: context.hasCashflow ? Math.round(context.averageMonthlyNet) : null,
     stressed_average_monthly_net: context.hasCashflow ? Math.round(context.stressedAverageMonthlyNet) : null,
     proposed_monthly_payment: context.monthlyPayment || null,

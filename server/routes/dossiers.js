@@ -4,7 +4,12 @@ import { authMiddleware, tenantGuard, requireRole } from '../auth.js';
 import { logAudit } from './audit.js';
 import { assessAgriculturalProject } from '../services/agriculturalAssessment.js';
 import { assessAgriculturalFeasibility } from '../services/agriculturalFeasibility.js';
+import {
+  agriculturalAssessmentStatement,
+  agriculturalFeasibilityRecord,
+} from '../services/agriculturalFeasibilityPersistence.js';
 import { buildFinancialCashflow } from '../services/financialCashflow.js';
+import { evaluateDossier } from '../services/prequalification.js';
 import { findAccessibleDossier, isEditableDraft, scoreInvalidationStatement } from '../services/dossierAccess.js';
 
 const router = Router();
@@ -245,6 +250,13 @@ router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR'
     const declaredDebts = Array.isArray(data.declared_debts) ? data.declared_debts : [];
     const initialEvidence = Array.isArray(data.initial_evidence) ? data.initial_evidence : [];
     const agriculturalResult = assessAgriculturalProject(projectData, inputItems, initialEvidence);
+    const feasibilityAnalysis = await assessAgriculturalFeasibility({
+      project: projectData,
+      input_items: inputItems,
+      evidence: initialEvidence,
+      context: { city: data.applicant_location },
+    });
+    const feasibility = agriculturalFeasibilityRecord(feasibilityAnalysis);
     const statements = [{
       sql: `INSERT INTO dossiers (id, tenant_id, local_id, agent_id, status,
             applicant_name, applicant_phone, applicant_id_number, applicant_location, applicant_activity,
@@ -268,32 +280,15 @@ router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR'
     }];
 
     if (data.project_assessment) {
-      const p = projectData;
-      statements.push({
-        sql: `INSERT INTO agricultural_project_assessments (
-          id, dossier_id, tenant_id, crop_code, crop_label, variety, crop_experience_years,
-          completed_campaigns, previous_campaign_result, project_surface_ha, land_access,
-          agro_zone, soil_type, soil_source, season, sowing_month, harvest_month,
-          cultivation_mode, water_source, water_reliability, expected_yield, expected_price,
-          loss_percent, own_contribution, other_funding, market_channel, expected_buyer,
-          climate_risks, mitigations, adequacy_status, viability_status, confidence_level,
-          orientation, calculated_metrics, findings, rules_version, evaluated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-        args: [
-          uuid(), id, req.tenantId, p.crop_code || null, p.crop_label || null, p.variety || null,
-          amount(p.crop_experience_years), amount(p.completed_campaigns), p.previous_campaign_result || null,
-          amount(p.project_surface_ha), p.land_access || null, p.agro_zone || null, p.soil_type || null,
-          p.soil_source || null, p.season || null, p.sowing_month || null, p.harvest_month || null,
-          p.cultivation_mode || null, p.water_source || null, p.water_reliability || null,
-          amount(p.expected_yield), amount(p.expected_price), amount(p.loss_percent),
-          amount(p.own_contribution), amount(p.other_funding), p.market_channel || null,
-          p.expected_buyer || null, json(p.climate_risks, []), json(p.mitigations, []),
-          agriculturalResult.adequacy_status, agriculturalResult.viability_status,
-          agriculturalResult.confidence_level, agriculturalResult.orientation,
-          json(agriculturalResult.metrics, {}), json(agriculturalResult.findings, []),
-          agriculturalResult.rules_version,
-        ],
-      });
+      statements.push(agriculturalAssessmentStatement({
+        dossierId: id,
+        tenantId: req.tenantId,
+        project: projectData,
+        local: agriculturalResult,
+        analysis: feasibilityAnalysis,
+        feasibility,
+        id: uuid(),
+      }));
     }
 
     for (const item of inputItems) {
@@ -353,6 +348,9 @@ router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR'
     const projectForCashflow = {
       ...projectData,
       expected_revenue: agriculturalResult.metrics.expected_revenue,
+      declared_revenue: feasibility.declared_revenue,
+      retained_revenue: feasibility.retained_revenue,
+      revenue_adjustment: feasibilityAnalysis.details?.metrics?.revenue_adjustment ?? null,
     };
     const legacyFinancial = {
       commerce_revenue: data.revenue_commerce,
@@ -381,9 +379,21 @@ router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR'
     }
 
     await db.batch(statements, 'write');
+    const evaluation = await evaluateDossier(db, req.tenantId, id);
 
-    await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, 'DOSSIER_CREATED', 'dossier', id, { applicant: data.applicant_name }, req);
-    res.json({ ok: true, id });
+    await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, 'DOSSIER_CREATED', 'dossier', id, {
+      applicant: data.applicant_name,
+      feasibility_status: feasibility.feasibility_status,
+      prequalification: evaluation?.prequalification || null,
+      score: evaluation?.score ?? null,
+    }, req);
+    res.json({
+      ok: true,
+      id,
+      feasibility: feasibilityAnalysis,
+      prequalification: evaluation?.prequalification || null,
+      score: evaluation?.score ?? null,
+    });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur', detail: err.message });
   }
@@ -405,6 +415,17 @@ router.put('/:id', authMiddleware, tenantGuard,
     const validationError = validateDossierFields(data, true);
     if (validationError) return res.status(400).json({ error: validationError });
     if (data.applicant_id_number !== undefined) data.applicant_id_number = normalizeIdNumber(data.applicant_id_number);
+    const projectProvided = data.project_assessment !== undefined;
+    const inputItemsProvided = data.input_items !== undefined;
+    const debtsProvided = data.declared_debts !== undefined;
+    if (debtsProvided && !Array.isArray(data.declared_debts)) {
+      return res.status(400).json({ error: 'Les dettes déclarées doivent être une liste.' });
+    }
+    const financialProvided = data.financial_summary !== undefined || [
+      'revenue_commerce', 'commerce_revenue_frequency', 'revenue_frequency', 'revenue_other',
+      'other_revenue_frequency', 'expenses_agriculture', 'expenses_household', 'expenses_other',
+      'cashflow_year',
+    ].some(field => data[field] !== undefined);
     const guarantorsProvided = data.guarantors !== undefined || data.third_party_guarantor !== undefined
       || data.third_party_commitment !== undefined || Object.keys(data).some(key => key.startsWith('guarantor_'));
     const guarantors = guarantorsProvided ? normalizeGuarantors(data) : [];
@@ -429,7 +450,8 @@ router.put('/:id', authMiddleware, tenantGuard,
       }
     }
 
-    if (updates.length === 0 && !guarantorsProvided) return res.json({ ok: true, id });
+    if (updates.length === 0 && !guarantorsProvided && !projectProvided
+      && !inputItemsProvided && !financialProvided && !debtsProvided) return res.json({ ok: true, id });
 
     const statements = [];
     if (updates.length > 0) {
@@ -457,11 +479,151 @@ router.put('/:id', authMiddleware, tenantGuard,
         });
       }
     }
+    let recalculatedProject = null;
+    let recalculatedAnalysis = null;
+    const agronomicInputsChanged = projectProvided || inputItemsProvided
+      || data.applicant_location !== undefined || data.amount_requested !== undefined;
+    const cashflowInputsChanged = agronomicInputsChanged || financialProvided || debtsProvided;
+    if (agronomicInputsChanged) {
+      const [projectResult, inputsResult, evidenceResult] = await Promise.all([
+        db.execute({ sql: 'SELECT * FROM agricultural_project_assessments WHERE dossier_id = ? AND tenant_id = ?', args: [id, req.tenantId] }),
+        db.execute({ sql: 'SELECT * FROM agricultural_input_items WHERE dossier_id = ? AND tenant_id = ? ORDER BY created_at', args: [id, req.tenantId] }),
+        db.execute({ sql: 'SELECT * FROM evidence WHERE dossier_id = ? AND tenant_id = ?', args: [id, req.tenantId] }),
+      ]);
+      const currentProject = projectResult.rows[0] || {};
+      const projectData = {
+        ...currentProject,
+        ...(projectProvided ? data.project_assessment : {}),
+        amount_requested: data.amount_requested ?? dossier.amount_requested,
+      };
+      const inputItems = inputItemsProvided && Array.isArray(data.input_items)
+        ? data.input_items
+        : inputsResult.rows;
+      const local = assessAgriculturalProject(projectData, inputItems, evidenceResult.rows);
+      const analysis = await assessAgriculturalFeasibility({
+        project: projectData,
+        input_items: inputItems,
+        evidence: evidenceResult.rows,
+        context: { city: data.applicant_location ?? dossier.applicant_location },
+      });
+      recalculatedProject = projectData;
+      recalculatedAnalysis = analysis;
+      statements.push({
+        sql: 'DELETE FROM agricultural_project_assessments WHERE dossier_id = ? AND tenant_id = ?',
+        args: [id, req.tenantId],
+      });
+      if (projectProvided || projectResult.rows[0]) {
+        statements.push(agriculturalAssessmentStatement({
+          dossierId: id,
+          tenantId: req.tenantId,
+          project: projectData,
+          local,
+          analysis,
+          id: uuid(),
+        }));
+      }
+      if (inputItemsProvided) {
+        statements.push({
+          sql: 'DELETE FROM agricultural_input_items WHERE dossier_id = ? AND tenant_id = ?',
+          args: [id, req.tenantId],
+        });
+        for (const item of inputItems) {
+          const quantity = amount(item.quantity);
+          const unitCost = amount(item.unit_cost);
+          statements.push({
+            sql: `INSERT INTO agricultural_input_items
+                  (id, dossier_id, tenant_id, category, label, quantity, unit, unit_cost, total_cost, supplier, evidence_id)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            args: [item.id || uuid(), id, req.tenantId, item.category || 'autre', item.label || 'Intrant',
+              quantity, item.unit || null, unitCost, Math.round(quantity * unitCost), item.supplier || null,
+              item.evidence_id || null],
+          });
+        }
+      }
+    }
+
+    if (cashflowInputsChanged) {
+      const [projectResult, debtsResult, cashflowResult] = await Promise.all([
+        db.execute({ sql: 'SELECT * FROM agricultural_project_assessments WHERE dossier_id = ? AND tenant_id = ?', args: [id, req.tenantId] }),
+        db.execute({ sql: 'SELECT * FROM declared_debts WHERE dossier_id = ? AND tenant_id = ?', args: [id, req.tenantId] }),
+        db.execute({ sql: 'SELECT * FROM cashflow_entries WHERE dossier_id = ? AND tenant_id = ? ORDER BY year, month', args: [id, req.tenantId] }),
+      ]);
+      const project = recalculatedProject || projectResult.rows[0] || {};
+      const analysis = recalculatedAnalysis;
+      const metrics = analysis?.details?.metrics || {};
+      const projectForCashflow = {
+        ...project,
+        declared_revenue: metrics.declared_revenue ?? project.declared_revenue,
+        retained_revenue: metrics.retained_revenue ?? project.retained_revenue,
+        revenue_adjustment: metrics.revenue_adjustment
+          ?? (project.declared_revenue != null && project.retained_revenue != null
+            ? Number(project.retained_revenue) - Number(project.declared_revenue)
+            : null),
+      };
+      const previousDetail = cashflowResult.rows
+        .map(entry => {
+          try { return JSON.parse(entry.revenue_detail || '{}'); } catch { return {}; }
+        })
+        .find(detail => detail.derived)?.financial_inputs || {};
+      const financial = {
+        ...previousDetail,
+        commerce_revenue: data.revenue_commerce ?? data.financial_summary?.commerce_revenue ?? previousDetail.commerce_revenue,
+        commerce_revenue_frequency: data.commerce_revenue_frequency ?? data.financial_summary?.commerce_revenue_frequency ?? previousDetail.commerce_revenue_frequency,
+        other_revenue: data.revenue_other ?? data.financial_summary?.other_revenue ?? previousDetail.other_revenue,
+        other_revenue_frequency: data.other_revenue_frequency ?? data.financial_summary?.other_revenue_frequency ?? previousDetail.other_revenue_frequency,
+        agricultural_expenses: data.expenses_agriculture ?? data.financial_summary?.agricultural_expenses ?? previousDetail.agricultural_expenses,
+        household_expenses: data.expenses_household ?? data.financial_summary?.household_expenses ?? previousDetail.household_expenses,
+        other_expenses: data.expenses_other ?? data.financial_summary?.other_expenses ?? previousDetail.other_expenses,
+      };
+      const debts = debtsProvided ? data.declared_debts : debtsResult.rows;
+      const entries = buildFinancialCashflow(financial, projectForCashflow, debts, data.cashflow_year);
+      if (debtsProvided) {
+        statements.push({
+          sql: 'DELETE FROM declared_debts WHERE dossier_id = ? AND tenant_id = ?',
+          args: [id, req.tenantId],
+        });
+        for (const debt of debts) {
+          statements.push({
+            sql: `INSERT INTO declared_debts
+                  (id, dossier_id, tenant_id, institution, credit_type, source, initial_amount,
+                   outstanding, periodic_payment, frequency, start_date, end_date, status,
+                   days_late, purpose, reference, evidence_id, consent_given, agent_comment)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            args: [debt.id || uuid(), id, req.tenantId, debt.institution || null, debt.credit_type || null,
+              ['DECLAREE', 'INTERNE', 'BIC'].includes(debt.source) ? debt.source : 'DECLAREE',
+              amount(debt.initial_amount), amount(debt.outstanding), amount(debt.periodic_payment ?? debt.monthly_payment),
+              debt.frequency || 'mensuel', debt.start_date || null, debt.end_date || null,
+              debt.status || 'en_cours', amount(debt.days_late), debt.purpose || null,
+              debt.reference || null, debt.evidence_id || null, debt.consent_given ? 1 : 0,
+              debt.agent_comment || null],
+          });
+        }
+      }
+      statements.push({
+        sql: 'DELETE FROM cashflow_entries WHERE dossier_id = ? AND tenant_id = ?',
+        args: [id, req.tenantId],
+      });
+      for (const entry of entries) {
+        statements.push({
+          sql: `INSERT INTO cashflow_entries
+                (id, dossier_id, tenant_id, month, year, revenue, revenue_detail, expenses, expenses_detail, debt_payments)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [uuid(), id, req.tenantId, entry.month, entry.year, entry.revenue,
+            json(entry.revenue_detail, {}), entry.expenses, json(entry.expenses_detail, {}), entry.debt_payments],
+        });
+      }
+    }
+
     statements.push(scoreInvalidationStatement(id, req.tenantId));
     await db.batch(statements, 'write');
+    const evaluation = await evaluateDossier(db, req.tenantId, id);
 
-    await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, 'DOSSIER_UPDATED', 'dossier', id, { fields: Object.keys(req.body) }, req);
-    res.json({ ok: true, id });
+    await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, 'DOSSIER_UPDATED', 'dossier', id, {
+      fields: Object.keys(req.body),
+      prequalification: evaluation?.prequalification || null,
+      score: evaluation?.score ?? null,
+    }, req);
+    res.json({ ok: true, id, prequalification: evaluation?.prequalification || null, score: evaluation?.score ?? null });
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });
   }

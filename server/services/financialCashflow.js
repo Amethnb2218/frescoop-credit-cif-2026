@@ -22,15 +22,43 @@ export function annualizeRevenue(value, frequency, field = 'revenu') {
   return nonNegative(value, field) * ANNUAL_MULTIPLIERS[normalized];
 }
 
+function revenueAdjustment(declared, retained) {
+  const declaredValue = Number(declared);
+  const retainedValue = Number(retained);
+  return Number.isFinite(declaredValue) && Number.isFinite(retainedValue)
+    ? retainedValue - declaredValue
+    : null;
+}
+
+function agriculturalRevenue(projectAssessment) {
+  const metrics = projectAssessment.calculated_metrics || projectAssessment.details?.metrics || {};
+  if (projectAssessment.retained_revenue != null) return {
+    value: projectAssessment.retained_revenue,
+    source: 'retained_revenue',
+    declared: projectAssessment.declared_revenue ?? metrics.declared_revenue,
+    retained: projectAssessment.retained_revenue,
+    adjustment: projectAssessment.revenue_adjustment ?? metrics.revenue_adjustment
+      ?? revenueAdjustment(projectAssessment.declared_revenue ?? metrics.declared_revenue, projectAssessment.retained_revenue),
+  };
+  if (metrics.retained_revenue != null) return {
+    value: metrics.retained_revenue,
+    source: 'retained_revenue',
+    declared: projectAssessment.declared_revenue ?? metrics.declared_revenue,
+    retained: metrics.retained_revenue,
+    adjustment: projectAssessment.revenue_adjustment ?? metrics.revenue_adjustment
+      ?? revenueAdjustment(projectAssessment.declared_revenue ?? metrics.declared_revenue, metrics.retained_revenue),
+  };
+  const legacy = projectAssessment.expected_revenue ?? metrics.expected_revenue;
+  return { value: legacy, source: 'project_assessment', declared: null, retained: null, adjustment: null };
+}
+
 export function buildFinancialCashflow(financialSummary = {}, projectAssessment = {}, declaredDebts = [], year = 2026) {
   const commerceFrequency = financialSummary.commerce_revenue_frequency || 'mensuel';
   const otherFrequency = financialSummary.other_revenue_frequency || 'mensuel';
   const annualCommerce = annualizeRevenue(financialSummary.commerce_revenue, commerceFrequency, 'revenu commerce');
   const annualOther = annualizeRevenue(financialSummary.other_revenue, otherFrequency, 'autres revenus');
-  const annualAgriculture = nonNegative(
-    projectAssessment.expected_revenue ?? projectAssessment.calculated_metrics?.expected_revenue,
-    'revenu agricole attendu',
-  );
+  const agricultureRevenue = agriculturalRevenue(projectAssessment);
+  const annualAgriculture = nonNegative(agricultureRevenue.value, 'revenu agricole attendu');
   const agriculturalExpenses = nonNegative(financialSummary.agricultural_expenses, 'charges agricoles');
   const householdExpenses = nonNegative(financialSummary.household_expenses, 'charges du ménage')
     + nonNegative(financialSummary.other_expenses, 'anciennes autres charges');
@@ -61,7 +89,21 @@ export function buildFinancialCashflow(financialSummary = {}, projectAssessment 
         other,
         commerce_frequency: commerceFrequency,
         other_frequency: otherFrequency,
-        agriculture_source: 'project_assessment',
+        agriculture_source: agricultureRevenue.source,
+        agriculture_audit: {
+          declared_revenue: agricultureRevenue.declared,
+          retained_revenue: agricultureRevenue.retained,
+          revenue_adjustment: agricultureRevenue.adjustment,
+        },
+        financial_inputs: {
+          commerce_revenue: nonNegative(financialSummary.commerce_revenue, 'revenu commerce'),
+          commerce_revenue_frequency: commerceFrequency,
+          other_revenue: nonNegative(financialSummary.other_revenue, 'autres revenus'),
+          other_revenue_frequency: otherFrequency,
+          agricultural_expenses: agriculturalExpenses,
+          household_expenses: nonNegative(financialSummary.household_expenses, 'charges du ménage'),
+          other_expenses: nonNegative(financialSummary.other_expenses, 'anciennes autres charges'),
+        },
         derived: true,
       },
       expenses: Math.round(monthlyExpenses),

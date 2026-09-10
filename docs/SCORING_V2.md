@@ -1,10 +1,12 @@
-# Moteur de scoring technique v3
+# Moteur de scoring technique v4
 
 ## Pourquoi les scores étaient tous à 25
 
 L'ancien moteur calculait un score variable, puis appliquait `Math.min(score, 25)` dès qu'une règle bloquante était déclenchée. Les dossiers non éligibles finissaient donc presque tous à 25, quelles que soient leurs données.
 
-La version 3 supprime ce plafond et sépare clairement deux notions :
+La version 4 supprime ce plafond, sépare clairement la décision du score et relie l’analyse agronomique hybride au crédit :
+
+`Projet agricole → moteur local FresCoop → Teranga AI → Rendement retenu → Revenu retenu → cash-flow → capacité → score → décision humaine`.
 
 - le **score technique** mesure la solidité documentée du dossier ;
 - la **préqualification** applique les règles métier, dont certaines restent bloquantes.
@@ -49,14 +51,24 @@ La préqualification reste déterminée séparément :
 
 Le score conserve les différences entre dossiers ayant une même décision métier. La décomposition est persistée dans `prequalification_score_details` avec la version, le score brut, les ratios de capacité, les points par dimension, le volume des preuves et les pénalités appliquées.
 
+La capacité utilisée par le score est calculée avec le **Revenu retenu**. Le détail conserve en parallèle la capacité issue du revenu déclaré, la capacité retenue et leurs versions stressées avec une baisse de revenus de 20 %. L'écart avant/après reste donc visible et explicable au comité.
+
+## Garde-fous Teranga AI
+
+Le moteur local FresCoop demeure autoritaire en mode hors ligne ou lorsque Teranga est indisponible, lent, invalide ou incomplet. Dans ces cas, le Rendement retenu reste égal au Rendement déclaré : le fallback n'ajoute ni pénalité ni motif de refus.
+
+Quand les deux réponses Teranga sont valides, le Rendement retenu est le minimum entre le Rendement déclaré et le Rendement Teranga. Une divergence déclenche uniquement une revue agronomique explicable. Si la capacité déclarée est acceptable mais que la capacité retenue devient insuffisante uniquement à cause de cet ajustement, la règle critique de capacité est neutralisée au profit d'une revue humaine. Si les capacités déclarée et retenue sont toutes deux insuffisantes, la règle financière critique reste applicable.
+
+Teranga enrichit donc l'analyse du risque sans prendre la décision : le comité humain reste seul responsable de la décision finale.
+
 ## Migration des scores existants
 
-Le moteur courant porte la version `3`. Au démarrage, le serveur sélectionne les dossiers dont le score est `NULL` ou dont la version est absente ou inférieure à 3, puis les réévalue avec le même service que l'API.
+Le moteur courant porte la version `4`. Au démarrage, le serveur sélectionne les dossiers dont le score est `NULL` ou dont la version est absente ou inférieure à 4, puis les réévalue avec le même service que l'API.
 
 La migration est additive et idempotente :
 
 - aucun dossier n'est supprimé ou recréé ;
-- un dossier déjà évalué en version 3 n'est pas retraité ;
+- un dossier déjà évalué en version 4 n'est pas retraité ;
 - un dossier incomplet peut rester avec un score `NULL` après réévaluation ;
 - un dossier devenu complet reçoit un score numérique au prochain calcul ;
 - les écritures du score, du détail et des évaluations sont regroupées dans un batch.

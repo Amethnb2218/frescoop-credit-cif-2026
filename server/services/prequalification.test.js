@@ -5,6 +5,8 @@ import {
   buildRepaymentSchedule,
   calculateScheduleCoverage,
   calculateCapacityRatio,
+  calculateDeclaredCapacityRatio,
+  calculateDeclaredStressedCapacityRatio,
   calculateStressedCapacityRatio,
   calculateEvidenceConfidence,
   classifyRepaymentCapacity,
@@ -29,8 +31,19 @@ const rules = [
   { id: 'evidence', code: 'RULE-EV-001', condition_expr: 'LOW_EVIDENCE', result: 'REVUE_REQUISE', severity: 'medium', name: 'Preuves' },
 ];
 
-function cashflow(net) {
-  return [{ revenue: net, expenses: 0, debt_payments: 0 }];
+const agriculturalRules = [
+  ...rules,
+  { id: 'adjust', code: 'RULE-AGRO-001', condition_expr: 'AGRONOMIC_ADJUSTMENT', result: 'REVUE_REQUISE', severity: 'medium', name: 'Ajustement agronomique' },
+  { id: 'review', code: 'RULE-AGRO-002', condition_expr: 'AGRONOMIC_HUMAN_REVIEW', result: 'REVUE_REQUISE', severity: 'high', name: 'Revue agronomique' },
+];
+
+function cashflow(net, agriculture = null) {
+  return [{
+    revenue: net,
+    expenses: 0,
+    debt_payments: 0,
+    ...(agriculture == null ? {} : { revenue_detail: { agriculture } }),
+  }];
 }
 
 function evidence(levels) {
@@ -188,4 +201,119 @@ test('le calcul est déterministe quel que soit l’ordre fourni des règles', (
   assert.equal(first.score, second.score);
   assert.deepEqual(first.details, second.details);
   assert.deepEqual(first.reasons, second.reasons);
+});
+
+test('expose les capacités déclarée et retenue avec leur stress', () => {
+  const project = {
+    ...agriculturalProject,
+    feasibility_status: 'ADJUST',
+    feasibility_mode: 'hybrid',
+    declared_revenue: 1690,
+    retained_revenue: 900,
+    teranga_yield: 8000,
+    retained_yield: 8000,
+  };
+  const context = buildEvaluationContext(dossier, cashflow(900, 900), [], [], project);
+  assert.equal(calculateCapacityRatio(context), 900 / 1300);
+  assert.equal(calculateDeclaredCapacityRatio(context), 1690 / 1300);
+  assert.equal(calculateStressedCapacityRatio(context), 720 / 1300);
+  assert.equal(calculateDeclaredStressedCapacityRatio(context), 1352 / 1300);
+});
+
+test('Teranga seul ne peut pas transformer une capacité acceptable en refus', () => {
+  const project = {
+    ...agriculturalProject,
+    feasibility_status: 'ADJUST',
+    feasibility_mode: 'hybrid',
+    declared_revenue: 1690,
+    retained_revenue: 900,
+    teranga_yield: 8000,
+    retained_yield: 8000,
+  };
+  const result = evaluatePrequalification(
+    dossier,
+    cashflow(900, 900),
+    evidence(['A', 'A', 'A']),
+    [],
+    agriculturalRules,
+    project,
+    agriculturalInputs,
+  );
+  const capacityRule = result.evaluations.find(item => item.rule_code === 'RULE-CAP-001');
+  assert.equal(result.prequalification, 'REVUE_REQUISE');
+  assert.equal(capacityRule.triggered, false);
+  assert.equal(capacityRule.neutralized, true);
+  assert.equal(result.details.agronomic_impact.capacity_rule_neutralized, true);
+  assert.equal(result.details.agronomic_impact.declared_capacity_ratio, 1.3);
+  assert.ok(result.details.agronomic_impact.retained_capacity_ratio < 1);
+});
+
+test('la règle financière reste critique si les deux capacités sont insuffisantes', () => {
+  const project = {
+    ...agriculturalProject,
+    feasibility_status: 'ADJUST',
+    feasibility_mode: 'hybrid',
+    declared_revenue: 1200,
+    retained_revenue: 900,
+    teranga_yield: 8000,
+    retained_yield: 8000,
+  };
+  const result = evaluatePrequalification(
+    dossier,
+    cashflow(900, 900),
+    evidence(['A', 'A', 'A']),
+    [],
+    agriculturalRules,
+    project,
+    agriculturalInputs,
+  );
+  assert.equal(result.prequalification, 'NON_ELIGIBLE');
+  assert.equal(result.evaluations.find(item => item.rule_code === 'RULE-CAP-001').triggered, true);
+});
+
+test('HUMAN_REVIEW déclenche une revue et FEASIBLE aucune règle agronomique', () => {
+  const human = evaluatePrequalification(
+    dossier,
+    cashflow(1690, 1690),
+    evidence(['A', 'A', 'A']),
+    [],
+    agriculturalRules,
+    { ...agriculturalProject, feasibility_status: 'HUMAN_REVIEW', feasibility_mode: 'hybrid' },
+    agriculturalInputs,
+  );
+  const feasible = evaluatePrequalification(
+    dossier,
+    cashflow(1690, 1690),
+    evidence(['A', 'A', 'A']),
+    [],
+    agriculturalRules,
+    { ...agriculturalProject, feasibility_status: 'FEASIBLE', feasibility_mode: 'hybrid' },
+    agriculturalInputs,
+  );
+  assert.equal(human.prequalification, 'REVUE_REQUISE');
+  assert.equal(human.evaluations.find(item => item.rule_code === 'RULE-AGRO-002').triggered, true);
+  assert.equal(feasible.evaluations.find(item => item.rule_code === 'RULE-AGRO-001').triggered, false);
+  assert.equal(feasible.evaluations.find(item => item.rule_code === 'RULE-AGRO-002').triggered, false);
+});
+
+test('le fallback local ne déclenche aucune pénalité Teranga', () => {
+  const result = evaluatePrequalification(
+    dossier,
+    cashflow(1690, 1690),
+    evidence(['A', 'A', 'A']),
+    [],
+    agriculturalRules,
+    {
+      ...agriculturalProject,
+      feasibility_status: 'ADJUST',
+      feasibility_mode: 'local_fallback',
+      declared_revenue: 1690,
+      retained_revenue: 1690,
+    },
+    agriculturalInputs,
+  );
+  assert.equal(result.prequalification, 'PREQUALIFIE');
+  assert.equal(result.details.agronomic_impact.fallback_used, true);
+  assert.deepEqual(result.details.agronomic_impact.review_rules, []);
+  assert.equal(result.details.components.risk.points, 20);
 });

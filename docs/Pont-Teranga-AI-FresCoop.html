@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Pont Teranga AI vers le crédit FresCoop</title>
+<style>
+@page { size: A4; margin: 16mm 15mm 17mm; }
+* { box-sizing: border-box; }
+body { margin: 0; color: #17251d; font-family: Arial, Helvetica, sans-serif; font-size: 10.5pt; line-height: 1.45; }
+h1, h2, h3 { color: #0f5b38; margin: 0 0 8px; }
+h1 { font-size: 28pt; line-height: 1.1; }
+h2 { font-size: 17pt; margin-top: 18px; border-bottom: 2px solid #b9ddc8; padding-bottom: 4px; }
+h3 { font-size: 12pt; margin-top: 12px; }
+p { margin: 5px 0 9px; }
+ul, ol { margin: 6px 0 10px 20px; padding: 0; }
+li { margin: 3px 0; }
+.cover { min-height: 250mm; display: flex; flex-direction: column; justify-content: center; padding: 18mm 12mm; background: linear-gradient(145deg, #eff9f2, #fff8df); border: 2px solid #0f7a48; }
+.kicker { color: #b36b00; font-size: 11pt; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; }
+.subtitle { font-size: 16pt; color: #365744; max-width: 145mm; margin: 14px 0 24px; }
+.chain { padding: 14px; border-left: 6px solid #edaa22; background: white; font-size: 13pt; font-weight: 700; }
+.meta { margin-top: 28px; color: #5f7065; }
+.page { break-before: page; }
+.callout { background: #edf8f1; border: 1px solid #9bc9ad; border-left: 5px solid #0f7a48; padding: 10px 12px; margin: 10px 0; }
+.warning { background: #fff7e2; border-color: #edc66b; border-left-color: #d68b00; }
+.formula { font-family: Consolas, monospace; font-size: 10pt; background: #17251d; color: #f7fff9; padding: 10px 12px; border-radius: 5px; margin: 8px 0; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin: 10px 0; }
+.card { border: 1px solid #cbd8cf; border-radius: 6px; padding: 9px 10px; background: #fff; }
+.card strong { color: #0f5b38; }
+table { width: 100%; border-collapse: collapse; margin: 9px 0 12px; font-size: 9.5pt; }
+th, td { border: 1px solid #bfcfc4; padding: 6px 7px; vertical-align: top; }
+th { background: #e7f4eb; color: #0f5b38; text-align: left; }
+.small { font-size: 9pt; color: #58675e; }
+.badge { display: inline-block; padding: 3px 8px; border-radius: 12px; background: #0f7a48; color: white; font-weight: 700; font-size: 8.5pt; margin-right: 5px; }
+.footer-note { margin-top: 16px; padding-top: 8px; border-top: 1px solid #cbd8cf; font-size: 8.5pt; color: #68756c; }
+</style>
+</head>
+<body>
+<section class="cover">
+<div class="kicker">FresCoop • Innovation AgriFinTech</div>
+<h1>Pont Teranga AI vers le crédit FresCoop</h1>
+<p class="subtitle">Une chaîne de décision agronomique et financière auditable, conçue pour transformer un avis agricole explicable en préqualification de crédit sans déléguer la décision à l’intelligence artificielle.</p>
+<div class="chain">Projet agricole → moteur local FresCoop → Teranga AI → Rendement retenu → Revenu retenu → cash-flow → capacité → score explicable → préqualification → décision humaine</div>
+<p class="meta"><strong>Version :</strong> contrat hybride v2 • scoring technique v4<br><strong>Validation :</strong> 63 tests automatisés réussis • build Vite de production réussi<br><strong>Date :</strong> 10 septembre 2026</p>
+</section>
+<section class="page">
+<h2>1. Promesse d’innovation</h2>
+<p>FresCoop ne se contente pas d’afficher une recommandation agronomique. Il relie de façon vérifiable la solidité du projet agricole à sa capacité réelle de remboursement. Chaque valeur utilisée par le crédit peut être expliquée au comité : origine, formule, ajustement et impact sur le score.</p>
+<div class="callout"><strong>Différenciation :</strong> Teranga AI enrichit l’analyse du rendement et du risque, tandis que FresCoop conserve l’autorité métier, le fonctionnement hors ligne et la traçabilité financière.</div>
+<h2>2. Contrat agronomique hybride unique</h2>
+<div class="grid">
+<div class="card"><strong>Entrées</strong><br>Culture, surface, zone, sol, saison, eau, intrants, Rendement, prix, pertes et preuves.</div>
+<div class="card"><strong>Moteur local</strong><br>Adéquation, viabilité, confiance, constats et recommandations, disponibles même hors ligne.</div>
+<div class="card"><strong>Signaux Teranga AI</strong><br>Rendement prédit, safety score, niveau de risque et recommandation, strictement validés.</div>
+<div class="card"><strong>Sortie persistante</strong><br>Statut, source, versions, rendements, revenus, ajustement, risque, explications et motif de fallback.</div>
+</div>
+<p><span class="badge">FEASIBLE</span><span class="badge">ADJUST</span><span class="badge">HUMAN_REVIEW</span></p>
+<h3>Règle déterministe</h3>
+<div class="formula">Sans Rendement Teranga valide : Rendement retenu = Rendement déclaré<br>Avec Rendement Teranga valide : Rendement retenu = min(Rendement déclaré, Rendement Teranga)<br>Revenu = surface × rendement × (1 − pertes / 100) × prix</div>
+<p>Une divergence ou un signal de risque peut demander un ajustement ou une revue humaine, mais ne produit jamais à lui seul un refus automatique.</p>
+<h2>3. Repli local sans pénalité</h2>
+<table><tr><th>Situation</th><th>Comportement FresCoop</th><th>Conséquence crédit</th></tr>
+<tr><td>Teranga disponible et réponses valides</td><td>Mode hybride ; Rendement Teranga pris en compte.</td><td>Revenu retenu audité et revue possible.</td></tr>
+<tr><td>Réponse partielle</td><td>Signal affiché, mais aucun ajustement externe appliqué.</td><td>Rendement retenu = Rendement déclaré.</td></tr>
+<tr><td>Timeout, panne ou réponse invalide</td><td>Fallback local explicite avec motif enregistré.</td><td>Aucune pénalité Teranga ni refus automatique.</td></tr>
+<tr><td>Hors ligne</td><td>Moteur local immédiatement disponible.</td><td>Recalcul serveur au retour du réseau.</td></tr></table>
+</section>
+<section class="page">
+<h2>4. Serveur autoritaire et source de vérité</h2>
+<ol><li>L’interface React produit uniquement un aperçu de faisabilité.</li><li>La création en ligne recalcule l’analyse côté serveur.</li><li>La création hors ligne est réévaluée lors de la synchronisation.</li><li>Toute modification structurante d’un brouillon recalcule agronomie, cash-flow et score.</li><li>Une analyse temporaire envoyée par le navigateur est ignorée comme source d’autorité.</li></ol>
+<p>Le contrat est persisté dans <code>agricultural_project_assessments</code>. Les colonnes critiques restent interrogeables directement et le JSON complet <code>feasibility_analysis</code> conserve sources, versions, recommandations et explications.</p>
+<div class="callout warning"><strong>Intégrité :</strong> la même fonction de sérialisation et la même politique métier sont utilisées pour la création en ligne, la mise à jour et la synchronisation hors ligne.</div>
+<h2>5. Du Revenu retenu au cash-flow</h2>
+<p>Le cash-flow privilégie explicitement le <strong>Revenu retenu</strong>, placé au mois de récolte. Les revenus de commerce et autres activités sont fusionnés selon leur fréquence, tandis que charges et dettes restent séparées et auditables.</p>
+<table><tr><th>Champ d’audit</th><th>Rôle</th></tr><tr><td><code>agriculture_source</code></td><td>Indique que le montant provient du Revenu retenu ou d’un dossier historique.</td></tr><tr><td><code>agriculture_audit</code></td><td>Conserve Revenu déclaré, Revenu retenu et ajustement.</td></tr><tr><td><code>financial_inputs</code></td><td>Conserve revenus non agricoles, fréquences et charges pour les régénérations.</td></tr></table>
+<h2>6. Scoring technique v4</h2>
+<table><tr><th>Dimension</th><th>Maximum</th><th>Lecture</th></tr><tr><td>Identité</td><td>15</td><td>Complétude de l’identité du demandeur.</td></tr><tr><td>Capacité</td><td>35</td><td>Flux net et échéance, avec capacité déclarée et capacité retenue.</td></tr><tr><td>Preuves</td><td>30</td><td>Couverture et qualité des preuves A, B, C et D.</td></tr><tr><td>Risques</td><td>20</td><td>Pénalités explicites issues des règles déclenchées.</td></tr></table>
+<p>Le détail expose les capacités déclarée et retenue, leurs versions stressées à −20 % de revenus et l’impact agronomique avant/après.</p>
+</section>
+<section class="page">
+<h2>7. Garantie de décision humaine</h2>
+<div class="callout"><strong>Cas protégé :</strong> si la capacité déclarée est acceptable mais devient insuffisante uniquement à cause du Rendement Teranga, la règle critique de capacité est neutralisée au profit d’une revue agronomique humaine.</div>
+<p>Si les capacités déclarée et retenue sont toutes deux insuffisantes, la règle financière critique reste applicable : elle repose alors sur une insuffisance indépendante de Teranga.</p>
+<ul><li><code>AGRONOMIC_ADJUSTMENT</code> → revue requise ;</li><li><code>AGRONOMIC_HUMAN_REVIEW</code> → revue requise ;</li><li>fallback local → aucune règle ou pénalité Teranga ;</li><li>décision finale → exclusivement réservée au comité humain.</li></ul>
+<h2>8. Expérience de démonstration</h2>
+<ol><li>Saisir le projet agricole et montrer l’aperçu « Moteur local FresCoop + Teranga AI ».</li><li>Comparer Rendement, Rendement Teranga, Rendement retenu, Revenu déclaré et Revenu retenu.</li><li>Créer le dossier et montrer que le serveur recalcule et persiste les valeurs.</li><li>Ouvrir la préqualification : capacités avant/après, stress, règles et justification.</li><li>Couper le réseau, créer localement, puis synchroniser et montrer le recalcul serveur.</li><li>Conclure sur la mention « avis explicable — décision finale humaine ».</li></ol>
+<h2>9. Validation technique</h2>
+<table><tr><th>Contrôle</th><th>Résultat</th></tr><tr><td>Tests unitaires et intégration</td><td>63 réussis, 0 échec.</td></tr><tr><td>Création en ligne</td><td>Contrat Teranga, cash-flow et score persistés.</td></tr><tr><td>Synchronisation hors ligne</td><td>Recalcul serveur et données navigateur non fiables ignorées.</td></tr><tr><td>Mise à jour structurante</td><td>Agronomie, dettes, cash-flow et score recalculés.</td></tr><tr><td>Build frontend</td><td>Vite production réussi.</td></tr></table>
+<p class="footer-note">FresCoop — inclusion financière agricole fondée sur des données explicables, un fonctionnement résilient et une décision humaine responsable.</p>
+</section>
+</body>
+</html>

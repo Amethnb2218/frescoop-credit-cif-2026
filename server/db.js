@@ -271,6 +271,17 @@ export async function initDb() {
       findings TEXT DEFAULT '[]',
       rules_version INTEGER DEFAULT 1,
       evaluated_at TEXT,
+      feasibility_status TEXT,
+      feasibility_mode TEXT DEFAULT 'local',
+      teranga_yield REAL,
+      retained_yield REAL,
+      declared_revenue INTEGER,
+      retained_revenue INTEGER,
+      safety_score REAL,
+      risk_level TEXT,
+      fallback_reason TEXT,
+      feasibility_version INTEGER,
+      feasibility_analysis TEXT DEFAULT '{}',
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now')),
       UNIQUE(tenant_id, dossier_id)
@@ -448,6 +459,22 @@ export async function initDb() {
   try { await client.execute('ALTER TABLE dossiers ADD COLUMN prequalification_score INTEGER'); } catch {}
   try { await client.execute("ALTER TABLE dossiers ADD COLUMN prequalification_score_details TEXT DEFAULT '{}'"); } catch {}
   try { await client.execute('ALTER TABLE dossiers ADD COLUMN prequalification_score_version INTEGER'); } catch {}
+  const feasibilityColumns = [
+    ['feasibility_status', 'TEXT'],
+    ['feasibility_mode', "TEXT DEFAULT 'local'"],
+    ['teranga_yield', 'REAL'],
+    ['retained_yield', 'REAL'],
+    ['declared_revenue', 'INTEGER'],
+    ['retained_revenue', 'INTEGER'],
+    ['safety_score', 'REAL'],
+    ['risk_level', 'TEXT'],
+    ['fallback_reason', 'TEXT'],
+    ['feasibility_version', 'INTEGER'],
+    ['feasibility_analysis', "TEXT DEFAULT '{}'"],
+  ];
+  for (const [column, definition] of feasibilityColumns) {
+    try { await client.execute(`ALTER TABLE agricultural_project_assessments ADD COLUMN ${column} ${definition}`); } catch {}
+  }
   try { await client.execute('CREATE INDEX IF NOT EXISTS idx_agricultural_project_tenant_dossier ON agricultural_project_assessments(tenant_id, dossier_id)'); } catch {}
   try { await client.execute('CREATE INDEX IF NOT EXISTS idx_agricultural_inputs_tenant_dossier ON agricultural_input_items(tenant_id, dossier_id)'); } catch {}
   try { await client.execute('CREATE INDEX IF NOT EXISTS idx_declared_debts_tenant_dossier ON declared_debts(tenant_id, dossier_id)'); } catch {}

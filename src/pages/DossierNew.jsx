@@ -87,7 +87,19 @@ export default function DossierNew() {
   const [inputItems, setInputItems] = useState([]);
   const [declaredDebts, setDeclaredDebts] = useState([]);
   const [initialEvidence, setInitialEvidence] = useState([]);
+  const [feasibilityAnalysis, setFeasibilityAnalysis] = useState(null);
   const dossierIdRef = useRef(crypto.randomUUID());
+  const feasibilityFingerprint = JSON.stringify({
+    project: buildProjectAssessment(form),
+    items: inputItems,
+    city: form.applicant_location,
+  });
+
+  useEffect(() => {
+    setFeasibilityAnalysis(current => (
+      current?.fingerprint === feasibilityFingerprint ? current : null
+    ));
+  }, [feasibilityFingerprint]);
 
   function update(field, value) { setForm(f => ({ ...f, [field]: value })); }
   function fileToBase64(file) {
@@ -235,7 +247,14 @@ export default function DossierNew() {
         {step === 0 && <StepDemandeIdentite form={form} update={update} />}
         {step === 1 && <StepActivite form={form} update={update} />}
         {step === 2 && <StepProjetAgricole form={form} update={update} items={inputItems} setItems={setInputItems} />}
-        {step === 3 && <StepFaisabiliteAgronomique form={form} items={inputItems} />}
+        {step === 3 && (
+          <StepFaisabiliteAgronomique
+            form={form}
+            items={inputItems}
+            analysis={feasibilityAnalysis}
+            setAnalysis={setFeasibilityAnalysis}
+          />
+        )}
         {step === 4 && <StepRevenus form={form} update={update} />}
         {step === 5 && <StepCharges form={form} update={update} />}
         {step === 6 && <StepDettes debts={declaredDebts} setDebts={setDeclaredDebts} />}
@@ -509,13 +528,38 @@ function StepProjetAgricole({ form, update, items, setItems }) {
 
 function feasibilitySourceLabel(source = {}) {
   if (source.mode === 'hybrid' || source.mode === 'hybrid_partial') {
-    return 'Analyse réalisée à partir des informations du projet et de données agricoles complémentaires.';
+    return 'Moteur local FresCoop + Teranga AI';
   }
-  return 'Analyse réalisée à partir des informations renseignées dans le projet.';
+  if (source.mode === 'local_offline') {
+    return 'Moteur local FresCoop — hors connexion, Teranga AI sera consulté à la synchronisation';
+  }
+  if (source.mode === 'local_fallback' || source.fallback_used) {
+    return 'Moteur local FresCoop — repli sécurisé, sans pénalité liée à Teranga AI';
+  }
+  return 'Moteur local FresCoop';
 }
 
-function StepFaisabiliteAgronomique({ form, items }) {
-  const [analysis, setAnalysis] = useState(null);
+function firstMetric(metrics, keys) {
+  for (const key of keys) {
+    if (metrics?.[key] != null && Number.isFinite(Number(metrics[key]))) return Number(metrics[key]);
+  }
+  return null;
+}
+
+function formatYield(value) {
+  return value == null ? 'Non disponible' : `${new Intl.NumberFormat('fr-FR').format(value)} kg/ha`;
+}
+
+function terangaRisk(details = {}) {
+  const signal = details.external_signals?.find(item => item.type === 'risk') || {};
+  return {
+    score: details.risk?.safety_score ?? signal.safety_score ?? signal.score ?? null,
+    level: details.risk?.level ?? signal.level ?? signal.risk_level ?? null,
+    recommendation: details.risk?.recommendation ?? signal.recommendation ?? null,
+  };
+}
+
+function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
   const [loading, setLoading] = useState(false);
   const [run, setRun] = useState(0);
   const project = buildProjectAssessment(form);
@@ -553,11 +597,20 @@ function StepFaisabiliteAgronomique({ form, items }) {
   const badgeClass = current?.status === 'FEASIBLE' ? 'badge-success'
     : current?.status === 'HUMAN_REVIEW' ? 'badge-error' : 'badge-warning';
   const details = current?.details || {};
+  const metrics = details.metrics || {};
+  const declaredYield = firstMetric(metrics, ['declared_yield', 'expected_yield']);
+  const terangaYield = firstMetric(metrics, ['teranga_yield', 'predicted_yield_kg_ha']);
+  const retainedYield = firstMetric(metrics, ['retained_yield']) ?? declaredYield;
+  const declaredRevenue = firstMetric(metrics, ['declared_revenue', 'expected_revenue']);
+  const retainedRevenue = firstMetric(metrics, ['retained_revenue']) ?? declaredRevenue;
+  const revenueAdjustment = firstMetric(metrics, ['revenue_adjustment'])
+    ?? (declaredRevenue != null && retainedRevenue != null ? retainedRevenue - declaredRevenue : null);
+  const risk = terangaRisk(details);
   return (
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Faisabilité agronomique</h2>
       <p className="text-sm text-muted" style={{ marginBottom: 18 }}>
-        Avis consultatif calculé depuis le projet agricole. Il ne remplace ni le score financier ni la décision humaine.
+        Moteur local FresCoop + Teranga AI : le Rendement retenu alimente l’analyse du crédit. Avis explicable — décision finale humaine.
       </p>
       {loading && <div style={{ padding: 16, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>Analyse agronomique en cours…</div>}
       {!loading && current && <>
@@ -565,7 +618,27 @@ function StepFaisabiliteAgronomique({ form, items }) {
           <span className={`badge ${badgeClass}`} style={{ marginBottom: 10 }}>{current.label}</span>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>{current.summary}</div>
           <div className="text-sm text-muted">{feasibilitySourceLabel(current.source)}</div>
+          {current.source?.fallback_used && (
+            <div style={{ marginTop: 10, padding: '8px 10px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius)', color: '#92400e', fontSize: 'var(--fs-11)' }}>
+              Teranga AI indisponible : le moteur local reste autoritaire et aucune réduction automatique n’est appliquée.
+            </div>
+          )}
         </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: 10, marginBottom: 14 }}>
+          <SummaryLine label="Rendement" value={formatYield(declaredYield)} />
+          <SummaryLine label="Rendement Teranga" value={formatYield(terangaYield)} color="#2563eb" />
+          <SummaryLine label="Rendement retenu" value={formatYield(retainedYield)} color="#1b6b52" />
+          <SummaryLine label="Revenu déclaré" value={declaredRevenue == null ? '—' : formatCFA(declaredRevenue)} />
+          <SummaryLine label="Revenu retenu" value={retainedRevenue == null ? '—' : formatCFA(retainedRevenue)} color="#1b6b52" />
+          <SummaryLine label="Différence de revenu" value={revenueAdjustment == null ? '—' : formatCFA(revenueAdjustment)} color={revenueAdjustment < 0 ? '#d97706' : '#1b6b52'} />
+        </div>
+        {(risk.score != null || risk.level || risk.recommendation) && (
+          <div style={{ padding: 12, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 'var(--radius-md)', marginBottom: 14, fontSize: 'var(--fs-12)' }}>
+            <strong>Risque Teranga AI :</strong> {risk.level || 'niveau non précisé'}
+            {risk.score != null && <> · score de sécurité {risk.score}</>}
+            {risk.recommendation && <div style={{ marginTop: 4 }}>{risk.recommendation}</div>}
+          </div>
+        )}
         <button type="button" className="btn btn-secondary btn-sm" disabled={loading} onClick={() => setRun(value => value + 1)}>
           {loading ? 'Analyse en cours…' : 'Relancer l’analyse'}
         </button>

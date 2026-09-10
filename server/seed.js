@@ -1,6 +1,47 @@
 import { getDb, uuid } from './db.js';
 import { hashPassword } from './auth.js';
 
+const AGRONOMIC_RULES = [
+  {
+    code: 'RULE-AGRO-001',
+    name: 'Ajustement agronomique',
+    condition: 'AGRONOMIC_ADJUSTMENT',
+    result: 'REVUE_REQUISE',
+    severity: 'medium',
+    desc: 'Le Rendement retenu diffère du Rendement déclaré et requiert une revue humaine',
+  },
+  {
+    code: 'RULE-AGRO-002',
+    name: 'Revue agronomique humaine',
+    condition: 'AGRONOMIC_HUMAN_REVIEW',
+    result: 'REVUE_REQUISE',
+    severity: 'high',
+    desc: 'Les signaux agronomiques exigent une décision humaine',
+  },
+];
+
+async function ensureAgronomicRules(db) {
+  const tenants = await db.execute('SELECT id FROM tenants');
+  for (const tenant of tenants.rows) {
+    for (const rule of AGRONOMIC_RULES) {
+      await db.execute({
+        sql: `INSERT INTO rules (id, tenant_id, code, name, description, condition_expr, result, severity)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(tenant_id, code) DO UPDATE SET
+                name = excluded.name,
+                description = excluded.description,
+                condition_expr = excluded.condition_expr,
+                result = excluded.result,
+                severity = excluded.severity,
+                active = 1,
+                version = 1,
+                updated_at = datetime('now')`,
+        args: [uuid(), tenant.id, rule.code, rule.name, rule.desc, rule.condition, rule.result, rule.severity],
+      });
+    }
+  }
+}
+
 export async function ensureAdminAccounts() {
   const db = getDb();
   const tenantRes = await db.execute('SELECT id FROM tenants LIMIT 1');
@@ -29,6 +70,7 @@ export async function ensureAdminAccounts() {
       }
     } catch (e) { console.log(`[FresCoop] Skip ${a.email}: ${e.message}`); }
   }
+  await ensureAgronomicRules(db);
 }
 
 export async function seedIfEmpty() {
@@ -83,6 +125,7 @@ export async function seedIfEmpty() {
     { code: 'RULE-EV-002', name: 'Preuves déclaratives', condition: 'MOSTLY_DECLARATIVE', result: 'REVUE_REQUISE', severity: 'medium', desc: 'La majorité des preuves sont déclaratives (niveau D)' },
     { code: 'RULE-SEAS-001', name: 'Inadéquation saisonnière', condition: 'SEASONAL_MISMATCH', result: 'REVUE_REQUISE', severity: 'medium', desc: 'Revenus concentrés — calendrier saisonnier recommandé' },
     { code: 'RULE-AMT-001', name: 'Montant/revenus élevé', condition: 'AMOUNT_HIGH_VS_REVENUE', result: 'REVUE_REQUISE', severity: 'medium', desc: 'Le montant demandé dépasse 80% des revenus annuels' },
+    ...AGRONOMIC_RULES,
   ];
 
   for (const r of rules) {
