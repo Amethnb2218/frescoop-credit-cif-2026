@@ -110,7 +110,7 @@ router.put('/:id/attachment', authMiddleware, tenantGuard, requireRole('AGENT', 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(tenant_id, evidence_id) DO UPDATE SET original_name = excluded.original_name,
               mime_type = excluded.mime_type, size_bytes = excluded.size_bytes, sha256 = excluded.sha256,
-              content = excluded.content, created_by = excluded.created_by, updated_at = datetime('now')`,
+              content = excluded.content, created_by = excluded.created_by, updated_at = CURRENT_TIMESTAMP`,
       args: [uuid(), req.params.id, evidence.dossier_id, req.tenantId,
         String(req.body.original_name || 'piece-jointe').slice(0, 255), decoded.mimeType,
         decoded.content.length, sha256, decoded.content, req.user.id],
@@ -283,7 +283,7 @@ router.put('/:id/verify', authMiddleware, tenantGuard, requireRole('SUPERVISEUR'
     if (!existing.rows[0]) return res.status(404).json({ error: 'Preuve introuvable' });
 
     await db.execute({
-      sql: `UPDATE evidence SET verification_level = ?, verified_by = ?, verified_at = datetime('now')
+      sql: `UPDATE evidence SET verification_level = ?, verified_by = ?, verified_at = CURRENT_TIMESTAMP
             WHERE id = ? AND tenant_id = ?`,
       args: [verification_level, req.user.id, req.params.id, req.tenantId],
     });

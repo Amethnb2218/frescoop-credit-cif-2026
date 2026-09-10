@@ -61,7 +61,7 @@ router.post('/push', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVIS
 
         await db.execute({
           sql: `INSERT INTO sync_queue (id, tenant_id, user_id, operation, entity_type, entity_id, payload, local_timestamp, status, server_timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'synced', datetime('now'))`,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'synced', CURRENT_TIMESTAMP)`,
           args: [uuid(), req.tenantId, req.user.id, operation, entity_type, entity_id, JSON.stringify(payload), local_timestamp],
         });
 
@@ -201,7 +201,7 @@ async function processDossierOp(db, operation, entityId, payload, req) {
     if (updates.length) {
       args.push(entityId, req.tenantId);
       await db.execute({
-        sql: `UPDATE dossiers SET ${updates.join(', ')}, updated_at = datetime('now') WHERE id = ? AND tenant_id = ?`,
+        sql: `UPDATE dossiers SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?`,
         args,
       });
     }
@@ -538,7 +538,7 @@ async function saveAttachment(db, evidenceId, payload, req) {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(tenant_id, evidence_id) DO UPDATE SET original_name = excluded.original_name,
             mime_type = excluded.mime_type, size_bytes = excluded.size_bytes, sha256 = excluded.sha256,
-            content = excluded.content, created_by = excluded.created_by, updated_at = datetime('now')`,
+            content = excluded.content, created_by = excluded.created_by, updated_at = CURRENT_TIMESTAMP`,
     args: [uuid(), evidenceId, evidence.dossier_id, req.tenantId,
       String(payload.original_name || 'piece-jointe').slice(0, 255), decoded.mimeType,
       decoded.content.length, sha256, decoded.content, req.user.id],

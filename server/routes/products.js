@@ -70,7 +70,7 @@ router.put('/:id', authMiddleware, tenantGuard, requireRole('ADMIN', 'SUPERADMIN
 
     if (fields.length === 0) return res.json({ ok: true });
 
-    fields.push("updated_at = datetime('now')");
+    fields.push("updated_at = CURRENT_TIMESTAMP");
     args.push(req.params.id, req.tenantId);
 
     await db.execute({

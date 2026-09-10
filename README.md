@@ -7,7 +7,7 @@
 ## Architecture
 
 - **Frontend** : React 19 + Vite + React Router
-- **Backend** : Node.js + Express + libSQL (Turso/SQLite)
+- **Backend** : Node.js + Express + PostgreSQL
 - **Offline** : IndexedDB + Sync Queue idempotente
 - **Déploiement** : Render.com
 
@@ -64,7 +64,8 @@ npm run build
 npm start
 ```
 
-Variables d'environnement requises : voir `.env.example`
+Variables d'environnement requises : voir `.env.example`.
+Pour transférer une base Turso existante, suivre `docs/POSTGRESQL_MIGRATION.md`.
 
 ## Positionnement
 

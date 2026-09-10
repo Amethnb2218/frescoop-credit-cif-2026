@@ -1,16 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { createClient } from '@libsql/client';
+import { PGlite } from '@electric-sql/pglite';
 import { app } from './index.js';
 import { assertAuthConfiguration, hashPassword } from './auth.js';
-import { getDb, initDb, migrateAuditLogSchema } from './db.js';
+import { getDb, createPgliteAdapter, migrateDb } from './db.js';
+import { usePgliteTestDb } from './testDb.js';
 
 const originalEnv = {
   NODE_ENV: process.env.NODE_ENV,
   TOKEN_SECRET: process.env.TOKEN_SECRET,
-  TURSO_DATABASE_URL: process.env.TURSO_DATABASE_URL,
-  TURSO_AUTH_TOKEN: process.env.TURSO_AUTH_TOKEN,
+  DATABASE_URL: process.env.DATABASE_URL,
 };
 const testPassword = 'auth-test-password';
 const testUser = {
@@ -48,12 +48,11 @@ async function login(baseUrl, password) {
   return { response, body: await response.json() };
 }
 
+let db;
 test.before(async () => {
   process.env.NODE_ENV = 'production';
   delete process.env.TOKEN_SECRET;
-  process.env.TURSO_DATABASE_URL = 'file::memory:';
-  delete process.env.TURSO_AUTH_TOKEN;
-  const db = await initDb();
+  db = await usePgliteTestDb();
   await db.execute({
     sql: 'INSERT INTO tenants (id, name, code) VALUES (?, ?, ?)',
     args: [testUser.tenant_id, 'Tenant Auth Test', 'AUTH-TEST'],
@@ -72,7 +71,10 @@ test.before(async () => {
   });
 });
 
-test.after(restoreEnv);
+test.after(async () => {
+  restoreEnv();
+  await db.close();
+});
 
 test('sécurise le parcours de connexion en production', async () => {
   assert.throws(() => assertAuthConfiguration(), /TOKEN_SECRET est requis en production/);
@@ -127,38 +129,28 @@ test('sécurise le parcours de connexion en production', async () => {
   assert.equal(typeof audit.rows[0].ip_address, 'string');
 });
 
-test('migre un ancien schéma audit_log de façon idempotente', async () => {
-  const legacyDb = createClient({ url: 'file::memory:' });
-  await legacyDb.executeMultiple(`
-    CREATE TABLE audit_log (
-      id TEXT PRIMARY KEY,
-      tenant_id TEXT NOT NULL,
-      user_id TEXT,
-      action TEXT NOT NULL,
-      entity_type TEXT,
-      entity_id TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-  `);
+test('applique les migrations PostgreSQL de façon idempotente', async () => {
+  const database = new PGlite();
+  const isolatedDb = createPgliteAdapter(database);
+  try {
+    const firstMigration = await migrateDb(isolatedDb);
+    assert.deepEqual(firstMigration, ['001_initial_schema.sql']);
+    const secondMigration = await migrateDb(isolatedDb);
+    assert.deepEqual(secondMigration, []);
 
-  const firstMigration = await migrateAuditLogSchema(legacyDb);
-  assert.deepEqual(firstMigration, ['user_name', 'user_role', 'details', 'ip_address']);
-  const secondMigration = await migrateAuditLogSchema(legacyDb);
-  assert.deepEqual(secondMigration, []);
+    const columns = await isolatedDb.execute({
+      sql: `SELECT column_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = ?`,
+      args: ['audit_log'],
+    });
+    const names = new Set(columns.rows.map(row => row.column_name));
+    for (const column of ['user_name', 'user_role', 'details', 'ip_address']) {
+      assert.equal(names.has(column), true);
+    }
 
-  const info = await legacyDb.execute('PRAGMA table_info(audit_log)');
-  const columns = new Set(info.rows.map(row => String(row.name)));
-  for (const column of ['user_name', 'user_role', 'details', 'ip_address']) {
-    assert.equal(columns.has(column), true);
+    const applied = await isolatedDb.execute('SELECT name FROM schema_migrations');
+    assert.deepEqual(applied.rows.map(row => row.name), ['001_initial_schema.sql']);
+  } finally {
+    await isolatedDb.close();
   }
-
-  await legacyDb.execute({
-    sql: `INSERT INTO audit_log
-          (id, tenant_id, user_id, user_name, user_role, action, details, ip_address)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: ['audit-legacy', 'tenant-legacy', 'user-legacy', 'Test', 'ADMIN', 'LOGIN', '{}', '127.0.0.1'],
-  });
-  const inserted = await legacyDb.execute('SELECT action FROM audit_log WHERE id = ?', ['audit-legacy']);
-  assert.equal(inserted.rows[0].action, 'LOGIN');
-  legacyDb.close();
 });

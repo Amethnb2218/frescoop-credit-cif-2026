@@ -27,7 +27,7 @@ router.post('/login', async (req, res) => {
     if (!user.password_hash.startsWith('scrypt:')) {
       stage = 'password_hash_upgrade';
       await db.execute({
-        sql: 'UPDATE users SET password_hash = ?, updated_at = datetime(\'now\') WHERE id = ? AND tenant_id = ?',
+        sql: 'UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?',
         args: [hashPassword(password), user.id, user.tenant_id],
       });
     }

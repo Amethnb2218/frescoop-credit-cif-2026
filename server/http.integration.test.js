@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { app } from './index.js';
 import { generateToken, hashPassword } from './auth.js';
+import { usePgliteTestDb } from './testDb.js';
 
 const tenantA = 'tenant-http-a';
 const tenantB = 'tenant-http-b';
@@ -126,10 +127,12 @@ async function insertFixtures(db) {
 
 let db;
 test.before(async () => {
-  process.env.TURSO_DATABASE_URL = 'file::memory:';
-  const dbModule = await import('./db.js');
-  db = await dbModule.initDb();
+  db = await usePgliteTestDb();
   await insertFixtures(db);
+});
+
+test.after(async () => {
+  await db?.close();
 });
 
 test('isole le dossier par tenant et propriété Agent', async () => {

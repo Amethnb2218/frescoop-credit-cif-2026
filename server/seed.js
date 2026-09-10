@@ -35,7 +35,7 @@ async function ensureAgronomicRules(db) {
                 severity = excluded.severity,
                 active = 1,
                 version = 1,
-                updated_at = datetime('now')`,
+                updated_at = CURRENT_TIMESTAMP`,
         args: [uuid(), tenant.id, rule.code, rule.name, rule.desc, rule.condition, rule.result, rule.severity],
       });
     }

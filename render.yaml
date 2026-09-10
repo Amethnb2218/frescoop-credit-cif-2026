@@ -11,7 +11,21 @@ services:
         value: production
       - key: TOKEN_SECRET
         generateValue: true
+      - key: DEMO_PWD
+        generateValue: true
+      - key: ADMIN_DEFAULT_PWD
+        generateValue: true
+      - key: JURY_PWD
+        generateValue: true
       - key: PORT
         value: "10000"
       - key: FRESCOOP_HOST
         value: "0.0.0.0"
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_POOL_MAX
+        value: "10"
+      - key: DATABASE_IDLE_TIMEOUT_MS
+        value: "30000"
+      - key: DATABASE_CONNECT_TIMEOUT_MS
+        value: "10000"

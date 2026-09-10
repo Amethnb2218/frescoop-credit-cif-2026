@@ -592,7 +592,7 @@ export async function evaluateDossier(db, tenantId, dossierId) {
     {
       sql: `UPDATE dossiers SET evidence_confidence = ?, repayment_capacity = ?, prequalification = ?,
             prequalification_reasons = ?, prequalification_score = ?, prequalification_score_details = ?,
-            prequalification_score_version = ?, updated_at = datetime('now') WHERE id = ? AND tenant_id = ?`,
+            prequalification_score_version = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?`,
       args: [
         result.evidenceConfidence, result.repaymentCapacity, result.prequalification,
         JSON.stringify(result.reasons), result.score, JSON.stringify(result.details),

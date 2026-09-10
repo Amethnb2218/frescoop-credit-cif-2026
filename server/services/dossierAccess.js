@@ -28,7 +28,7 @@ export function scoreInvalidationStatement(dossierId, tenantId) {
     sql: `UPDATE dossiers SET evidence_confidence = NULL, repayment_capacity = NULL,
           prequalification = NULL, prequalification_reasons = '[]',
           prequalification_score = NULL, prequalification_score_details = '{}',
-          prequalification_score_version = NULL, updated_at = datetime('now')
+          prequalification_score_version = NULL, updated_at = CURRENT_TIMESTAMP
           WHERE id = ? AND tenant_id = ?`,
     args: [dossierId, tenantId],
   };

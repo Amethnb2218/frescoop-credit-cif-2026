@@ -455,7 +455,7 @@ router.put('/:id', authMiddleware, tenantGuard,
 
     const statements = [];
     if (updates.length > 0) {
-      updates.push("updated_at = datetime('now')");
+      updates.push("updated_at = CURRENT_TIMESTAMP");
       args.push(id, req.tenantId);
       statements.push({
         sql: `UPDATE dossiers SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`,
@@ -651,7 +651,7 @@ router.put('/:id/status', authMiddleware, tenantGuard, async (req, res) => {
     }
 
     await db.execute({
-      sql: "UPDATE dossiers SET status = ?, updated_at = datetime('now') WHERE id = ? AND tenant_id = ?",
+      sql: "UPDATE dossiers SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND tenant_id = ?",
       args: [status, id, req.tenantId],
     });
 
@@ -695,8 +695,8 @@ router.post('/:id/decide', authMiddleware, tenantGuard, requireRole('COMITE', 'A
       sql: `UPDATE dossiers SET
             decision = ?, decision_amount = ?, decision_duration = ?,
             decision_schedule = ?, decision_motif = ?,
-            decided_by = ?, decided_at = datetime('now'),
-            status = ?, updated_at = datetime('now')
+            decided_by = ?, decided_at = CURRENT_TIMESTAMP,
+            status = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND tenant_id = ?`,
       args: [decision, amount || null, duration || null, schedule || null, motif,
         req.user.id, nextStatus, id, req.tenantId],

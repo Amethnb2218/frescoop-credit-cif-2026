@@ -9,19 +9,28 @@
     "test": "node --test",
     "preview": "vite preview --host 127.0.0.1",
     "start": "node server/index.js",
-    "seed": "node server/seed.js"
+    "seed": "node server/seed.js",
+    "db:migrate": "node server/migrate.js",
+    "migrate:turso": "node scripts/migrate-turso-to-postgres.js"
+  },
+  "overrides": {
+    "qs": "6.16.0"
   },
   "dependencies": {
-    "@libsql/client": "^0.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "cors": "^2.8.5",
-    "express": "^4.21.0",
+    "express": "4.22.2",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.468.0",
+    "pg": "8.23.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.1.0",
     "recharts": "^3.8.1",
     "vite": "^7.0.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "@libsql/client": "0.18.0"
   }
 }
