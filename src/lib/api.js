@@ -52,6 +52,9 @@ export const api = {
   }),
   updateDossier: (id, data) => request(`/api/dossiers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   updateStatus: (id, status) => request(`/api/dossiers/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
+  resubmitDossier: (id, data = {}) => request(`/api/dossiers/${id}/resubmit`, {
+    method: 'POST', body: JSON.stringify(data),
+  }),
   decideDossier: (id, data) => request(`/api/dossiers/${id}/decide`, { method: 'POST', body: JSON.stringify(data) }),
 
   getEvidence: (dossierId) => request(`/api/evidence/dossier/${dossierId}`),

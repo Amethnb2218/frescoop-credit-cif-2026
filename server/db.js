@@ -106,6 +106,10 @@ export async function initDb(client = getDb()) {
       credit_purpose TEXT,
       duration_months INTEGER,
       desired_schedule TEXT,
+      interest_calculation_mode TEXT NOT NULL DEFAULT 'rate',
+      interest_rate REAL,
+      interest_amount INTEGER NOT NULL DEFAULT 0,
+      total_repayable INTEGER NOT NULL DEFAULT 0,
 
       -- Guarantees
       savings_amount INTEGER,
@@ -120,8 +124,8 @@ export async function initDb(client = getDb()) {
       prequalification TEXT,
       prequalification_reasons TEXT DEFAULT '[]',
       prequalification_score INTEGER,
-      prequalification_score_details TEXT DEFAULT '{}',
-      prequalification_score_version INTEGER,
+      prequalification_score_details TEXT NOT NULL DEFAULT '{"provisional":true,"status":"INSUFFICIENT_DATA","missing_fields":[]}',
+      prequalification_score_version INTEGER NOT NULL DEFAULT 5,
 
       -- Committee decision
       decision TEXT CHECK(decision IN ('approved','refused','complement','modified')),
@@ -408,6 +412,36 @@ export async function initDb(client = getDb()) {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    -- Append-only history of committee decisions
+    CREATE TABLE IF NOT EXISTS dossier_decision_history (
+      id TEXT PRIMARY KEY,
+      dossier_id TEXT NOT NULL REFERENCES dossiers(id),
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      decision TEXT NOT NULL CHECK(decision IN ('approved','refused','complement','modified')),
+      amount INTEGER,
+      duration INTEGER,
+      schedule TEXT,
+      motif TEXT NOT NULL,
+      decided_by TEXT REFERENCES users(id),
+      is_override INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Append-only trace of supplements supplied after a complement request
+    CREATE TABLE IF NOT EXISTS dossier_complement_history (
+      id TEXT PRIMARY KEY,
+      dossier_id TEXT NOT NULL REFERENCES dossiers(id),
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      submitted_by TEXT REFERENCES users(id),
+      note TEXT,
+      supplied_fields TEXT NOT NULL DEFAULT '[]',
+      previous_decision_id TEXT REFERENCES dossier_decision_history(id),
+      score_before INTEGER,
+      score_after INTEGER,
+      score_details TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     -- Credit products
     CREATE TABLE IF NOT EXISTS credit_products (
       id TEXT PRIMARY KEY,
@@ -489,8 +523,67 @@ export async function initDb(client = getDb()) {
 
   // Migrations for existing databases
   try { await client.execute('ALTER TABLE dossiers ADD COLUMN prequalification_score INTEGER'); } catch {}
-  try { await client.execute("ALTER TABLE dossiers ADD COLUMN prequalification_score_details TEXT DEFAULT '{}'"); } catch {}
-  try { await client.execute('ALTER TABLE dossiers ADD COLUMN prequalification_score_version INTEGER'); } catch {}
+  try { await client.execute("ALTER TABLE dossiers ADD COLUMN prequalification_score_details TEXT NOT NULL DEFAULT '{\"provisional\":true,\"status\":\"INSUFFICIENT_DATA\",\"missing_fields\":[]}'"); } catch {}
+  try { await client.execute('ALTER TABLE dossiers ADD COLUMN prequalification_score_version INTEGER NOT NULL DEFAULT 5'); } catch {}
+  await client.execute(`UPDATE dossiers SET
+    prequalification_score_details = CASE
+      WHEN prequalification_score_details IS NULL OR prequalification_score_details = '{}'
+        THEN '{"provisional":true,"status":"INSUFFICIENT_DATA","missing_fields":[]}'
+      ELSE prequalification_score_details END,
+    prequalification_score_version = COALESCE(prequalification_score_version, 5)`);
+  try { await client.execute("ALTER TABLE dossiers ADD COLUMN interest_calculation_mode TEXT NOT NULL DEFAULT 'rate'"); } catch {}
+  try { await client.execute('ALTER TABLE dossiers ADD COLUMN interest_rate REAL'); } catch {}
+  try { await client.execute('ALTER TABLE dossiers ADD COLUMN interest_amount INTEGER NOT NULL DEFAULT 0'); } catch {}
+  try { await client.execute('ALTER TABLE dossiers ADD COLUMN total_repayable INTEGER NOT NULL DEFAULT 0'); } catch {}
+  await client.execute(`WITH RECURSIVE
+    loan_rows(id, principal, duration, annual_rate, declining) AS (
+      SELECT id, COALESCE(amount_requested, 0), duration_months, interest_rate,
+        CASE WHEN LOWER(COALESCE(desired_schedule, '')) LIKE '%dégressif%'
+          OR LOWER(COALESCE(desired_schedule, '')) LIKE '%degressif%'
+          OR LOWER(COALESCE(desired_schedule, '')) LIKE '%declining%'
+          OR UPPER(COALESCE(desired_schedule, '')) = 'DECLINING' THEN 1 ELSE 0 END
+      FROM dossiers
+      WHERE COALESCE(interest_rate, 0) > 0 AND COALESCE(duration_months, 0) > 0
+    ),
+    declining_months(id, month, duration, outstanding, principal_part, remainder, monthly_rate, interest) AS (
+      SELECT id, 1, duration, principal, CAST(principal / duration AS INTEGER),
+        principal - CAST(principal / duration AS INTEGER) * duration,
+        annual_rate / 1200.0, ROUND(principal * annual_rate / 1200.0)
+      FROM loan_rows WHERE declining = 1 AND principal > 0 AND duration <= 600
+      UNION ALL
+      SELECT id, month + 1, duration,
+        outstanding - principal_part - CASE WHEN month <= remainder THEN 1 ELSE 0 END,
+        principal_part, remainder, monthly_rate,
+        ROUND((outstanding - principal_part - CASE WHEN month <= remainder THEN 1 ELSE 0 END) * monthly_rate)
+      FROM declining_months WHERE month < duration
+    ),
+    calculated_interest(id, amount) AS (
+      SELECT loans.id, CASE WHEN declining = 1 AND duration <= 600
+        THEN COALESCE((SELECT SUM(interest) FROM declining_months WHERE declining_months.id = loans.id), 0)
+        ELSE ROUND(principal * annual_rate / 100.0 * duration / 12.0) END
+      FROM loan_rows loans
+    )
+    UPDATE dossiers SET
+      interest_calculation_mode = CASE WHEN interest_calculation_mode = 'fixed' THEN 'fixed' ELSE 'rate' END,
+      interest_amount = CASE
+        WHEN interest_calculation_mode = 'fixed' OR COALESCE(interest_amount, 0) > 0 THEN COALESCE(interest_amount, 0)
+        ELSE COALESCE((SELECT amount FROM calculated_interest WHERE calculated_interest.id = dossiers.id), 0) END,
+      total_repayable = COALESCE(amount_requested, 0) + CASE
+        WHEN interest_calculation_mode = 'fixed' OR COALESCE(interest_amount, 0) > 0 THEN COALESCE(interest_amount, 0)
+        ELSE COALESCE((SELECT amount FROM calculated_interest WHERE calculated_interest.id = dossiers.id), 0) END
+      WHERE COALESCE(total_repayable, 0) <= 0`);
+  await client.execute(`INSERT INTO dossier_decision_history
+    (id, dossier_id, tenant_id, decision, amount, duration, schedule, motif, decided_by, is_override, created_at)
+    SELECT lower(hex(randomblob(16))), id, tenant_id, decision, decision_amount, decision_duration,
+      decision_schedule, COALESCE(decision_motif, 'Décision historique migrée'), decided_by, 0,
+      COALESCE(decided_at, updated_at, created_at, datetime('now'))
+    FROM dossiers d
+    WHERE decision IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM dossier_decision_history h
+      WHERE h.dossier_id = d.id AND h.tenant_id = d.tenant_id
+    )`);
+  try { await client.execute('CREATE INDEX IF NOT EXISTS idx_decision_history_tenant_dossier ON dossier_decision_history(tenant_id, dossier_id, created_at)'); } catch {}
+  try { await client.execute('CREATE INDEX IF NOT EXISTS idx_complement_history_tenant_dossier ON dossier_complement_history(tenant_id, dossier_id, created_at)'); } catch {}
   const feasibilityColumns = [
     ['feasibility_status', 'TEXT'],
     ['feasibility_mode', "TEXT DEFAULT 'local'"],

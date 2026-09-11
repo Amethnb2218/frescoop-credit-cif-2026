@@ -24,35 +24,35 @@ export default function Landing() {
               CIF DigiCoop-WA+ 2026 — Sénégal
             </div>
             <h1 className="landing-hero-title" style={{ fontSize: 30, fontWeight: 700, color: '#fff', lineHeight: 1.3, marginBottom: 14 }}>
-              Le copilote de l'agent de crédit agricole
+              Un score agricole calculé, expliqué, puis soumis à décision humaine
             </h1>
             <p style={{ fontSize: 14, color: 'rgba(255,255,255,.85)', lineHeight: 1.7, marginBottom: 24 }}>
-              FresCoop transforme les réalités du terrain en un dossier de crédit vérifiable.
-              Cash-flow saisonnier, preuves classées, recommandation explicable — même sans réseau.
+              FresCoop applique des règles, des calculs et des seuils connus aux données du dossier.
+              Teranga enrichit l'analyse agronomique, sans décider à la place du comité — même en faible connectivité.
             </p>
-            <Link to="/login" className="btn btn-lg" style={{ background: '#fff', color: '#0f3d2e', fontWeight: 600, border: 'none' }}>Accéder à la plateforme <ArrowRight size={14} /></Link>
+            <Link to="/login" className="btn btn-lg" style={{ background: '#fff', color: '#0f3d2e', fontWeight: 600, border: 'none' }}>Accéder à la démonstration <ArrowRight size={14} /></Link>
             <div className="landing-mini-stats" style={{ marginTop: 20, display: 'flex', gap: 20 }}>
-              <MiniStat icon={<Clock size={14} />} label="Instruction 2x plus rapide" light />
-              <MiniStat icon={<WifiOff size={14} />} label="Fonctionne hors ligne" light />
-              <MiniStat icon={<Eye size={14} />} label="Décision traçable" light />
+              <MiniStat icon={<Clock size={14} />} label="Calcul déterministe" light />
+              <MiniStat icon={<WifiOff size={14} />} label="Brouillon hors ligne" light />
+              <MiniStat icon={<Eye size={14} />} label="Décision humaine traçable" light />
             </div>
           </div>
         </div>
       </section>
 
-      {/* Avant/Après section */}
+      {/* Points vérifiables en démonstration */}
       <section className="landing-section" style={{ background: '#f8faf9' }}>
         <div style={{ maxWidth: 900, margin: '0 auto' }}>
           <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1a2332', textAlign: 'center', marginBottom: 8 }}>
-            Impact mesurable
+            Ce que la démonstration permet de vérifier
           </h2>
           <p style={{ textAlign: 'center', color: '#5a6577', fontSize: 14, maxWidth: 600, margin: '0 auto 32px', lineHeight: 1.6 }}>
-            L'instruction d'un microcrédit agricole prend aujourd'hui 5 jours en moyenne. FresCoop réduit ce délai à 2 heures grâce au scoring automatisé.
+            Chaque comportement ci-dessous peut être observé dans l'interface, sans supposer l'efficacité du crédit ni déléguer la décision à l'algorithme.
           </p>
           <div className="landing-grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-            <ProblemCard number="5 jours" label="Avant FresCoop" desc="Instruction manuelle, subjective, sans traçabilité ni structure" />
-            <ProblemCard number="2 heures" label="Avec FresCoop" desc="Scoring automatisé, preuves classées, décision tracée et explicable" />
-            <ProblemCard number="95%" label="Réduction du délai" desc="De la collecte terrain au score final, tout est structuré et instantané" />
+            <ProblemCard number="Même calcul" label="Résultat reproductible" desc="Les mêmes données et la même version de règles donnent le même score et les mêmes motifs." />
+            <ProblemCard number="Sans réseau" label="Brouillon conservé" desc="La saisie reste locale, puis les opérations sont synchronisées et recalculées côté serveur." />
+            <ProblemCard number="Comité" label="Décision finale humaine" desc="Le score et Teranga éclairent la revue ; ils n'accordent ni ne refusent seuls un crédit." />
           </div>
         </div>
       </section>
@@ -61,15 +61,31 @@ export default function Landing() {
       <section className="landing-section" style={{ background: '#fff' }}>
         <div style={{ maxWidth: 900, margin: '0 auto' }}>
           <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1a2332', textAlign: 'center', marginBottom: 8 }}>
-            Comment fonctionne le scoring
+            Comment fonctionne le score FresCoop
           </h2>
-          <p style={{ textAlign: 'center', color: '#5a6577', fontSize: 13, marginBottom: 32 }}>
-            Un score 0-100, explicable, calculé à partir de données vérifiables — pas une boîte noire
+          <p style={{ textAlign: 'center', color: '#5a6577', fontSize: 13, maxWidth: 660, margin: '0 auto 32px', lineHeight: 1.6 }}>
+            Ce n'est pas un modèle de machine learning opaque : le résultat est déterministe. Les mêmes données, règles et seuils produisent le même score, avec sa décomposition.
           </p>
           <div className="landing-grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
-            <ScoringStep n="1" title="Collecte structurée" desc="L'agent classe chaque preuve selon sa fiabilité : A (vérifiée), B (tiers fiable), C (document), D (déclaration). Plus les preuves sont solides, plus le score monte." color="#059669" />
-            <ScoringStep n="2" title="Analyse saisonnière" desc="Le cash-flow est modélisé mois par mois. Des stress tests simulent une baisse de revenus de 20-40% pour évaluer la résilience." color="#2563eb" />
-            <ScoringStep n="3" title="Score explicable" desc="Le moteur de règles produit un score 0-100 avec les raisons. Le comité voit pourquoi ce score — pas de décision opaque." color="#7c3aed" />
+            <ScoringStep n="1" title="Données vérifiables" desc="Identité, montant, durée, cash-flow saisonnier, projet agricole et preuves A à D alimentent le calcul. Les informations manquantes restent visibles." color="#059669" />
+            <ScoringStep n="2" title="Règles, calculs, seuils" desc="Des formules explicites mesurent capacité, qualité des preuves et risques. Chaque pénalité et chaque règle déclenchée peuvent être relues." color="#2563eb" />
+            <ScoringStep n="3" title="Résultat explicable" desc="Le comité reçoit le score, sa décomposition et les motifs de préqualification. FresCoop recommande ; la décision finale reste humaine." color="#7c3aed" />
+          </div>
+        </div>
+      </section>
+
+      {/* Statut du score */}
+      <section className="landing-section" style={{ background: '#f8faf9' }}>
+        <div style={{ maxWidth: 900, margin: '0 auto' }}>
+          <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1a2332', textAlign: 'center', marginBottom: 8 }}>
+            Un statut lisible à chaque étape
+          </h2>
+          <p style={{ textAlign: 'center', color: '#5a6577', fontSize: 13, maxWidth: 660, margin: '0 auto 28px', lineHeight: 1.6 }}>
+            Le score n'est présenté comme définitif qu'après complétion et recalcul. Toute modification structurante entraîne un nouveau calcul.
+          </p>
+          <div className="landing-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <FeatureCard icon={<Clock size={20} />} title="Score provisoire — dossier incomplet" desc="Le résultat est accompagné de la liste des données manquantes. Il sert à guider la complétion, pas à prendre une décision finale." />
+            <FeatureCard icon={<CheckCircle size={20} />} title="Score définitif — après recalcul" desc="Une fois les champs indispensables complétés, le serveur recalcule le dossier avec la version courante des règles et établit le score de référence." />
           </div>
         </div>
       </section>
@@ -81,12 +97,12 @@ export default function Landing() {
             Comment FresCoop transforme l'instruction du crédit
           </h2>
           <div className="landing-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-            <FeatureCard icon={<WifiOff size={20} />} title="Offline-first" desc="L'agent continue son travail sans réseau. Données chiffrées localement, synchronisées au retour de la connexion sans doublon." />
+            <FeatureCard icon={<WifiOff size={20} />} title="Faible connectivité" desc="Le brouillon reste sur l'appareil hors ligne, puis les opérations sont synchronisées sans doublon. L'analyse serveur est recalculée au retour du réseau." />
             <FeatureCard icon={<FileText size={20} />} title="Evidence Ledger" desc="Chaque fait critique est associé à une preuve classée : source vérifiée (A), tiers fiable (B), document (C), déclaration (D)." />
-            <FeatureCard icon={<BarChart3 size={20} />} title="Cash-flow saisonnier" desc="Le système comprend que les revenus agricoles sont cycliques. Stress tests automatiques pour tester la résilience." />
-            <FeatureCard icon={<Shield size={20} />} title="Scoring rules-first" desc="Trois dimensions : confiance des preuves, capacité de remboursement, flags d'intégrité. Pas de score opaque." />
-            <FeatureCard icon={<Users size={20} />} title="Décision humaine" desc="Le comité conserve le pouvoir. Tout override est motivé, enregistré et auditable. FresCoop recommande, l'IMF décide." />
-            <FeatureCard icon={<CheckCircle size={20} />} title="Audit complet" desc="Qui a fait quoi, quand, et pourquoi. Chaque modification, chaque décision est tracée avec ancien/nouveau valeur." />
+            <FeatureCard icon={<BarChart3 size={20} />} title="Cash-flow saisonnier" desc="Le système tient compte du cycle des revenus agricoles et calcule des scénarios de baisse pour rendre la capacité de remboursement vérifiable." />
+            <FeatureCard icon={<Shield size={20} />} title="Scoring déterministe" desc="Le score combine identité, capacité, preuves et risques avec des règles et seuils versionnés. Aucun modèle opaque ne produit la décision." />
+            <FeatureCard icon={<Users size={20} />} title="Teranga sous contrôle humain" desc="Teranga enrichit rendement, risque et conseil. Il ne décide jamais seul ; s'il est indisponible, le repli local n'ajoute ni pénalité ni refus automatique." />
+            <FeatureCard icon={<CheckCircle size={20} />} title="IA côté serveur" desc="Aucun modèle d'IA n'est installé sur le téléphone. Les appels Teranga sont faits côté serveur, et toute décision du comité reste motivée et auditable." />
           </div>
         </div>
       </section>

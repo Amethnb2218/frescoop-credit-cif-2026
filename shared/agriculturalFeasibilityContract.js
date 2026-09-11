@@ -1,5 +1,7 @@
 import { calculateLoanTerms } from './creditCalculations.js';
 
+export const AGRICULTURAL_FEASIBILITY_CONTRACT_VERSION = 3;
+
 const REASON_MESSAGES = {
   offline: 'navigateur hors ligne',
   not_configured: 'service Teranga non configuré',
@@ -116,6 +118,91 @@ function quantity(value, unit) {
 
 function amount(value) {
   return value == null ? 'non calculé' : `${Math.round(value)} FCFA`;
+}
+
+export function buildAgriculturalFeasibilityContract({
+  local = {}, project = {}, inputItems = [], evidence = [], retainedYield = null,
+  terangaYield = null, externalAdjustmentApplied = false,
+} = {}) {
+  const metrics = buildFeasibilityMetrics(
+    local.metrics || {},
+    project,
+    terangaYield == null ? [] : [{ type: 'yield', predicted_yield_kg_ha: terangaYield }],
+    { mode: externalAdjustmentApplied || terangaYield != null ? 'hybrid' : 'local_offline' },
+    { credit: {
+      ...project,
+      interest_rate: project.interest_rate ?? project.interest_rate_percent,
+      interest_amount: project.interest_amount ?? project.credit_interest_amount,
+      total_repayable: project.total_repayable ?? project.total_due ?? project.credit_total_due,
+      duration_months: project.duration_months
+        ?? (project.interest_rate != null || project.interest_rate_percent != null ? 12 : undefined),
+      desired_schedule: project.desired_schedule,
+    } },
+  );
+  const realNeed = metrics.financing_need;
+  const requested = metrics.amount_requested;
+  const overfinancing = realNeed == null || requested == null ? null : Math.max(0, requested - realNeed);
+  const missingData = [...new Set([
+    ...(local.missing_data || []),
+    ...(metrics.project_cost == null ? ['coût détaillé du projet'] : []),
+    ...(requested == null ? ['montant demandé'] : []),
+    ...(metrics.retained_revenue == null ? ['données de production et de prix'] : []),
+  ])];
+  const assumptions = [
+    `Le rendement retenu est ${metrics.retained_yield == null ? 'indisponible' : `${metrics.retained_yield} kg/ha`}.`,
+    `Les pertes sont ${metrics.loss_percent == null ? 'non renseignées' : `fixées à ${metrics.loss_percent} %`}.`,
+    'Le scénario stressé applique une baisse de 20 % au revenu.',
+  ];
+  const risks = local.findings?.map(item => item.explanation).filter(Boolean) || [];
+  if (overfinancing > 0) risks.push(`Le montant demandé dépasse le besoin réel de ${Math.round(overfinancing)} FCFA.`);
+  const gains = [
+    metrics.project_margin == null ? 'Marge non calculable.' : `Marge estimée : ${Math.round(metrics.project_margin)} FCFA.`,
+    metrics.margin_after_debt == null
+      ? 'Excédent après remboursement non calculable.'
+      : `Excédent après remboursement : ${Math.round(metrics.margin_after_debt)} FCFA.`,
+  ];
+  return {
+    metrics: {
+      ...metrics,
+      real_financing_need: realNeed,
+      overfinancing,
+      total_due: metrics.total_repayable,
+      revenue: metrics.retained_revenue,
+      margin: metrics.project_margin,
+      gross_margin: metrics.project_margin,
+      surplus_after_repayment: metrics.margin_after_debt,
+      repayment_coverage_ratio: metrics.debt_coverage_ratio,
+      stress_revenue_minus_20_percent: metrics.stressed_revenue,
+      stress_surplus_after_repayment: metrics.stressed_margin_after_debt,
+      stress_coverage_ratio: metrics.stressed_debt_coverage_ratio,
+    },
+    report: {
+      language: 'fr',
+      narrative: `Le besoin réel est ${realNeed == null ? 'non calculé' : `estimé à ${Math.round(realNeed)} FCFA`}. ${buildFeasibilityReport({
+        status: local.adequacy_status === 'INCOMPATIBLE' || local.viability_status === 'NON_VIABLE'
+          ? 'HUMAN_REVIEW' : local.findings?.length ? 'ADJUST' : 'FEASIBLE',
+        project, local, metrics, source: { fallback_reason: 'not_configured' },
+      })}`,
+      assumptions,
+      evidence: evidence.map((item, index) => item.label || item.document_type || item.type || item.filename || `Preuve ${index + 1}`),
+      missing_data: missingData,
+      risks: risks.length ? risks : ['Aucun risque supplémentaire détecté avec les données disponibles.'],
+      benefits: metrics.project_margin != null && metrics.project_margin > 0
+        ? ['Le revenu estimé couvre le coût du projet avant remboursement.']
+        : ['Le bénéfice économique reste à confirmer.'],
+      gains,
+      mini_table: [
+        ['Coût du projet', metrics.project_cost],
+        ['Besoin réel', realNeed],
+        ['Montant demandé', requested],
+        ['Montant conseillé', metrics.recommended_amount],
+        ['Revenu', metrics.retained_revenue],
+        ['Marge', metrics.project_margin],
+        ['Total dû', metrics.total_repayable],
+        ['Excédent après remboursement', metrics.margin_after_debt],
+      ].map(([label, value]) => ({ label, value, unit: 'FCFA' })),
+    },
+  };
 }
 
 export function buildFeasibilityReport({ status, project = {}, local = {}, metrics = {}, source = {} }) {

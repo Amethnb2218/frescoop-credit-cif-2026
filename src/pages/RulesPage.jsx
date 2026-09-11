@@ -14,7 +14,25 @@ export default function RulesPage() {
     <div>
       <div className="page-header">
         <h1 className="page-title">Moteur de règles</h1>
-        <p className="page-subtitle">Règles métier appliquées lors de la préqualification des dossiers</p>
+        <p className="page-subtitle">Calcul déterministe de la préqualification : règles, formules et seuils métier explicites</p>
+      </div>
+
+      <div className="surface mb-6">
+        <div className="surface-title">Comment lire le résultat</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 16 }}>
+          <div>
+            <div className="font-semibold" style={{ marginBottom: 4 }}>Pas de modèle opaque</div>
+            <p className="text-sm text-muted">À données et version de règles identiques, FresCoop produit le même résultat. Chaque point et chaque alerte renvoient à un calcul ou à un seuil identifiable.</p>
+          </div>
+          <div>
+            <div className="font-semibold" style={{ marginBottom: 4 }}>Provisoire, puis définitif</div>
+            <p className="text-sm text-muted">Un dossier incomplet conserve un score provisoire et la liste des données manquantes. Après complétion, un recalcul serveur établit le score définitif.</p>
+          </div>
+          <div>
+            <div className="font-semibold" style={{ marginBottom: 4 }}>Décision humaine</div>
+            <p className="text-sm text-muted">Teranga peut enrichir rendement, risque et conseil. Il ne décide jamais seul ; une indisponibilité n'entraîne ni pénalité ni refus automatique.</p>
+          </div>
+        </div>
       </div>
 
       {loading ? (

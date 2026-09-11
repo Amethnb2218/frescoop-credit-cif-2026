@@ -1,18 +1,71 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
-import { formatCFA, formatDate, formatDateTime, STATUS_LABELS, MONTHS, prequalLabel, prequalColor, scoreStyle, parseScoreDetails, getMissingScoreData, isProvisionalScore, isScoreAvailable } from '../lib/format';
+import { formatCFA, formatDate, formatDateTime, STATUS_LABELS, MONTHS, prequalLabel, prequalColor, scoreStyle, parseScoreDetails, getMissingScoreData, isProvisionalScore, isScoreAvailable, normalizeMissingData } from '../lib/format';
 import { EVIDENCE_LEVELS } from '../lib/tokens';
 import { isOnline, addToSyncQueue, saveEvidenceOffline, deleteEvidenceOffline } from '../lib/offline';
 import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff, Shield, MapPin, FileCheck, Printer, Download, Trash2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { feasibilityReasonMessage } from '../../shared/agriculturalFeasibilityContract.js';
+
+const DECISION_AUTHORITY_THRESHOLD = 1_000_000;
+const DECISION_STATUSES_BY_AUTHORITY = {
+  SUPERVISEUR: ['review', 'review_required', 'prequalified', 'committee_ready', 'committee'],
+  COMITE: ['committee_ready', 'committee'],
+};
+
+function resolveDecisionAuthority(amountRequested) {
+  if (amountRequested === null || amountRequested === undefined || amountRequested === '') return null;
+  const amount = Number(amountRequested);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return amount <= DECISION_AUTHORITY_THRESHOLD ? 'SUPERVISEUR' : 'COMITE';
+}
+
+function canExerciseDecisionAuthority(role, authority) {
+  return Boolean(authority && (role === authority || role === 'ADMIN' || role === 'SUPERADMIN'));
+}
+
+function canDecideDossier(dossier, role) {
+  const authority = resolveDecisionAuthority(dossier?.amount_requested);
+  return canExerciseDecisionAuthority(role, authority)
+    && DECISION_STATUSES_BY_AUTHORITY[authority]?.includes(dossier?.status)
+    && !dossier?.decision;
+}
+
+function decisionAuthorityLabel(authority) {
+  return authority === 'SUPERVISEUR' ? 'superviseur' : authority === 'COMITE' ? 'comité de crédit' : 'service habilité';
+}
+
+function positiveNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+function nonNegativeNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function repaymentTerms(dossier, scoreDetails = parseScoreDetails(dossier?.prequalification_score_details) || {}) {
+  const duration = positiveNumber(dossier?.duration_months);
+  const proposedPayment = positiveNumber(scoreDetails.proposed_monthly_payment);
+  const principal = positiveNumber(dossier?.amount_requested);
+  const interest = nonNegativeNumber(scoreDetails.interest_amount) ?? nonNegativeNumber(dossier?.interest_amount);
+  const totalRepayable = positiveNumber(scoreDetails.total_repayable)
+    ?? positiveNumber(dossier?.total_repayable)
+    ?? (principal != null && interest != null ? principal + interest : null);
+  return {
+    monthlyPayment: proposedPayment ?? (duration != null && totalRepayable != null ? Math.ceil(totalRepayable / duration) : null),
+    totalRepayable,
+  };
+}
 
 function getTabsForRole(role) {
   if (role === 'COMITE') return ['Mémo décision', 'Décision'];
   if (role === 'AUDITEUR') return ['Résumé', 'Preuves', 'Cash-flow', 'Préqualification', 'Audit'];
   if (role === 'RISK_MANAGER') return ['Résumé', 'Preuves', 'Cash-flow', 'Stress test', 'Préqualification', 'Contrôles', 'Audit'];
-  if (role === 'SUPERVISEUR') return ['Résumé', 'Preuves', 'Cash-flow', 'Stress test', 'Préqualification', 'Contrôles', 'Audit'];
+  if (role === 'SUPERVISEUR') return ['Résumé', 'Preuves', 'Cash-flow', 'Stress test', 'Préqualification', 'Contrôles', 'Décision', 'Audit'];
   if (role === 'AGENT') return ['Résumé', 'Preuves', 'Cash-flow', 'Contrôles'];
   return ['Résumé', 'Preuves', 'Cash-flow', 'Stress test', 'Préqualification', 'Contrôles', 'Décision', 'Audit'];
 }
@@ -33,6 +86,7 @@ export default function DossierDetail() {
   const [loading, setLoading] = useState(true);
   const [bicData, setBicData] = useState(null);
   const [actionError, setActionError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => { loadDossier(); }, [id]);
 
@@ -75,7 +129,17 @@ export default function DossierDetail() {
   }
 
   async function advanceStatus(newStatus) {
-    try { await api.updateStatus(id, newStatus); await loadDossier(); } catch {}
+    setActionError('');
+    try { await api.updateStatus(id, newStatus); await loadDossier(); }
+    catch (err) { setActionError(err.message); }
+  }
+
+  async function resubmit() {
+    setSubmitting(true);
+    setActionError('');
+    try { await api.resubmitDossier(id); await loadDossier(); }
+    catch (err) { setActionError(err.message); }
+    finally { setSubmitting(false); }
   }
 
   useEffect(() => { if (tab === 'Audit') loadAudit(); }, [tab]);
@@ -83,12 +147,14 @@ export default function DossierDetail() {
   if (loading) return <div className="loading-state">Chargement du dossier...</div>;
   if (!dossier) return <div className="empty-state"><div className="empty-state-title">Dossier introuvable</div></div>;
 
-  const workflowSteps = ['draft', 'submitted', 'verification', 'review', 'committee', 'decided'];
+  const workflowSteps = dossier.status === 'incomplete'
+    ? ['draft', 'incomplete', 'submitted', 'verification', 'review', 'committee', 'decided']
+    : ['draft', 'submitted', 'verification', 'review', 'committee', 'decided'];
   const currentIdx = workflowSteps.indexOf(dossier.status);
   const role = user?.role;
 
   const canAdvance = (targetStatus) => {
-    if (targetStatus === 'submitted' && dossier.status === 'draft') return ['AGENT', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(role);
+    if (targetStatus === 'submitted' && ['draft', 'incomplete'].includes(dossier.status)) return ['AGENT', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(role);
     if (['verification', 'review', 'committee'].includes(targetStatus)) return ['SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(role);
     return false;
   };
@@ -99,10 +165,14 @@ export default function DossierDetail() {
     return canAdvance(next) ? next : null;
   };
 
-  const missingScoreData = getMissingScoreData(dossier.prequalification_score_details);
-  const hasScore = isScoreAvailable(dossier.prequalification_score);
   const ns = nextStatus();
   const nextLabel = { submitted: 'Soumettre', verification: 'Lancer vérification', review: 'Passer en revue', committee: 'Transmettre au comité' };
+  const agentCanEdit = role === 'AGENT' && ['draft', 'incomplete'].includes(dossier.status);
+  const hasScore = isScoreAvailable(dossier.prequalification_score);
+  const provisionalScore = isProvisionalScore(dossier.prequalification_score_details);
+  const missingScoreData = getMissingScoreData(dossier.prequalification_score_details);
+  const decisionAuthority = resolveDecisionAuthority(dossier.amount_requested);
+  const canTakeDecision = canDecideDossier(dossier, role);
 
   return (
     <div>
@@ -116,16 +186,30 @@ export default function DossierDetail() {
           <div>
             <h1 className="page-title">{dossier.applicant_name || 'Dossier'}</h1>
             <p className="page-subtitle">{dossier.applicant_location} · {dossier.activity_type || dossier.sector} · {formatCFA(dossier.amount_requested)}</p>
-            {!hasScore && <p className="text-xs text-muted" style={{ marginTop: 4 }}>Non calculé — données insuffisantes</p>}
+            {hasScore ? (
+              <p className="text-xs text-muted" style={{ marginTop: 4 }}>
+                {provisionalScore ? 'Score provisoire — données à compléter' : 'Score définitif calculé sur les données disponibles'}
+              </p>
+            ) : <p className="text-xs text-muted" style={{ marginTop: 4 }}>Non calculé — données insuffisantes</p>}
           </div>
         </div>
         <div className="flex gap-2">
-          {ns && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus(ns)}>{nextLabel[ns]}</button>}
-          {dossier.status === 'committee' && ['COMITE', 'ADMIN', 'SUPERADMIN'].includes(role) && !dossier.decision && <button className="btn btn-primary btn-sm" onClick={() => setTab('Décision')}>Prendre une décision</button>}
+          {agentCanEdit && <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/dossiers/${id}/edit`)}>Modifier le dossier</button>}
+          {agentCanEdit && dossier.status === 'incomplete' && <button className="btn btn-primary btn-sm" onClick={resubmit} disabled={submitting}>{submitting ? 'Resoumission...' : 'Resoumettre'}</button>}
+          {ns && !(agentCanEdit && dossier.status === 'incomplete') && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus(ns)}>{nextLabel[ns]}</button>}
+          {canTakeDecision && <button className="btn btn-primary btn-sm" onClick={() => setTab('Décision')}>Décision du {decisionAuthorityLabel(decisionAuthority)}</button>}
         </div>
       </div>
 
-      {!hasScore && <MissingDataPanel missing={missingScoreData} />}
+      {actionError && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '10px 14px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{actionError}</div>}
+
+      {dossier.status === 'incomplete' && dossier.decision_motif && (
+        <div style={{ padding: '12px 16px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-md)', marginBottom: 12, color: '#92400e' }}>
+          <strong>Complément demandé :</strong> {dossier.decision_motif}
+        </div>
+      )}
+
+      {(provisionalScore || !hasScore) && <MissingDataPanel missing={missingScoreData} />}
 
       {hasScore && (() => {
         const style = scoreStyle(dossier.prequalification_score);
@@ -166,31 +250,25 @@ export default function DossierDetail() {
 }
 
 function MissingDataPanel({ missing, compact = false }) {
-  if (missing.length === 0) {
-    return (
-      <div style={{ padding: compact ? 10 : 14, marginBottom: 12, borderRadius: 'var(--radius-md)', background: '#f8fafc', border: '1px solid #cbd5e1' }}>
-        <strong style={{ fontSize: 'var(--fs-12)' }}>Données à compléter</strong>
-        <p className="text-xs text-muted" style={{ marginTop: 4 }}>Le diagnostic détaillé sera disponible après un nouveau calcul du dossier.</p>
-      </div>
-    );
-  }
-
   return (
-    <div style={{ padding: compact ? 10 : 14, marginBottom: 12, borderRadius: 'var(--radius-md)', background: '#fffbeb', border: '1px solid #fcd34d' }}>
-      <strong style={{ fontSize: 'var(--fs-12)', color: '#92400e' }}>Données à compléter</strong>
-      <ul style={{ margin: '6px 0 0 18px', fontSize: 'var(--fs-12)', color: '#78350f' }}>
-        {missing.map(item => <li key={item.code || item.field || item.label}>{item.label}</li>)}
-      </ul>
+    <div style={{ padding: compact ? 10 : 14, marginBottom: 12, borderRadius: 'var(--radius-md)', background: missing.length > 0 ? '#fffbeb' : '#f8fafc', border: `1px solid ${missing.length > 0 ? '#fcd34d' : '#cbd5e1'}` }}>
+      <strong style={{ fontSize: 'var(--fs-12)', color: missing.length > 0 ? '#92400e' : 'var(--c-text)' }}>Données à compléter</strong>
+      {missing.length > 0 ? (
+        <ul style={{ margin: '6px 0 0 18px', fontSize: 'var(--fs-12)', color: '#78350f' }}>
+          {missing.map(item => <li key={item.code || item.field || item.label}>{item.label}</li>)}
+        </ul>
+      ) : <p className="text-xs text-muted" style={{ marginTop: 4 }}>Le détail des données manquantes sera disponible après un nouveau calcul.</p>}
     </div>
   );
 }
 
 function ScoreCircle({ score }) {
   if (!isScoreAvailable(score)) return null;
-  const style = scoreStyle(score);
+  const numericScore = Number(score);
+  const style = scoreStyle(numericScore);
   return (
-    <div aria-label={`${style.label}, score technique ${score} sur 100`} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 56, height: 56, borderRadius: '50%', background: style.background, border: `3px solid ${style.border}`, flexShrink: 0 }}>
-      <span style={{ fontSize: 18, fontWeight: 700, color: style.color }}>{score}</span>
+    <div aria-label={`${style.label}, score technique ${numericScore} sur 100`} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 56, height: 56, borderRadius: '50%', background: style.background, border: `3px solid ${style.border}`, flexShrink: 0 }}>
+      <span style={{ fontSize: 18, fontWeight: 700, color: style.color }}>{numericScore}</span>
     </div>
   );
 }
@@ -220,7 +298,7 @@ function MemoTab({ dossier, evidence, cashflow, ruleEvals }) {
       <div className="print-area" style={{ background: '#fff', border: '1px solid var(--c-border)', borderRadius: 'var(--radius-md)', padding: 24 }}>
         <div style={{ textAlign: 'center', marginBottom: 24, paddingBottom: 16, borderBottom: '2px solid var(--c-primary)' }}>
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16 }}>
-            {dossier.prequalification_score != null && <ScoreCircle score={dossier.prequalification_score} />}
+            {isScoreAvailable(dossier.prequalification_score) && <ScoreCircle score={dossier.prequalification_score} />}
             <div>
               <h2 style={{ fontSize: 'var(--fs-xl)', fontWeight: 700, color: 'var(--c-primary)' }}>Mémo de crédit</h2>
               <p style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', marginTop: 4 }}>{dossier.applicant_name} — {formatCFA(dossier.amount_requested)}</p>
@@ -304,7 +382,7 @@ function MemoTab({ dossier, evidence, cashflow, ruleEvals }) {
           </MemoSection>
         )}
 
-        {dossier.prequalification_score != null && (
+        {isScoreAvailable(dossier.prequalification_score) && (
           <div style={{ textAlign: 'center', paddingTop: 16, borderTop: '2px solid var(--c-primary)' }}>
             <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginBottom: 4 }}>SCORE TECHNIQUE</div>
             <ScoreCircle score={dossier.prequalification_score} />
@@ -350,45 +428,47 @@ function metricNumber(metrics, projectAssessment, keys) {
   return null;
 }
 
-function displayYield(value, reason = '') {
-  return value == null
-    ? `Non calculé${reason ? ` — ${reason}` : ''}`
-    : `${new Intl.NumberFormat('fr-FR').format(value)} kg/ha`;
-}
-
-function agronomicMissingLabels(missing = []) {
-  return missing.map(item => typeof item === 'string' ? item : item?.label).filter(Boolean);
-}
-
-function terangaYieldFromAnalysis(analysis = {}) {
-  const signals = analysis.details?.external_signals || analysis.external_signals || [];
-  const signal = signals.find(item => item?.type === 'yield');
-  const value = signal?.predicted_yield_kg_ha;
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+function displayYield(value) {
+  return value == null ? 'Non disponible' : `${new Intl.NumberFormat('fr-FR').format(value)} kg/ha`;
 }
 
 function assessmentSourceLabel(source = {}) {
-  if (source.mode === 'hybrid') return 'Moteur local FresCoop enrichi par Teranga AI';
-  if (source.mode === 'hybrid_partial') return 'Moteur local FresCoop — données Teranga partielles';
-  if (source.mode === 'local_fallback') return `Moteur local FresCoop — ${feasibilityReasonMessage(source.fallback_reason)}`;
-  if (source.fallback_reason === 'offline') return 'Moteur local FresCoop — navigateur hors ligne';
-  if (source.fallback_reason === 'not_configured') return 'Moteur local FresCoop — Teranga non configuré';
-  if (source.fallback_reason === 'insufficient_context') return 'Moteur local FresCoop — contexte insuffisant pour Teranga';
+  if (source.mode === 'hybrid' || source.mode === 'hybrid_partial') return 'Moteur local FresCoop + Teranga AI';
+  if (source.mode === 'local_offline') return 'Moteur local FresCoop — analyse hors connexion';
+  if (source.mode === 'local_fallback' || source.fallback_used) return 'Moteur local FresCoop — repli sécurisé sans pénalité Teranga AI';
   return 'Moteur local FresCoop';
+}
+
+function optionalReportList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(item => typeof item === 'string' ? item.trim() : item?.label || item?.description || item?.text).filter(Boolean);
+}
+
+function ReportList({ label, items }) {
+  if (items.length === 0) return null;
+  return <div className="text-xs" style={{ marginTop: 10 }}><strong>{label} :</strong> {items.join(' · ')}</div>;
 }
 
 function AgronomicAssessmentCard({ projectAssessment, compact = false }) {
   if (!projectAssessment) return null;
   const { analysis, metrics, source, status } = assessmentMetrics(projectAssessment);
   const declaredYield = metricNumber(metrics, projectAssessment, ['declared_yield', 'expected_yield']);
-  const terangaYield = terangaYieldFromAnalysis(analysis);
-  const retainedYield = metricNumber(metrics, projectAssessment, ['retained_yield']);
-  const expectedVolume = metricNumber(metrics, projectAssessment, ['expected_volume', 'retained_production', 'saleable_production']);
+  const terangaYield = metricNumber(metrics, projectAssessment, ['teranga_yield', 'predicted_yield_kg_ha']);
+  const retainedYield = metricNumber(metrics, projectAssessment, ['retained_yield']) ?? declaredYield;
   const declaredRevenue = metricNumber(metrics, projectAssessment, ['declared_revenue', 'expected_revenue']);
-  const retainedRevenue = metricNumber(metrics, projectAssessment, ['retained_revenue']);
+  const retainedRevenue = metricNumber(metrics, projectAssessment, ['retained_revenue']) ?? declaredRevenue;
   const recommendations = analysis.details?.recommendations || analysis.recommendations || [];
-  const missing = agronomicMissingLabels(analysis.details?.missing_data || analysis.missing_data || []);
-  const report = analysis.report || analysis.details?.report || '';
+  const rawReport = analysis.report || analysis.details?.report || projectAssessment.report || {};
+  const report = typeof rawReport === 'object' && rawReport ? rawReport : {};
+  const narrative = typeof rawReport === 'string' ? rawReport : report.narrative;
+  const terangaNarrative = report.teranga_narrative || analysis.teranga_narrative || analysis.details?.teranga_narrative;
+  const assumptions = optionalReportList(report.assumptions);
+  const evidenceItems = optionalReportList(report.evidence);
+  const reportMissing = normalizeMissingData(report.missing_data).map(item => item.label);
+  const risks = optionalReportList(report.risks);
+  const benefits = optionalReportList(report.benefits);
+  const gains = optionalReportList(report.gains);
+  const recommendationItems = optionalReportList(recommendations);
   const badgeClass = status === 'FEASIBLE' ? 'badge-success' : status === 'HUMAN_REVIEW' ? 'badge-error' : 'badge-warning';
   return (
     <div className="surface mb-4" style={{ borderLeft: `4px solid ${status === 'FEASIBLE' ? '#059669' : status === 'HUMAN_REVIEW' ? '#dc2626' : '#d97706'}` }}>
@@ -400,21 +480,22 @@ function AgronomicAssessmentCard({ projectAssessment, compact = false }) {
         {status && <span className={`badge ${badgeClass}`}>{status === 'FEASIBLE' ? 'Faisable' : status === 'ADJUST' ? 'À ajuster' : 'Revue humaine'}</span>}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${compact ? '125px' : '145px'}, 1fr))`, gap: 8 }}>
-        <div><div className="text-xs text-muted">Rendement déclaré</div><strong>{displayYield(declaredYield, 'rendement attendu manquant')}</strong></div>
-        <div><div className="text-xs text-muted">Rendement Teranga</div><strong>{displayYield(terangaYield, feasibilityReasonMessage(source.fallback_reason))}</strong></div>
-        <div><div className="text-xs text-muted">Rendement retenu</div><strong>{displayYield(retainedYield, 'rendement exploitable manquant')}</strong></div>
-        <div><div className="text-xs text-muted">Volume attendu</div><strong>{expectedVolume == null ? 'Non calculé — données incomplètes' : `${new Intl.NumberFormat('fr-FR').format(expectedVolume)} kg`}</strong></div>
-        <div><div className="text-xs text-muted">Revenu déclaré</div><strong>{declaredRevenue == null ? 'Non calculé — données incomplètes' : formatCFA(declaredRevenue)}</strong></div>
-        <div><div className="text-xs text-muted">Revenu retenu</div><strong>{retainedRevenue == null ? 'Non calculé — données incomplètes' : formatCFA(retainedRevenue)}</strong></div>
+        <div><div className="text-xs text-muted">Rendement</div><strong>{displayYield(declaredYield)}</strong></div>
+        <div><div className="text-xs text-muted">Rendement Teranga</div><strong>{displayYield(terangaYield)}</strong></div>
+        <div><div className="text-xs text-muted">Rendement retenu</div><strong>{displayYield(retainedYield)}</strong></div>
+        <div><div className="text-xs text-muted">Revenu déclaré</div><strong>{declaredRevenue == null ? '—' : formatCFA(declaredRevenue)}</strong></div>
+        <div><div className="text-xs text-muted">Revenu retenu</div><strong>{retainedRevenue == null ? '—' : formatCFA(retainedRevenue)}</strong></div>
       </div>
-      {missing.length > 0 && (
-        <div className="text-xs" style={{ marginTop: 12 }}><strong>Données à compléter :</strong> {missing.join(' · ')}</div>
-      )}
-      {report && (
-        <div className="text-xs" style={{ marginTop: 12, lineHeight: 1.6 }}><strong>Rapport agronomique :</strong> {report}</div>
-      )}
-      {recommendations.length > 0 && (
-        <div className="text-xs" style={{ marginTop: 12 }}><strong>Recommandations :</strong> {recommendations.join(' · ')}</div>
+      {narrative && <div className="text-xs" style={{ marginTop: 12, lineHeight: 1.6 }}><strong>Rapport agronomique :</strong> {narrative}</div>}
+      {terangaNarrative && <div className="text-xs" style={{ marginTop: 10, lineHeight: 1.6 }}><strong>Analyse Teranga :</strong> {terangaNarrative}</div>}
+      <ReportList label="Hypothèses" items={assumptions} />
+      <ReportList label="Preuves" items={evidenceItems} />
+      <ReportList label="Données manquantes" items={reportMissing} />
+      <ReportList label="Risques" items={risks} />
+      <ReportList label="Bénéfices" items={benefits} />
+      <ReportList label="Gains" items={gains} />
+      {recommendationItems.length > 0 && (
+        <div className="text-xs" style={{ marginTop: 12 }}><strong>Recommandations :</strong> {recommendationItems.join(' · ')}</div>
       )}
       <div className="text-xs text-muted" style={{ marginTop: 10 }}>
         {analysis.evaluated_at || projectAssessment.evaluated_at ? `Évalué le ${formatDateTime(analysis.evaluated_at || projectAssessment.evaluated_at)} · ` : ''}Avis explicable — décision finale humaine.
@@ -428,14 +509,15 @@ function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, o
   const totalExpenses = cashflow.reduce((s, e) => s + (e.expenses || 0), 0);
   const totalDebt = cashflow.reduce((s, e) => s + (e.debt_payments || 0), 0);
   const fluxNet = totalRevenue - totalExpenses - totalDebt;
-  const scoreVisual = scoreStyle(dossier.prequalification_score);
   const scoreDetails = parseScoreDetails(dossier.prequalification_score_details) || {};
+  const scoreVisual = scoreStyle(Number(dossier.prequalification_score));
   const missingScoreData = getMissingScoreData(scoreDetails);
+  const provisionalScore = isProvisionalScore(scoreDetails);
+  const { monthlyPayment, totalRepayable } = repaymentTerms(dossier, scoreDetails);
   const capacityRatio = scoreDetails.capacity_ratio;
   const stressedRatio = scoreDetails.stressed_capacity_ratio;
   const averageMonthlyNet = scoreDetails.average_monthly_net;
   const monthlyMargin = scoreDetails.monthly_margin_after_payment;
-  const monthlyPayment = scoreDetails.proposed_monthly_payment;
   const paymentMonths = Array.isArray(scoreDetails.payment_months) ? scoreDetails.payment_months : [];
   const scheduleMinimumMargin = scoreDetails.schedule_minimum_margin;
   const stressedScheduleMinimumMargin = scoreDetails.stressed_schedule_minimum_margin;
@@ -443,13 +525,13 @@ function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, o
 
   return (
     <div>
-      <div style={{ marginBottom: 20, padding: 18, borderRadius: 'var(--radius-md)', background: !capacityKnown ? '#f8fafc' : capacityRatio >= 1.3 ? '#ecfdf5' : capacityRatio >= 1 ? '#fffbeb' : '#fef2f2', border: `2px solid ${!capacityKnown ? '#cbd5e1' : capacityRatio >= 1.3 ? '#6ee7b7' : capacityRatio >= 1 ? '#fcd34d' : '#fca5a5'}` }}>
+      <div style={{ marginBottom: 20, padding: 18, borderRadius: 'var(--radius-md)', background: capacityKnown && capacityRatio >= 1.3 ? '#ecfdf5' : capacityKnown && capacityRatio >= 1 ? '#fffbeb' : '#fef2f2', border: `2px solid ${capacityKnown && capacityRatio >= 1.3 ? '#6ee7b7' : capacityKnown && capacityRatio >= 1 ? '#fcd34d' : '#fca5a5'}` }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
           <div>
             <div style={{ fontSize: 'var(--fs-xs)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.6px', color: '#475569' }}>Capacité de remboursement</div>
             <div style={{ fontSize: 'var(--fs-xl)', fontWeight: 800, marginTop: 3 }}>{capacityKnown ? `${capacityRatio.toFixed(2)}× l’échéance` : 'Non calculé — données insuffisantes'}</div>
           </div>
-          <span className={`badge ${dossier.repayment_capacity === 'SUFFICIENT' ? 'badge-success' : dossier.repayment_capacity === 'LIMIT' ? 'badge-warning' : dossier.repayment_capacity === 'INSUFFICIENT' ? 'badge-danger' : 'badge-neutral'}`}>
+          <span className={`badge ${dossier.repayment_capacity === 'SUFFICIENT' ? 'badge-success' : dossier.repayment_capacity === 'LIMIT' ? 'badge-warning' : 'badge-danger'}`}>
             {dossier.repayment_capacity === 'SUFFICIENT' ? 'Suffisante' : dossier.repayment_capacity === 'LIMIT' ? 'Limite' : dossier.repayment_capacity === 'INSUFFICIENT' ? 'Insuffisante' : 'Non calculable'}
           </span>
         </div>
@@ -459,10 +541,8 @@ function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, o
           <div><div className="text-xs text-muted">Marge après échéance</div><strong>{monthlyMargin == null ? '—' : formatCFA(monthlyMargin)}</strong></div>
           <div><div className="text-xs text-muted">Stress revenus −20 %</div><strong>{stressedRatio == null ? '—' : `${stressedRatio.toFixed(2)}×`}</strong></div>
         </div>
-        {!capacityKnown && (
-          <div style={{ marginTop: 12 }}>
-            <MissingDataPanel missing={missingScoreData} compact />
-          </div>
+        {(provisionalScore || !isScoreAvailable(dossier.prequalification_score)) && (
+          <div style={{ marginTop: 12 }}><MissingDataPanel missing={missingScoreData} compact /></div>
         )}
         <div className="text-xs text-muted" style={{ marginTop: 12 }}>
           Calendrier : {scoreDetails.seasonal_schedule ? 'saisonnier prévu' : dossier.desired_schedule || 'non renseigné'} · Revenus observés sur {scoreDetails.revenue_months ?? '—'} mois.
@@ -476,8 +556,8 @@ function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, o
       <AgronomicAssessmentCard projectAssessment={projectAssessment} />
 
       {/* Score + Key metrics banner */}
-      <div className={`summary-score-grid ${dossier.prequalification_score == null ? 'no-score' : ''}`}>
-        {dossier.prequalification_score != null && (
+      <div className={`summary-score-grid ${!isScoreAvailable(dossier.prequalification_score) ? 'no-score' : ''}`}>
+        {isScoreAvailable(dossier.prequalification_score) && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 16, background: scoreVisual.background, borderRadius: 'var(--radius-md)', border: `2px solid ${scoreVisual.softBorder}` }}>
             <ScoreCircle score={dossier.prequalification_score} />
             <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginTop: 6, fontWeight: 600 }}>SCORE TECHNIQUE</div>
@@ -571,12 +651,13 @@ function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, o
                 <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginTop: 2 }}>Flux net</div>
               </div>
             </div>
-            {monthlyPayment > 0 && (
+            {monthlyPayment != null && (
               <div style={{ marginTop: 10, padding: '8px 12px', background: '#f3f4f6', borderRadius: 'var(--radius)', fontSize: 'var(--fs-12)', display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: '#6b7280' }}>Échéance mensuelle estimée</span>
+                <span style={{ color: '#6b7280' }}>Échéance mensuelle estimée, intérêts inclus</span>
                 <span style={{ fontWeight: 600 }}>{formatCFA(monthlyPayment)}</span>
               </div>
             )}
+            {totalRepayable != null && <div className="text-xs text-muted" style={{ marginTop: 6 }}>Total remboursable : <strong>{formatCFA(totalRepayable)}</strong></div>}
           </div>
 
           {dossier.prequalification && (
@@ -860,7 +941,7 @@ function CashflowTab({ dossierId, cashflow, dossier, onReload }) {
   const totalRevenue = entries.reduce((s, e) => s + (e.revenue || 0), 0);
   const totalExpenses = entries.reduce((s, e) => s + (e.expenses || 0), 0);
   const totalDebt = entries.reduce((s, e) => s + (e.debt_payments || 0), 0);
-  const monthlyPayment = dossier.amount_requested && dossier.duration_months ? Math.ceil(dossier.amount_requested / dossier.duration_months) : 0;
+  const { monthlyPayment, totalRepayable } = repaymentTerms(dossier);
 
   return (
     <div>
@@ -875,7 +956,7 @@ function CashflowTab({ dossierId, cashflow, dossier, onReload }) {
         <div className="metric-card"><div className="metric-value" style={{ fontSize: 'var(--fs-xl)', color: 'var(--c-success)' }}>{formatCFA(totalRevenue)}</div><div className="metric-label">Revenus annuels</div></div>
         <div className="metric-card"><div className="metric-value" style={{ fontSize: 'var(--fs-xl)', color: 'var(--c-error)' }}>{formatCFA(totalExpenses + totalDebt)}</div><div className="metric-label">Charges + dettes</div></div>
         <div className="metric-card"><div className="metric-value" style={{ fontSize: 'var(--fs-xl)' }}>{formatCFA(totalRevenue - totalExpenses - totalDebt)}</div><div className="metric-label">Flux net</div></div>
-        <div className="metric-card"><div className="metric-value" style={{ fontSize: 'var(--fs-xl)' }}>{formatCFA(monthlyPayment)}</div><div className="metric-label">Échéance mensuelle</div></div>
+        <div className="metric-card"><div className="metric-value" style={{ fontSize: 'var(--fs-xl)' }}>{monthlyPayment == null ? '—' : formatCFA(monthlyPayment)}</div><div className="metric-label">Échéance mensuelle, intérêts inclus</div>{totalRepayable != null && <div className="text-xs text-muted">Total : {formatCFA(totalRepayable)}</div>}</div>
       </div>
 
       <div className="surface mb-4">
@@ -963,10 +1044,12 @@ function StressTab({ stressTests, onRun }) {
 }
 
 function PrequalTab({ dossier, projectAssessment, ruleEvals, onEvaluate }) {
-  const scoreVisual = scoreStyle(dossier.prequalification_score);
-  const scoreDetails = parseScoreDetails(dossier.prequalification_score_details);
-  const components = scoreDetails?.components;
-  const agronomicImpact = scoreDetails?.agronomic_impact;
+  const scoreDetails = parseScoreDetails(dossier.prequalification_score_details) || {};
+  const components = scoreDetails.components;
+  const agronomicImpact = scoreDetails.agronomic_impact;
+  const hasScore = isScoreAvailable(dossier.prequalification_score);
+  const provisionalScore = isProvisionalScore(scoreDetails);
+  const missingScoreData = getMissingScoreData(scoreDetails);
 
   return (
     <div>
@@ -996,12 +1079,14 @@ function PrequalTab({ dossier, projectAssessment, ruleEvals, onEvaluate }) {
         </div>
       )}
 
-      {dossier.prequalification_score != null && (
+      {(provisionalScore || !hasScore) && <MissingDataPanel missing={missingScoreData} />}
+
+      {hasScore && (
         <div className="surface mb-4" style={{ padding: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
             <ScoreCircle score={dossier.prequalification_score} />
             <div>
-              <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700 }}>Score technique : {dossier.prequalification_score}/100</div>
+              <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700 }}>{provisionalScore ? 'Score provisoire' : 'Score définitif'} : {Number(dossier.prequalification_score)}/100</div>
               <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', marginTop: 2 }}>{scoreVisual.label} — la préqualification reste déterminée par les règles bloquantes</div>
             </div>
           </div>
@@ -1291,7 +1376,11 @@ function ControlsTab({ dossierId, dossier }) {
 
 function DecisionTab({ dossier, onReload }) {
   const user = getUser();
-  const canDecide = ['COMITE', 'ADMIN', 'SUPERADMIN'].includes(user?.role);
+  const authority = resolveDecisionAuthority(dossier.amount_requested);
+  const authorityLabel = decisionAuthorityLabel(authority);
+  const authorizedRole = canExerciseDecisionAuthority(user?.role, authority);
+  const compatibleStatus = Boolean(authority && DECISION_STATUSES_BY_AUTHORITY[authority]?.includes(dossier.status));
+  const canDecide = authorizedRole && compatibleStatus;
   const [form, setForm] = useState({ decision: 'approved', amount: dossier.amount_requested || '', duration: dossier.duration_months || '', schedule: dossier.desired_schedule || '', motif: '' });
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
@@ -1343,15 +1432,19 @@ function DecisionTab({ dossier, onReload }) {
 
   if (!canDecide) return (
     <div className="surface" style={{ textAlign: 'center', padding: 40 }}>
-      <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600, marginBottom: 8 }}>En attente de décision du comité</div>
-      <p style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)' }}>Seul le comité de crédit peut prendre cette décision.</p>
+      <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600, marginBottom: 8 }}>En attente de décision du {authorityLabel}</div>
+      <p style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)' }}>
+        {!authorizedRole
+          ? `Seuls le ${authorityLabel}, un administrateur ou un super-administrateur peuvent prendre cette décision.`
+          : `La décision sera disponible lorsque le dossier atteindra un statut compatible pour le ${authorityLabel}.`}
+      </p>
     </div>
   );
 
   return (
     <div style={{ maxWidth: 600 }}>
       <div className="surface">
-        <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, marginBottom: 20 }}>Décision du comité de crédit</h2>
+        <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, marginBottom: 20 }}>Décision du {authorityLabel}</h2>
 
         {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '8px 12px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
 
@@ -1387,9 +1480,13 @@ function DecisionTab({ dossier, onReload }) {
           <label className="field-label">Calendrier de remboursement</label>
           <select className="input" value={form.schedule} onChange={e => setForm(f => ({ ...f, schedule: e.target.value }))}>
             <option value="">Sélectionner</option>
+            <option value="Hebdomadaire">Hebdomadaire</option>
             <option value="Mensuel classique">Mensuel classique</option>
-            <option value="Saisonnier (post-récolte)">Saisonnier (post-récolte)</option>
             <option value="Trimestriel">Trimestriel</option>
+            <option value="Semestriel">Semestriel</option>
+            <option value="Annuel">Annuel</option>
+            <option value="Saisonnier (post-récolte)">Saisonnier (post-récolte)</option>
+            <option value="Dégressif">Dégressif</option>
             <option value="In fine">In fine</option>
           </select>
         </div>

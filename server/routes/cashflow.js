@@ -3,6 +3,7 @@ import { getDb, uuid } from '../db.js';
 import { authMiddleware, tenantGuard, requireRole } from '../auth.js';
 import { logAudit } from './audit.js';
 import { findAccessibleDossier, isEditableDraft, scoreInvalidationStatement } from '../services/dossierAccess.js';
+import { resolveFinancingNeed, resolveLoanFinancials } from '../services/loanFinancials.js';
 
 const router = Router();
 
@@ -79,8 +80,13 @@ router.post('/dossier/:dossierId/stress-test', authMiddleware, tenantGuard,
     });
 
     const entries = cashflow.rows;
-    const { amount_requested, duration_months } = dossierRecord;
-    const monthlyPayment = amount_requested && duration_months ? Math.ceil(amount_requested / duration_months) : 0;
+    const loanFinancials = resolveLoanFinancials(dossierRecord);
+    const { duration_months: durationMonths, monthly_payment: monthlyPayment } = loanFinancials;
+    const projectResult = await db.execute({
+      sql: 'SELECT calculated_metrics FROM agricultural_project_assessments WHERE dossier_id = ? AND tenant_id = ?',
+      args: [dossierId, req.tenantId],
+    });
+    const financing = resolveFinancingNeed(dossierRecord, projectResult.rows[0]);
 
     const totalRevenue = entries.reduce((s, e) => s + (e.revenue || 0), 0);
     const totalExpenses = entries.reduce((s, e) => s + (e.expenses || 0) + (e.debt_payments || 0), 0);
@@ -102,7 +108,7 @@ router.post('/dossier/:dossierId/stress-test', authMiddleware, tenantGuard,
     for (const s of scenarios) {
       const adjustedRevenue = Math.floor(totalRevenue * s.revenue_adjustment);
       const netAvailable = adjustedRevenue - totalExpenses;
-      const monthlyCapacity = duration_months ? Math.floor(netAvailable / duration_months) : 0;
+      const monthlyCapacity = durationMonths ? Math.floor(netAvailable / durationMonths) : 0;
       const canRepay = monthlyCapacity >= monthlyPayment;
       const margin = monthlyPayment > 0 ? ((monthlyCapacity - monthlyPayment) / monthlyPayment * 100) : 0;
 
@@ -122,7 +128,13 @@ router.post('/dossier/:dossierId/stress-test', authMiddleware, tenantGuard,
     }
 
     await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, 'STRESS_TEST_RUN', 'dossier', dossierId, { scenarios: results.length }, req);
-    res.json({ ok: true, stress_tests: results, monthly_payment: monthlyPayment });
+    res.json({
+      ok: true,
+      stress_tests: results,
+      monthly_payment: monthlyPayment,
+      loan_financials: loanFinancials,
+      financing,
+    });
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });
   }

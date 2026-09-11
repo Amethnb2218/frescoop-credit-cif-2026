@@ -1,5 +1,9 @@
 # Moteur de scoring technique v4
 
+## Nature du moteur
+
+FresCoop n'utilise pas un modèle de machine learning opaque pour produire le score. Le moteur est **déterministe** : il applique des règles métier, formules, pondérations et seuils versionnés. À données et version identiques, le résultat et ses motifs sont identiques. Teranga AI fournit uniquement des signaux agronomiques encadrés ; la préqualification et la décision humaine restent séparées.
+
 ## Pourquoi les scores étaient tous à 25
 
 L'ancien moteur calculait un score variable, puis appliquait `Math.min(score, 25)` dès qu'une règle bloquante était déclenchée. Les dossiers non éligibles finissaient donc presque tous à 25, quelles que soient leurs données.
@@ -13,9 +17,14 @@ La version 4 supprime ce plafond, sépare clairement la décision du score et re
 
 Un score élevé ne remplace donc jamais une règle critique ni la décision humaine du comité.
 
-## Conditions nécessaires au calcul
+## Statut provisoire ou définitif
 
-Aucun score numérique n'est produit tant que les données indispensables ne sont pas présentes :
+Le moteur calcule à partir des informations disponibles, mais distingue explicitement deux états :
+
+- **provisoire** tant que des données indispensables manquent ; le détail énumère ces données et le résultat ne doit pas être utilisé comme une décision finale ;
+- **définitif** après complétion du dossier et recalcul avec la version courante des règles.
+
+Les données indispensables contrôlées sont :
 
 - identité du demandeur et numéro d'identification ;
 - secteur Agriculture et activité renseignée ;
@@ -24,7 +33,7 @@ Aucun score numérique n'est produit tant que les données indispensables ne son
 - projet agricole avec culture, surface, rendement et prix ;
 - au moins un intrant ou une charge avec un coût positif.
 
-Dans le cas contraire, le score reste `NULL` et le détail indique `INSUFFICIENT_DATA`. Cette règle évite d'afficher un faux score faible pour un dossier simplement incomplet.
+Chaque modification structurante ou synchronisation déclenche un nouveau calcul. « Définitif » décrit donc le score du dossier complet dans son état courant, pas une valeur figée malgré des données ou règles ultérieurement modifiées.
 
 ## Calcul auditable
 

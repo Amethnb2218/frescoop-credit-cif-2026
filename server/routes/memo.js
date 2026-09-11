@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb } from '../db.js';
 import { authMiddleware, tenantGuard } from '../auth.js';
 import { findAccessibleDossier, hasBicConsent } from '../services/dossierAccess.js';
+import { resolveFinancingNeed, resolveLoanFinancials } from '../services/loanFinancials.js';
 
 const router = Router();
 
@@ -54,12 +55,17 @@ router.get('/:dossierId', authMiddleware, tenantGuard, async (req, res) => {
     const bicRecords = bicResult.rows;
     const triggeredRules = ruleEvalsResult.rows;
 
+    const projectResult = await db.execute({
+      sql: 'SELECT calculated_metrics FROM agricultural_project_assessments WHERE dossier_id = ? AND tenant_id = ?',
+      args: [dossierId, req.tenantId],
+    });
+    const financing = resolveFinancingNeed(dossier, projectResult.rows[0]);
+    const loanFinancials = resolveLoanFinancials(dossier);
     const totalRevenue = cashflow.reduce((s, e) => s + (e.revenue || 0), 0);
     const totalExpenses = cashflow.reduce((s, e) => s + (e.expenses || 0), 0);
     const totalDebt = cashflow.reduce((s, e) => s + (e.debt_payments || 0), 0);
     const netFlow = totalRevenue - totalExpenses - totalDebt;
-    const monthlyPayment = dossier.amount_requested && dossier.duration_months
-      ? Math.ceil(dossier.amount_requested / dossier.duration_months) : 0;
+    const monthlyPayment = loanFinancials.monthly_payment;
 
     const monthsWithRevenue = cashflow.filter(e => e.revenue > 0).length;
     const monthsOfTension = cashflow.filter(e => {
@@ -87,6 +93,10 @@ router.get('/:dossierId', authMiddleware, tenantGuard, async (req, res) => {
         purpose: dossier.credit_purpose,
         duration_months: dossier.duration_months,
         schedule: dossier.desired_schedule,
+        interest_rate: loanFinancials.interest_rate,
+        interest_amount: loanFinancials.interest_amount,
+        total_repayable: loanFinancials.total_repayable,
+        financing,
       },
 
       activity: {

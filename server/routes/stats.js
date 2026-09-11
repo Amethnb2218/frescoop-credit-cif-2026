@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getDb } from '../db.js';
 import { authMiddleware, tenantGuard, requireRole } from '../auth.js';
+import { summarizeDossierFinancials } from '../services/loanFinancials.js';
 
 const router = Router();
 
@@ -32,6 +33,11 @@ router.get('/', authMiddleware, tenantGuard, requireRole('ADMIN', 'SUPERADMIN', 
 
     const requiredFields = ['applicant_name', 'applicant_phone', 'applicant_id_number', 'applicant_location', 'amount_requested', 'duration_months', 'credit_purpose', 'sector'];
     const allDossiers = await db.execute({ sql: 'SELECT * FROM dossiers WHERE tenant_id = ?', args: [tid] });
+    const assessmentResult = await db.execute({
+      sql: 'SELECT dossier_id, calculated_metrics FROM agricultural_project_assessments WHERE tenant_id = ?',
+      args: [tid],
+    });
+    const financials = summarizeDossierFinancials(allDossiers.rows, assessmentResult.rows);
     let completeCount = 0;
     for (const d of allDossiers.rows) {
       const isComplete = requiredFields.every(f => d[f] != null && d[f] !== '');
@@ -65,6 +71,9 @@ router.get('/', authMiddleware, tenantGuard, requireRole('ADMIN', 'SUPERADMIN', 
         total_decisions: totalDecisions,
         total_overrides: overrides,
         prequalification_distribution: prequalDistribution,
+        total_amount: financials.total_repayable,
+        average_amount: total > 0 ? Math.round(financials.total_repayable / total) : 0,
+        financials,
       },
     });
   } catch (err) {

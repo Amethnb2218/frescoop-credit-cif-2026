@@ -1,29 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
 import { buildLocalFeasibility } from '../agriculturalFeasibilityLocal';
-import {
-  addToSyncQueue,
-  deleteDossierDraft,
-  getDossierDraft,
-  isOnline,
-  saveDossierDraft,
-  saveDossierOffline,
-} from '../lib/offline';
-import { CROP_OPTIONS, OTHER_CROP_VALUE, resolveCrop } from '../lib/agriculturalProject';
-import { dossierDraftKey, restoreDraftEvidence, serializeDraftEvidence } from '../lib/dossierDraft';
+import { isOnline, saveDossierOffline, updateDossierOffline, getDossierOffline, addToSyncQueue } from '../lib/offline';
 import { formatCFA } from '../lib/format';
-import { feasibilityReasonMessage } from '../../shared/agriculturalFeasibilityContract.js';
+import { calculateLoanTerms, buildDetailedRepaymentSchedule } from '../../shared/creditCalculations.js';
 import { Save, WifiOff, ArrowLeft, ArrowRight, MapPin, Plus, Trash2, Pencil } from 'lucide-react';
 
 const STEPS = [
-  { key: 'identification', label: 'Identification et demande de crédit' },
+  { key: 'identification-demande', label: 'Identification/demande' },
   { key: 'projet', label: 'Projet agricole' },
-  { key: 'faisabilite', label: 'Faisabilité agronomique' },
-  { key: 'budget', label: 'Budget et revenus' },
-  { key: 'preuves-garanties', label: 'Preuves et garanties' },
-  { key: 'dettes', label: 'Dettes / BIC' },
-  { key: 'resume', label: 'Résumé avant validation' },
+  { key: 'budget-revenus', label: 'Budget/revenus' },
+  { key: 'faisabilite', label: 'Faisabilité' },
+  { key: 'preuves-garanties', label: 'Preuves/garanties' },
+  { key: 'dettes-bic', label: 'Dettes/BIC' },
+  { key: 'resume', label: 'Résumé' },
 ];
 
 const LOCATIONS = [
@@ -46,12 +37,15 @@ const MONTHS = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet'
 function num(v) { return v === '' || v == null ? null : Number(v); }
 
 function buildProjectAssessment(form) {
-  const crop = resolveCrop(form.crop_selection, form.crop_other_label);
+  const crops = form.crops?.length ? form.crops : (form.crop_name ? [{ name: form.crop_name, variety: form.crop_variety, surface_ha: num(form.project_surface_ha) }] : []);
+  const modes = form.cultivation_modes?.length ? form.cultivation_modes : (form.irrigation_mode ? [form.irrigation_mode] : []);
   return {
-    ...crop, variety: form.crop_variety,
-    crop_experience_years: num(form.crop_experience_years), project_surface_ha: num(form.project_surface_ha),
+    crop_code: JSON.stringify(crops), crop_label: crops.map(crop => crop.name).filter(Boolean).join(', ') || form.crop_name,
+    variety: crops.map(crop => crop.variety).filter(Boolean).join(', ') || form.crop_variety,
+    crop_experience_years: num(form.crop_experience_years), project_surface_ha: crops.reduce((sum, crop) => sum + Number(crop.surface_ha || 0), 0) || num(form.project_surface_ha),
     land_access: form.land_access, agro_zone: form.agro_zone, soil_type: form.soil_type,
-    soil_source: form.soil_source, season: form.season, cultivation_mode: form.irrigation_mode,
+    soil_source: form.soil_source, season: form.season, cultivation_mode: modes.join(', ') || form.irrigation_mode,
+    previous_campaign_result: JSON.stringify(modes),
     water_source: form.water_source, water_reliability: form.water_reliability,
     sowing_month: form.production_cycle_start === '' ? null : Number(form.production_cycle_start) + 1,
     harvest_month: form.production_cycle_end === '' ? null : Number(form.production_cycle_end) + 1,
@@ -74,33 +68,83 @@ const GUARANTEE_TYPES = [
   { value: 'Mixte', label: 'Combinaison de garanties' },
 ];
 
+const INITIAL_FORM = {
+  amount_requested: '', credit_purpose: '', duration_months: '', desired_schedule: '', interest_calculation_mode: 'rate', interest_rate: '', interest_amount: '',
+  applicant_name: '', applicant_phone: '', applicant_id_number: '', applicant_location: '', applicant_activity: 'Agriculteur',
+  sector: 'Agriculture', activity_type: '', years_experience: '', surface_ha: '', production_cycle_start: '', production_cycle_end: '', production_cycle: '',
+  crop_name: '', crop_variety: '', crop_experience_years: '', project_surface_ha: '', land_access: '', agro_zone: '', soil_type: '', soil_source: '', season: '', irrigation_mode: '', water_source: '', water_reliability: '', expected_yield: '', expected_price: '', loss_percent: '', own_contribution: '', other_funding: '', climate_risks: '', mitigations: '', crops: [], cultivation_modes: [],
+  revenue_commerce: '', commerce_revenue_frequency: 'mensuel', revenue_other: '', other_revenue_frequency: 'mensuel', main_buyer: '',
+  expenses_agriculture: '', expenses_household: '',
+  savings_amount: '', guarantee_type: '', group_guarantee: '', other_guarantees: '', third_party_commitment: false,
+  guarantor_name: '', guarantor_id_number: '', guarantor_phone: '', guarantor_location: '', guarantor_relationship: '', guarantor_commitment_type: '', guarantor_commitment_amount: '', guarantor_consent: false,
+  agent_note: '',
+};
+
+function parseJson(value, fallback) {
+  if (!value) return fallback;
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch { return fallback; }
+}
+
+function frequencyMultiplier(frequency) {
+  return { hebdomadaire: 52, mensuel: 12, trimestriel: 4, semestriel: 2, saisonnier: 1, annuel: 1, 'in fine': 1, dégressif: 12 }[frequency] || 1;
+}
+
+function creditCalculationInput(form) {
+  return {
+    ...form,
+    interest_calculation_mode: form.interest_calculation_mode === 'fixed' ? 'fixed' : 'rate',
+    interest_amount: form.interest_calculation_mode === 'fixed' && form.interest_amount === '' ? 0 : form.interest_amount,
+  };
+}
+
+export function loanTotals(form) {
+  const terms = calculateLoanTerms(creditCalculationInput(form));
+  return { principal: terms.principal, interest: terms.interest_amount, totalDue: terms.total_repayable };
+}
+
+export function repaymentEstimate(form) {
+  const { terms, installments } = buildDetailedRepaymentSchedule(creditCalculationInput(form));
+  const payments = installments.filter(item => item.payment > 0);
+  const firstPayment = payments[0]?.payment || 0;
+  const label = terms.schedule_type === 'BULLET'
+    ? 'Paiement unique'
+    : terms.schedule_type === 'DECLINING'
+      ? 'Première échéance indicative'
+      : terms.schedule_type === 'SEASONAL'
+        ? 'Échéance saisonnière'
+        : `Échéance ${String(form.desired_schedule || 'mensuelle').toLowerCase()}`;
+  const paymentAmount = firstPayment || (terms.total_repayable > 0 ? terms.total_repayable : 0);
+  return { count: payments.length || 1, installment: paymentAmount, label };
+}
+
+export function projectBudget(items, form) {
+  const byCategory = items.reduce((totals, item) => {
+    const category = item.category || 'Autres';
+    totals[category] = (totals[category] || 0) + Number(item.quantity || 0) * Number(item.unit_cost || 0);
+    return totals;
+  }, {});
+  const total = Object.values(byCategory).reduce((sum, value) => sum + value, 0);
+  const realNeed = Math.max(0, total - Number(form.own_contribution || 0) - Number(form.other_funding || 0));
+  const requested = Number(form.amount_requested) || 0;
+  return { byCategory, total, realNeed, overfinancing: Math.max(0, requested - realNeed), advisedAmount: realNeed };
+}
+
 export default function DossierNew() {
   const navigate = useNavigate();
+  const { id: editId } = useParams();
+  const editing = Boolean(editId);
   const user = getUser();
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(editing);
   const [error, setError] = useState('');
   const [step, setStep] = useState(0);
-  const [form, setForm] = useState({
-    amount_requested: '', credit_purpose: '', duration_months: '', desired_schedule: '',
-    applicant_name: '', applicant_phone: '', applicant_id_number: '', applicant_location: '', applicant_activity: 'Agriculteur',
-    sector: 'Agriculture', activity_type: '', years_experience: '', surface_ha: '', production_cycle_start: '', production_cycle_end: '', production_cycle: '',
-    crop_selection: '', crop_other_label: '', crop_name: '', crop_variety: '', crop_experience_years: '', project_surface_ha: '', land_access: '', agro_zone: '', soil_type: '', soil_source: '', season: '', irrigation_mode: '', water_source: '', water_reliability: '', expected_yield: '', expected_price: '', loss_percent: '', own_contribution: '', other_funding: '', climate_risks: '', mitigations: '',
-    revenue_commerce: '', commerce_revenue_frequency: 'mensuel', revenue_other: '', other_revenue_frequency: 'mensuel', main_buyer: '',
-    expenses_agriculture: '', expenses_household: '',
-    savings_amount: '', guarantee_type: '', group_guarantee: '', other_guarantees: '', third_party_commitment: false,
-    guarantor_name: '', guarantor_id_number: '', guarantor_phone: '', guarantor_location: '', guarantor_relationship: '', guarantor_commitment_type: '', guarantor_commitment_amount: '', guarantor_consent: false,
-    agent_note: '',
-  });
+  const [form, setForm] = useState({ ...INITIAL_FORM });
   const [inputItems, setInputItems] = useState([]);
   const [declaredDebts, setDeclaredDebts] = useState([]);
   const [initialEvidence, setInitialEvidence] = useState([]);
   const [feasibilityAnalysis, setFeasibilityAnalysis] = useState(null);
-  const [draftReady, setDraftReady] = useState(false);
-  const dossierIdRef = useRef(crypto.randomUUID());
-  const draftSaveTimerRef = useRef(null);
-  const draftWriteRef = useRef(Promise.resolve());
-  const draftDeletedRef = useRef(false);
-  const draftKey = dossierDraftKey(user?.id);
+  const dossierIdRef = useRef(editId || crypto.randomUUID());
   const feasibilityFingerprint = JSON.stringify({
     project: buildProjectAssessment(form),
     items: inputItems,
@@ -108,51 +152,76 @@ export default function DossierNew() {
   });
 
   useEffect(() => {
+    if (!editing) return;
     let active = true;
-    async function restoreDraft() {
+    async function preload() {
+      setLoading(true);
+      setError('');
       try {
-        const draft = await getDossierDraft(draftKey);
-        if (!active || !draft) return;
-        if (draft.form) setForm(current => ({ ...current, ...draft.form }));
-        if (Array.isArray(draft.inputItems)) setInputItems(draft.inputItems);
-        if (Array.isArray(draft.declaredDebts)) setDeclaredDebts(draft.declaredDebts);
-        if (Array.isArray(draft.initialEvidence)) setInitialEvidence(restoreDraftEvidence(draft.initialEvidence));
-        if (Number.isInteger(draft.step)) setStep(Math.max(0, Math.min(draft.step, STEPS.length - 1)));
-        if (draft.dossierId) dossierIdRef.current = draft.dossierId;
-      } catch (draftError) {
-        console.error('Restauration du brouillon impossible', draftError);
-      } finally {
-        if (active) setDraftReady(true);
-      }
+        let response;
+        if (isOnline()) response = await api.getDossier(editId);
+        else {
+          const stored = await getDossierOffline(editId);
+          if (!stored) throw new Error('Dossier indisponible hors connexion sur cet appareil.');
+          response = {
+            dossier: stored,
+            project_assessment: stored.project_assessment,
+            input_items: stored.input_items,
+            declared_debts: stored.declared_debts,
+            evidence: stored.initial_evidence,
+          };
+        }
+        if (!active) return;
+        const dossier = response.dossier || {};
+        const project = response.project_assessment || dossier.project_assessment || {};
+        const financialDetail = (response.cashflow || [])
+          .map(entry => parseJson(entry.revenue_detail, {}))
+          .find(detail => detail.derived)?.financial_inputs || dossier.financial_summary || {};
+        const loanTerms = financialDetail.loan_terms || dossier.financial_summary?.loan_terms || {};
+        const guarantor = (response.guarantors || [dossier.third_party_guarantor]).filter(Boolean)[0] || {};
+        const storedCrops = parseJson(project.crop_code, []);
+        const crops = (storedCrops.length
+          ? storedCrops
+          : (parseJson(project.calculated_metrics, {}).frontend_crops || dossier.crops || (project.crop_label ? [{ name: project.crop_label, variety: project.variety, surface_ha: project.project_surface_ha }] : [])))
+          .map(crop => ({ ...crop, id: crop.id || crypto.randomUUID() }));
+        const storedModes = parseJson(project.previous_campaign_result, []);
+        const modes = storedModes.length
+          ? storedModes
+          : (parseJson(project.calculated_metrics, {}).frontend_cultivation_modes || dossier.cultivation_modes || String(project.cultivation_mode || '').split(',').map(mode => mode.trim()).filter(Boolean));
+        setForm(current => ({
+          ...current, ...dossier,
+          amount_requested: dossier.amount_requested ?? '', duration_months: dossier.duration_months ?? '',
+          years_experience: dossier.years_experience ?? '', surface_ha: dossier.surface_ha ?? '',
+          interest_calculation_mode: dossier.interest_calculation_mode ?? loanTerms.interest_calculation_mode ?? financialDetail.interest_calculation_mode ?? 'rate',
+          interest_rate: dossier.interest_rate ?? loanTerms.interest_rate ?? '', interest_amount: dossier.interest_amount ?? loanTerms.interest_amount ?? '',
+          crop_name: project.crop_label || '', crop_variety: project.variety || '',
+          crop_experience_years: project.crop_experience_years ?? '', project_surface_ha: project.project_surface_ha ?? '',
+          land_access: project.land_access || '', agro_zone: project.agro_zone || '', soil_type: project.soil_type || '',
+          soil_source: project.soil_source || '', season: project.season || '', irrigation_mode: project.cultivation_mode || '',
+          water_source: project.water_source || '', water_reliability: project.water_reliability || '',
+          expected_yield: project.expected_yield ?? '', expected_price: project.expected_price ?? '', loss_percent: project.loss_percent ?? '',
+          own_contribution: project.own_contribution ?? '', other_funding: project.other_funding ?? '',
+          climate_risks: Array.isArray(parseJson(project.climate_risks, project.climate_risks || '')) ? parseJson(project.climate_risks, []).join(', ') : (project.climate_risks || ''),
+          mitigations: Array.isArray(parseJson(project.mitigations, project.mitigations || '')) ? parseJson(project.mitigations, []).join(', ') : (project.mitigations || ''),
+          main_buyer: project.market_channel || project.expected_buyer || '', crops, cultivation_modes: modes,
+          revenue_commerce: financialDetail.commerce_revenue ?? '', commerce_revenue_frequency: financialDetail.commerce_revenue_frequency || 'mensuel',
+          revenue_other: financialDetail.other_revenue ?? '', other_revenue_frequency: financialDetail.other_revenue_frequency || 'mensuel',
+          expenses_agriculture: financialDetail.agricultural_expenses ?? '', expenses_household: financialDetail.household_expenses ?? '',
+          third_party_commitment: Boolean(guarantor.id || guarantor.full_name || guarantor.name),
+          guarantor_name: guarantor.full_name || guarantor.name || '', guarantor_id_number: guarantor.id_number || '',
+          guarantor_phone: guarantor.phone || '', guarantor_location: guarantor.location || '',
+          guarantor_relationship: guarantor.relationship || '', guarantor_commitment_type: guarantor.commitment_type || '',
+          guarantor_commitment_amount: guarantor.commitment_amount ?? '', guarantor_consent: Boolean(guarantor.consent_given),
+        }));
+        setInputItems((response.input_items || dossier.input_items || []).map(item => ({ ...item, id: item.id || crypto.randomUUID() })));
+        setDeclaredDebts((response.declared_debts || dossier.declared_debts || []).map(debt => ({ ...debt, id: debt.id || crypto.randomUUID() })));
+        setInitialEvidence((response.evidence || dossier.initial_evidence || []).map(item => ({ ...item, id: item.id || crypto.randomUUID() })));
+      } catch (err) { if (active) setError(err.message); }
+      finally { if (active) setLoading(false); }
     }
-    restoreDraft();
+    preload();
     return () => { active = false; };
-  }, [draftKey]);
-
-  useEffect(() => {
-    if (!draftReady) return undefined;
-    const timer = setTimeout(() => {
-      if (draftDeletedRef.current) return;
-      const draft = {
-        id: draftKey,
-        form,
-        inputItems,
-        declaredDebts,
-        initialEvidence: serializeDraftEvidence(initialEvidence),
-        step,
-        dossierId: dossierIdRef.current,
-      };
-      draftWriteRef.current = draftWriteRef.current
-        .catch(() => undefined)
-        .then(() => draftDeletedRef.current ? undefined : saveDossierDraft(draft))
-        .catch(draftError => console.error('Autosauvegarde du brouillon impossible', draftError));
-    }, 400);
-    draftSaveTimerRef.current = timer;
-    return () => {
-      clearTimeout(timer);
-      if (draftSaveTimerRef.current === timer) draftSaveTimerRef.current = null;
-    };
-  }, [draftReady, draftKey, form, inputItems, declaredDebts, initialEvidence, step]);
+  }, [editId, editing]);
 
   useEffect(() => {
     setFeasibilityAnalysis(current => (
@@ -173,9 +242,8 @@ export default function DossierNew() {
   function validateStep(index) {
     if (index === 0 && (!form.applicant_name.trim() || !form.applicant_id_number.trim())) return 'Le nom complet et le numéro de CNI sont obligatoires.';
     if (index === 0 && (!num(form.amount_requested) || !num(form.duration_months) || !form.credit_purpose.trim())) return 'Renseignez le montant, la durée et l’objet du crédit.';
-    if (index === 1 && (!form.crop_selection || !num(form.project_surface_ha))) return 'Renseignez au minimum la culture et la surface du projet.';
-    if (index === 1 && form.crop_selection === OTHER_CROP_VALUE && !form.crop_other_label.trim()) return 'Précisez la culture sélectionnée dans « Autre ».';
-    if (index === 4 && form.third_party_commitment && (!form.guarantor_name.trim() || !form.guarantor_id_number.trim() || !form.guarantor_phone.trim() || !form.guarantor_consent)) return 'Renseignez le nom, la CNI, le téléphone et le consentement du garant tiers.';
+    if (index === 1 && (!(form.crops?.length || form.crop_name) || !(Number(form.project_surface_ha) || form.crops?.some(crop => Number(crop.surface_ha) > 0)))) return 'Renseignez au minimum une culture et la surface du projet.';
+    if (index === 4 && form.third_party_commitment && (!form.guarantor_name.trim() || !form.guarantor_id_number.trim() || !form.guarantor_phone.trim() || !form.guarantor_location.trim() || !form.guarantor_relationship.trim() || !form.guarantor_commitment_type.trim() || !num(form.guarantor_commitment_amount) || !form.guarantor_consent)) return 'Complétez toutes les informations structurées et le consentement du garant tiers.';
     return '';
   }
 
@@ -186,25 +254,14 @@ export default function DossierNew() {
     setStep(s => s + 1);
   }
 
-  async function deleteSavedDraft() {
-    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
-    draftDeletedRef.current = true;
-    await draftWriteRef.current.catch(() => undefined);
-    await deleteDossierDraft(draftKey);
-  }
-
   async function handleSave() {
-    const evidenceToReselect = initialEvidence.find(item => item.file_reselection_required && !item.file);
-    if (evidenceToReselect) {
-      setError(`Resélectionnez le fichier « ${evidenceToReselect.metadata?.file_name || evidenceToReselect.label} » avant de créer le dossier.`);
-      return;
-    }
+    const validation = [0, 1, 4].map(validateStep).find(Boolean);
+    if (validation) { setError(validation); return; }
     setSaving(true); setError('');
     try {
       const cycle = form.production_cycle_start !== '' && form.production_cycle_end !== ''
         ? `${MONTHS[form.production_cycle_start]} - ${MONTHS[form.production_cycle_end]}`
         : form.production_cycle;
-      const frequencyMultiplier = frequency => ({ hebdomadaire: 52, mensuel: 12, trimestriel: 4, saisonnier: 1, annuel: 1 }[frequency] || 1);
       const commerceRevenue = Number(form.revenue_commerce === 'neant' ? 0 : form.revenue_commerce || 0);
       const otherRevenue = Number(form.revenue_other === 'neant' ? 0 : form.revenue_other || 0);
       const annualCommerceRevenue = commerceRevenue * frequencyMultiplier(form.commerce_revenue_frequency);
@@ -213,7 +270,10 @@ export default function DossierNew() {
       const monthlyExpenses = ['expenses_agriculture', 'expenses_household'].reduce((sum, key) => sum + Number(form[key] === 'neant' ? 0 : form[key] || 0), 0);
       const monthlyDebtPayments = declaredDebts.reduce((sum, debt) => sum + Number(debt.periodic_payment || 0), 0);
       const projectAssessment = buildProjectAssessment(form);
+      const loan = calculateLoanTerms(creditCalculationInput(form));
+      const budgetSummary = projectBudget(inputItems, form);
       const financialSummary = {
+        interest_calculation_mode: loan.interest_calculation_mode,
         annual_revenue: annualRevenue,
         commerce_revenue: commerceRevenue, commerce_revenue_frequency: form.commerce_revenue_frequency,
         other_revenue: otherRevenue, other_revenue_frequency: form.other_revenue_frequency,
@@ -223,6 +283,8 @@ export default function DossierNew() {
         monthly_debt_payments: monthlyDebtPayments,
         revenue_detail: { commerce: commerceRevenue, other: otherRevenue, annual_commerce: annualCommerceRevenue, annual_other: annualOtherRevenue },
         expenses_detail: { agriculture: Number(form.expenses_agriculture === 'neant' ? 0 : form.expenses_agriculture || 0), household: Number(form.expenses_household === 'neant' ? 0 : form.expenses_household || 0) },
+        loan_terms: { interest_calculation_mode: loan.interest_calculation_mode, interest_rate: loan.interest_rate, interest_amount: loan.interest_amount, total_due: loan.total_repayable, schedule: form.desired_schedule },
+        project_budget: budgetSummary,
       };
       const data = {
         id: dossierIdRef.current,
@@ -237,6 +299,10 @@ export default function DossierNew() {
         surface_ha: num(form.surface_ha),
         production_cycle: cycle,
         amount_requested: num(form.amount_requested),
+        interest_calculation_mode: loan.interest_calculation_mode,
+        interest_rate: loan.interest_rate,
+        interest_amount: loan.interest_amount,
+        total_due: loan.total_repayable,
         credit_purpose: form.credit_purpose,
         duration_months: num(form.duration_months),
         desired_schedule: form.desired_schedule,
@@ -259,11 +325,11 @@ export default function DossierNew() {
         project_assessment: projectAssessment,
         input_items: inputItems,
         declared_debts: declaredDebts,
-        initial_evidence: initialEvidence.map(({ file, file_reselection_required, ...item }) => item),
+        initial_evidence: initialEvidence.map(({ file, ...item }) => item),
         financial_summary: financialSummary,
       };
       if (isOnline()) {
-        const res = await api.createDossier(data);
+        const res = editing ? await api.updateDossier(editId, data) : await api.createDossier(data);
         for (const item of initialEvidence) {
           if (!item.file) continue;
           await api.saveEvidenceAttachment(item.id, {
@@ -272,12 +338,16 @@ export default function DossierNew() {
             content_base64: await fileToBase64(item.file),
           });
         }
-        await deleteSavedDraft();
-        navigate(`/dossiers/${res.id}`);
+        navigate(`/dossiers/${res.id || editId}`);
       } else {
         const id = data.id;
-        await saveDossierOffline({ id, ...data, initial_evidence: initialEvidence.map(({ file_reselection_required, ...item }) => item), status: 'draft', agent_id: user.id, created_offline: true });
-        await addToSyncQueue({ operation: 'create', entity_type: 'dossier', entity_id: id, payload: data });
+        if (editing) {
+          await updateDossierOffline(id, data);
+          await addToSyncQueue({ operation: 'update', entity_type: 'dossier', entity_id: id, payload: data });
+        } else {
+          await saveDossierOffline({ id, ...data, initial_evidence: initialEvidence, status: 'draft', agent_id: user.id, created_offline: true });
+          await addToSyncQueue({ operation: 'create', entity_type: 'dossier', entity_id: id, payload: data });
+        }
         for (const item of initialEvidence) {
           if (!item.file) continue;
           await addToSyncQueue({
@@ -286,42 +356,21 @@ export default function DossierNew() {
               content_base64: await fileToBase64(item.file) },
           });
         }
-        await deleteSavedDraft();
-        navigate('/dossiers');
+        navigate(editing ? `/dossiers/${id}` : '/dossiers');
       }
     } catch (err) { setError(err.message); }
     finally { setSaving(false); }
   }
 
-  if (!draftReady) {
-    return (
-      <div className="surface" style={{ padding: 20 }}>
-        Restauration du brouillon en cours…
-      </div>
-    );
-  }
+  if (loading) return <div className="loading-state">Chargement du dossier...</div>;
 
   return (
     <div>
       <div className="page-header">
-        <div className="flex items-center" style={{ justifyContent: 'space-between', width: '100%', marginBottom: 8 }}>
-          <div className="flex items-center" style={{ gap: 8 }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => navigate('/dossiers')}>
-              <ArrowLeft size={14} /> Retour
-            </button>
-            {step > 0 && (
-              <button className="btn btn-secondary" onClick={() => setStep(s => s - 1)}>
-                <ArrowLeft size={14} /> Précédent
-              </button>
-            )}
-          </div>
-          {step < STEPS.length - 1 && (
-            <button className="btn btn-primary" onClick={nextStep}>
-              Suivant <ArrowRight size={14} />
-            </button>
-          )}
-        </div>
-        <h1 className="page-title">Nouvelle demande de crédit</h1>
+        <button className="btn btn-ghost btn-sm" onClick={() => navigate('/dossiers')} style={{ marginBottom: 8 }}>
+          <ArrowLeft size={14} /> Retour
+        </button>
+        <h1 className="page-title">{editing ? 'Modifier la demande de crédit' : 'Nouvelle demande de crédit'}</h1>
         {!isOnline() && (
           <p className="page-subtitle" style={{ color: 'var(--c-warning)' }}>
             <WifiOff size={14} style={{ verticalAlign: -2 }} /> Hors connexion — Le dossier sera synchronisé au retour du réseau
@@ -337,16 +386,20 @@ export default function DossierNew() {
         ))}
       </div>
 
+      <div className="flex justify-between items-center" style={{ marginBottom: 12 }}>
+        {step > 0 ? <button type="button" className="btn btn-secondary" onClick={() => setStep(s => s - 1)}><ArrowLeft size={14} /> Précédent</button> : <div />}
+        {step < STEPS.length - 1
+          ? <button type="button" className="btn btn-primary" onClick={nextStep}>Suivant <ArrowRight size={14} /></button>
+          : <button type="button" className="btn btn-primary btn-lg" onClick={handleSave} disabled={saving || !canSubmitDossier(form)}><Save size={16} /> {saving ? 'Enregistrement...' : editing ? 'Enregistrer les modifications' : 'Créer le dossier'}</button>}
+      </div>
+
       {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '10px 14px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
 
       <div className="surface">
-        {step === 0 && <>
-          <StepDemandeIdentite form={form} update={update} />
-          <SectionDivider />
-          <StepActivite form={form} update={update} />
-        </>}
-        {step === 1 && <StepProjetAgricole form={form} update={update} />}
-        {step === 2 && (
+        {step === 0 && <><StepDemandeIdentite form={form} update={update} /><div style={{ borderTop: '1px solid var(--c-border)', margin: '24px 0' }} /><StepActivite form={form} update={update} /></>}
+        {step === 1 && <StepProjetAgricole form={form} update={update} items={inputItems} setItems={setInputItems} />}
+        {step === 2 && <><StepBudgetRevenus form={form} update={update} items={inputItems} /><div style={{ borderTop: '1px solid var(--c-border)', margin: '24px 0' }} /><StepCharges form={form} update={update} /></>}
+        {step === 3 && (
           <StepFaisabiliteAgronomique
             form={form}
             items={inputItems}
@@ -354,32 +407,12 @@ export default function DossierNew() {
             setAnalysis={setFeasibilityAnalysis}
           />
         )}
-        {step === 3 && <>
-          <StepBudgetIntrants form={form} items={inputItems} setItems={setInputItems} />
-          <SectionDivider />
-          <StepRevenus form={form} update={update} />
-          <SectionDivider />
-          <StepCharges form={form} update={update} />
-        </>}
-        {step === 4 && <>
-          <StepGaranties form={form} update={update} />
-          <SectionDivider />
-          <StepPreuves evidence={initialEvidence} setEvidence={setInitialEvidence} />
-        </>}
+        {step === 4 && <><StepPreuves evidence={initialEvidence} setEvidence={setInitialEvidence} /><div style={{ borderTop: '1px solid var(--c-border)', margin: '24px 0' }} /><StepGaranties form={form} update={update} /></>}
         {step === 5 && <StepDettes debts={declaredDebts} setDebts={setDeclaredDebts} />}
-        {step === 6 && <>
-          <StepAnalyse form={form} items={inputItems} debts={declaredDebts} />
-          <SectionDivider />
-          <StepSoumission form={form} update={update} saving={saving} onSave={handleSave} setStep={setStep} />
-        </>}
-
+        {step === 6 && <><StepAnalyse form={form} items={inputItems} debts={declaredDebts} /><div style={{ borderTop: '1px solid var(--c-border)', margin: '24px 0' }} /><StepResume form={form} update={update} items={inputItems} debts={declaredDebts} evidence={initialEvidence} /></>}
       </div>
     </div>
   );
-}
-
-function SectionDivider() {
-  return <div style={{ borderTop: '1px solid var(--c-border)', margin: '24px 0' }} />;
 }
 
 function AutocompleteInput({ value, onChange, suggestions, placeholder, hint }) {
@@ -455,6 +488,27 @@ function StepDemandeIdentite({ form, update }) {
   );
 }
 
+function LoanFields({ form, update }) {
+  const { interest, totalDue } = loanTotals(form);
+  const fixedMode = form.interest_calculation_mode === 'fixed';
+  return (
+    <div className="grid-2" style={{ gridColumn: '1 / -1' }}>
+      <div className="field" style={{ gridColumn: '1 / -1' }}>
+        <label className="field-label">Mode de calcul des intérêts</label>
+        <select className="input" value={form.interest_calculation_mode} onChange={e => update('interest_calculation_mode', e.target.value)}>
+          <option value="rate">Taux annualisé</option>
+          <option value="fixed">Montant fixe</option>
+        </select>
+      </div>
+      {fixedMode
+        ? <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label">Montant fixe des intérêts (FCFA)</label><input className="input" type="number" min="0" value={form.interest_amount} onChange={e => update('interest_amount', e.target.value)} placeholder="Ex : 60000" /><div className="field-hint">Le montant saisi est retenu tel quel pour toute la durée.</div></div>
+        : <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label">Taux d'intérêt annualisé (%)</label><input className="input" type="number" min="0" step="0.01" value={form.interest_rate} onChange={e => update('interest_rate', e.target.value)} placeholder="Ex : 8" /><div className="field-hint">Les intérêts tiennent compte du taux annuel et de la durée en mois.</div></div>}
+      <SummaryLine label="Intérêts retenus" value={formatCFA(interest)} />
+      <SummaryLine label="Total dû" value={formatCFA(totalDue)} color="var(--c-primary)" />
+    </div>
+  );
+}
+
 function StepDemande({ form, update }) {
   return (
     <div>
@@ -468,6 +522,7 @@ function StepDemande({ form, update }) {
           <label className="field-label">Durée souhaitée (mois) *</label>
           <input className="input" type="number" min="1" max="60" value={form.duration_months} onChange={e => update('duration_months', e.target.value)} placeholder="Ex: 12" />
         </div>
+        <LoanFields form={form} update={update} />
         <div className="field" style={{ gridColumn: '1 / -1' }}>
           <label className="field-label">Objet du crédit *</label>
           <textarea className="input" rows={3} value={form.credit_purpose} onChange={e => update('credit_purpose', e.target.value)} placeholder="Décrivez précisément l'utilisation prévue du financement" />
@@ -476,10 +531,13 @@ function StepDemande({ form, update }) {
           <label className="field-label">Calendrier de remboursement souhaité</label>
           <select className="input" value={form.desired_schedule} onChange={e => update('desired_schedule', e.target.value)}>
             <option value="">Sélectionner</option>
-            <option value="Mensuel classique">Mensuel classique</option>
-            <option value="Saisonnier (post-récolte)">Saisonnier (post-récolte)</option>
-            <option value="Trimestriel">Trimestriel</option>
-            <option value="In fine">In fine (capital à échéance)</option>
+            <option value="mensuel">Mensuel</option>
+            <option value="trimestriel">Trimestriel</option>
+            <option value="semestriel">Semestriel</option>
+            <option value="annuel">Annuel</option>
+            <option value="saisonnier">Saisonnier (post-récolte)</option>
+            <option value="in fine">In fine</option>
+            <option value="dégressif">Dégressif</option>
           </select>
         </div>
       </div>
@@ -583,117 +641,62 @@ function StepActivite({ form, update }) {
   );
 }
 
-function StepProjetAgricole({ form, update }) {
-  const crop = resolveCrop(form.crop_selection, form.crop_other_label);
+function StepProjetAgricole({ form, update, items, setItems }) {
+  const [cropDraft, setCropDraft] = useState({ name: '', variety: '', surface_ha: '', mode: '' });
+  function addCrop() {
+    if (!cropDraft.name.trim() || !Number(cropDraft.surface_ha)) return;
+    const next = [...(form.crops || []), { ...cropDraft, id: crypto.randomUUID() }];
+    update('crops', next);
+    update('crop_name', next.map(crop => crop.name).join(', '));
+    update('project_surface_ha', next.reduce((sum, crop) => sum + Number(crop.surface_ha || 0), 0));
+    update('cultivation_modes', [...new Set(next.map(crop => crop.mode).filter(Boolean))]);
+    setCropDraft({ name: '', variety: '', surface_ha: '', mode: '' });
+  }
   return (
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Projet agricole</h2>
-      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Renseignez les données observées et les hypothèses déclarées par le demandeur. Le moteur FresCoop les contrôlera dans la faisabilité agronomique.</p>
-      <div className="grid-2">
-        <div className="field">
-          <label className="field-label">Culture *</label>
-          <select className="input" value={form.crop_selection} onChange={e => {
-            const selection = e.target.value;
-            const resolved = resolveCrop(selection, form.crop_other_label);
-            update('crop_selection', selection);
-            update('crop_name', resolved.crop_label || '');
-          }}>
-            <option value="">Sélectionner une culture</option>
-            {CROP_OPTIONS.map(item => <option key={item.code} value={item.code}>{item.label}</option>)}
-            <option value={OTHER_CROP_VALUE}>Autre</option>
-          </select>
-        </div>
-        {form.crop_selection === OTHER_CROP_VALUE && (
-          <div className="field">
-            <label className="field-label">Précisez la culture *</label>
-            <input className="input" value={form.crop_other_label} onChange={e => {
-              update('crop_other_label', e.target.value);
-              update('crop_name', e.target.value);
-            }} placeholder="Ex : Bissap rouge" />
-          </div>
-        )}
-        <div className="field"><label className="field-label">Variété</label><input className="input" value={form.crop_variety} onChange={e => update('crop_variety', e.target.value)} /></div>
-        <div className="field"><label className="field-label">Expérience sur cette culture (années)</label><input className="input" type="number" min="0" value={form.crop_experience_years} onChange={e => update('crop_experience_years', e.target.value)} /></div>
-        <div className="field"><label className="field-label">Surface du projet (ha) *</label><input className="input" type="number" min="0" step="0.1" value={form.project_surface_ha} onChange={e => update('project_surface_ha', e.target.value)} /></div>
+      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Ajoutez toutes les cultures et leur mode de conduite.</p>
+      <div className="grid-2" style={{ padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', marginBottom: 14 }}>
+        <div className="field"><label className="field-label">Culture *</label><input className="input" value={cropDraft.name} onChange={e => setCropDraft(d => ({ ...d, name: e.target.value }))} placeholder="Maïs, arachide, tomate…" /></div>
+        <div className="field"><label className="field-label">Variété</label><input className="input" value={cropDraft.variety} onChange={e => setCropDraft(d => ({ ...d, variety: e.target.value }))} /></div>
+        <div className="field"><label className="field-label">Surface (ha) *</label><input className="input" type="number" min="0" step="0.1" value={cropDraft.surface_ha} onChange={e => setCropDraft(d => ({ ...d, surface_ha: e.target.value }))} /></div>
+        <div className="field"><label className="field-label">Mode</label><select className="input" value={cropDraft.mode} onChange={e => setCropDraft(d => ({ ...d, mode: e.target.value }))}><option value="">Sélectionner</option><option value="pluvial">Pluvial</option><option value="irrigué">Irrigué</option><option value="mixte">Mixte</option><option value="sous serre">Sous serre</option></select></div>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={addCrop} disabled={!cropDraft.name.trim() || !Number(cropDraft.surface_ha)}><Plus size={14} /> Ajouter la culture</button>
+      </div>
+      {(form.crops || []).map(crop => <div key={crop.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span><strong>{crop.name}</strong>{crop.variety ? ` · ${crop.variety}` : ''} · {crop.surface_ha} ha · {crop.mode || 'mode non précisé'}</span><button type="button" className="btn btn-ghost btn-sm" onClick={() => { const next = form.crops.filter(item => item.id !== crop.id); update('crops', next); update('crop_name', next.map(item => item.name).join(', ')); update('project_surface_ha', next.reduce((sum, item) => sum + Number(item.surface_ha || 0), 0)); update('cultivation_modes', [...new Set(next.map(item => item.mode).filter(Boolean))]); }}><Trash2 size={13} /></button></div>)}
+      <div className="field" style={{ marginTop: 16 }}><label className="field-label">Modes de culture utilisés</label><div className="flex gap-2" style={{ flexWrap: 'wrap' }}>{['Pluvial', 'Irrigué', 'Mixte', 'Sous serre'].map(mode => { const selected = (form.cultivation_modes || []).includes(mode.toLowerCase()); return <button key={mode} type="button" className={`btn btn-sm ${selected ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { const value = mode.toLowerCase(); const modes = selected ? form.cultivation_modes.filter(item => item !== value) : [...(form.cultivation_modes || []), value]; update('cultivation_modes', modes); update('irrigation_mode', modes.join(', ')); }}>{mode}</button>; })}</div></div>
+      <div className="grid-2" style={{ marginTop: 16 }}>
+        <div className="field"><label className="field-label">Expérience sur ces cultures (années)</label><input className="input" type="number" min="0" value={form.crop_experience_years} onChange={e => update('crop_experience_years', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Surface totale (ha)</label><input className="input" value={form.project_surface_ha} readOnly /></div>
         <div className="field"><label className="field-label">Accès à la parcelle</label><select className="input" value={form.land_access} onChange={e => update('land_access', e.target.value)}><option value="">Sélectionner</option><option>Propriété</option><option>Location</option><option>Prêt familial</option><option>Parcelle communautaire</option></select></div>
         <div className="field"><label className="field-label">Zone agroécologique</label><input className="input" value={form.agro_zone} onChange={e => update('agro_zone', e.target.value)} /></div>
         <div className="field"><label className="field-label">Type / aptitude du sol</label><input className="input" value={form.soil_type} onChange={e => update('soil_type', e.target.value)} /></div>
         <div className="field"><label className="field-label">Source de l'information sur le sol</label><input className="input" value={form.soil_source} onChange={e => update('soil_source', e.target.value)} placeholder="Analyse, technicien, déclaration…" /></div>
         <div className="field"><label className="field-label">Saison</label><input className="input" value={form.season} onChange={e => update('season', e.target.value)} placeholder="Hivernage, saison sèche…" /></div>
-        <div className="field"><label className="field-label">Mode de culture</label><select className="input" value={form.irrigation_mode} onChange={e => update('irrigation_mode', e.target.value)}><option value="">Sélectionner</option><option value="pluvial">Pluvial</option><option value="irrigué">Irrigué</option><option value="mixte">Mixte</option></select></div>
         <div className="field"><label className="field-label">Source d'eau</label><input className="input" value={form.water_source} onChange={e => update('water_source', e.target.value)} /></div>
         <div className="field"><label className="field-label">Fiabilité de l'eau</label><select className="input" value={form.water_reliability} onChange={e => update('water_reliability', e.target.value)}><option value="">Sélectionner</option><option value="sécurisée">Sécurisée</option><option value="partielle">Partielle</option><option value="incertaine">Incertaine</option></select></div>
-      </div>
-      <h3 style={{ fontSize: 'var(--fs-14)', margin: '20px 0 4px' }}>Hypothèses déclarées du projet</h3>
-      <p className="text-xs text-muted">À renseigner par l’agent d’après le demandeur et les justificatifs disponibles. Ces valeurs seront comparées aux résultats retenus dans l’étape Faisabilité agronomique.</p>
-      <div className="grid-2" style={{ marginTop: 16 }}>
-        <div className="field"><label className="field-label">Rendement (kg/ha)</label><input className="input" type="number" min="0" value={form.expected_yield} onChange={e => update('expected_yield', e.target.value)} /></div>
-        <div className="field"><label className="field-label">Prix (FCFA/kg)</label><input className="input" type="number" min="0" value={form.expected_price} onChange={e => update('expected_price', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Rendement moyen (kg/ha)</label><input className="input" type="number" min="0" value={form.expected_yield} onChange={e => update('expected_yield', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Prix moyen (FCFA/kg)</label><input className="input" type="number" min="0" value={form.expected_price} onChange={e => update('expected_price', e.target.value)} /></div>
         <div className="field"><label className="field-label">Pertes estimées (%)</label><input className="input" type="number" min="0" max="100" value={form.loss_percent} onChange={e => update('loss_percent', e.target.value)} /></div>
-        <div className="field"><label className="field-label">Apport personnel (FCFA)</label><input className="input" type="number" min="0" value={form.own_contribution} onChange={e => update('own_contribution', e.target.value)} /></div>
-        <div className="field"><label className="field-label">Autres financements (FCFA)</label><input className="input" type="number" min="0" value={form.other_funding} onChange={e => update('other_funding', e.target.value)} /></div>
         <div className="field"><label className="field-label">Risques principaux</label><input className="input" value={form.climate_risks} onChange={e => update('climate_risks', e.target.value)} placeholder="Sécheresse, ravageurs, prix…" /></div>
         <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label">Mesures d'atténuation</label><textarea className="input" rows={2} value={form.mitigations} onChange={e => update('mitigations', e.target.value)} /></div>
       </div>
-      {crop.crop_label && (
-        <div className="field-hint" style={{ marginTop: 10 }}>
-          Culture enregistrée : {crop.crop_label} ({crop.crop_code})
-        </div>
-      )}
-    </div>
-  );
-}
-
-function StepBudgetIntrants({ form, items, setItems }) {
-  const [draft, setDraft] = useState({ category: 'Semences', label: '', quantity: '', unit: '', unit_cost: '', supplier: '' });
-  const budget = items.length > 0
-    ? items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_cost || 0), 0)
-    : null;
-  const surface = num(form.project_surface_ha);
-  const expectedYield = num(form.expected_yield);
-  const lossPercent = num(form.loss_percent);
-  const expectedPrice = num(form.expected_price);
-  const revenue = surface != null && surface > 0 && expectedYield != null && expectedYield > 0
-    && lossPercent != null && lossPercent >= 0 && lossPercent <= 100
-    && expectedPrice != null && expectedPrice >= 0
-    ? surface * expectedYield * (1 - lossPercent / 100) * expectedPrice
-    : null;
-  function addItem() {
-    if (!Number(draft.quantity) || !Number(draft.unit_cost)) return;
-    setItems(list => [...list, { ...draft, label: draft.category, id: crypto.randomUUID() }]);
-    setDraft({ category: 'Semences', label: '', quantity: '', unit: '', unit_cost: '', supplier: '' });
-  }
-  return (
-    <div>
-      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Budget du projet</h2>
-      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Détaillez les intrants et leurs coûts pour établir le besoin réel de financement.</p>
-      <h3 style={{ fontSize: 'var(--fs-14)', margin: '0 0 10px' }}>Intrants et charges du projet</h3>
-      <div className="grid-2">
-        <div className="field"><label className="field-label">Catégorie</label><select className="input" value={draft.category} onChange={e => setDraft(d => ({ ...d, category: e.target.value }))}><option>Semences</option><option>Engrais</option><option>Produits phytosanitaires</option><option>Main-d'œuvre</option><option>Matériel</option><option>Transport</option><option>Autre</option></select></div>
-        <div className="field"><label className="field-label">Quantité</label><input className="input" type="number" min="0" value={draft.quantity} onChange={e => setDraft(d => ({ ...d, quantity: e.target.value }))} /></div>
-        <div className="field"><label className="field-label">Unité</label><input className="input" value={draft.unit} onChange={e => setDraft(d => ({ ...d, unit: e.target.value }))} placeholder="kg, sac, jour…" /></div>
-        <div className="field"><label className="field-label">Coût unitaire (FCFA)</label><input className="input" type="number" min="0" value={draft.unit_cost} onChange={e => setDraft(d => ({ ...d, unit_cost: e.target.value }))} /></div>
-        <div className="field"><label className="field-label">Fournisseur</label><input className="input" value={draft.supplier} onChange={e => setDraft(d => ({ ...d, supplier: e.target.value }))} /></div>
-      </div>
-      <button type="button" className="btn btn-secondary btn-sm" onClick={addItem}><Plus size={14} /> Ajouter l'intrant</button>
-      {items.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span>{item.category} · {item.quantity} {item.unit}</span><span><strong>{formatCFA(Number(item.quantity) * Number(item.unit_cost))}</strong> <button type="button" className="btn btn-ghost btn-sm" onClick={() => setItems(list => list.filter(x => x.id !== item.id))}><Trash2 size={13} /></button></span></div>)}
-      <div style={{ marginTop: 12, padding: 12, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)' }}>
-        <strong>Budget :</strong> {budget == null ? 'Non calculé — ajoutez les intrants et leurs coûts' : formatCFA(budget)} ·{' '}
-        <strong>Besoin net :</strong> {budget == null ? 'Non calculé' : formatCFA(Math.max(0, budget - Number(form.own_contribution || 0) - Number(form.other_funding || 0)))} ·{' '}
-        <strong>Revenu estimé :</strong> {revenue == null ? 'Non calculé — renseignez surface, rendement, pertes et prix' : formatCFA(revenue)} ·{' '}
-        <strong>Marge :</strong> {revenue == null || budget == null ? 'Non calculée' : formatCFA(revenue - budget)}
-      </div>
+      <div style={{ borderTop: '1px solid var(--c-border)', margin: '24px 0' }} />
+      <InputItemsEditor items={items} setItems={setItems} />
     </div>
   );
 }
 
 function feasibilitySourceLabel(source = {}) {
-  if (source.mode === 'hybrid') return 'Moteur local FresCoop enrichi par Teranga AI';
-  if (source.mode === 'hybrid_partial') return 'Moteur local FresCoop — données Teranga partielles';
-  if (source.mode === 'local_fallback') return `Moteur local FresCoop — ${feasibilityReasonMessage(source.fallback_reason)}`;
-  if (source.fallback_reason === 'offline') return 'Moteur local FresCoop — navigateur hors ligne';
-  if (source.fallback_reason === 'not_configured') return 'Moteur local FresCoop — Teranga non configuré';
-  if (source.fallback_reason === 'insufficient_context') return 'Moteur local FresCoop — contexte insuffisant pour Teranga';
+  if (source.mode === 'hybrid' || source.mode === 'hybrid_partial') {
+    return 'Moteur local FresCoop + Teranga AI';
+  }
+  if (source.mode === 'local_offline') {
+    return 'Moteur local FresCoop — hors connexion, Teranga AI sera consulté à la synchronisation';
+  }
+  if (source.mode === 'local_fallback' || source.fallback_used) {
+    return 'Moteur local FresCoop — repli sécurisé, sans pénalité liée à Teranga AI';
+  }
   return 'Moteur local FresCoop';
 }
 
@@ -704,20 +707,8 @@ function firstMetric(metrics, keys) {
   return null;
 }
 
-function formatYield(value, reason = '') {
-  return value == null
-    ? `Non calculé${reason ? ` — ${reason}` : ''}`
-    : `${new Intl.NumberFormat('fr-FR').format(value)} kg/ha`;
-}
-
-function missingLabels(missing = []) {
-  return missing.map(item => typeof item === 'string' ? item : item?.label).filter(Boolean);
-}
-
-function terangaYieldFromDetails(details = {}) {
-  const signal = details.external_signals?.find(item => item?.type === 'yield');
-  const value = signal?.predicted_yield_kg_ha;
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+function formatYield(value) {
+  return value == null ? 'Non disponible' : `${new Intl.NumberFormat('fr-FR').format(value)} kg/ha`;
 }
 
 function terangaRisk(details = {}) {
@@ -727,6 +718,59 @@ function terangaRisk(details = {}) {
     level: details.risk?.level ?? signal.level ?? signal.risk_level ?? null,
     recommendation: details.risk?.recommendation ?? signal.recommendation ?? null,
   };
+}
+
+function InputItemsEditor({ items, setItems }) {
+  const categories = ['Semences', 'Engrais', 'Phytos', 'Matériel', "Main-d’œuvre", 'Transport', 'Autres'];
+  function addCategoryLine(category) {
+    setItems(list => [...list, { id: crypto.randomUUID(), category, label: category, quantity: '', unit: '', unit_cost: '', supplier: '' }]);
+  }
+  function updateItem(id, field, value) {
+    setItems(list => list.map(item => item.id === id ? { ...item, [field]: value } : item));
+  }
+  return (
+    <div>
+      <h3 style={{ fontSize: 'var(--fs-15)', fontWeight: 600, marginBottom: 6 }}>Besoins et intrants détaillés</h3>
+      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Ajoutez chaque besoin du projet par catégorie.</p>
+      {categories.map(category => {
+        const categoryItems = items.filter(item => item.category === category);
+        const subtotal = categoryItems.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_cost || 0), 0);
+        return <div key={category} style={{ marginBottom: 14, padding: 12, border: '1px solid var(--c-border-light)', borderRadius: 'var(--radius-md)' }}>
+          <div className="flex justify-between items-center" style={{ marginBottom: 8 }}><strong>{category}</strong><button type="button" className="btn btn-secondary btn-sm" onClick={() => addCategoryLine(category)}><Plus size={13} /> Ligne</button></div>
+          {categoryItems.length === 0 ? <div className="text-xs text-muted">Aucun besoin renseigné.</div> : categoryItems.map(item => <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1fr .7fr .8fr 1fr 1fr auto', gap: 6, marginBottom: 6 }}>
+            <input className="input" value={item.label === category ? '' : item.label || ''} onChange={e => updateItem(item.id, 'label', e.target.value || category)} placeholder="Désignation" />
+            <input className="input" type="number" min="0" value={item.quantity} onChange={e => updateItem(item.id, 'quantity', e.target.value)} placeholder="Quantité" />
+            <input className="input" value={item.unit} onChange={e => updateItem(item.id, 'unit', e.target.value)} placeholder="Unité" />
+            <input className="input" type="number" min="0" value={item.unit_cost} onChange={e => updateItem(item.id, 'unit_cost', e.target.value)} placeholder="Coût unitaire" />
+            <input className="input" value={item.supplier} onChange={e => updateItem(item.id, 'supplier', e.target.value)} placeholder="Fournisseur" />
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setItems(list => list.filter(current => current.id !== item.id))}><Trash2 size={13} /></button>
+          </div>)}
+          <div className="text-xs text-muted" style={{ textAlign: 'right' }}>Sous-total : <strong>{formatCFA(subtotal)}</strong></div>
+        </div>;
+      })}
+    </div>
+  );
+}
+
+function StepBudgetRevenus({ form, update, items }) {
+  const budget = projectBudget(items, form);
+  return (
+    <div>
+      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Budget et revenus</h2>
+      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Résumé calculé depuis les besoins détaillés du projet agricole.</p>
+      <div className="grid-2">
+        <div className="field"><label className="field-label">Apport personnel (FCFA)</label><input className="input" type="number" min="0" value={form.own_contribution} onChange={e => update('own_contribution', e.target.value)} /></div>
+        <div className="field"><label className="field-label">Autres financements (FCFA)</label><input className="input" type="number" min="0" value={form.other_funding} onChange={e => update('other_funding', e.target.value)} /></div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, margin: '16px 0' }}>
+        <SummaryLine label="Budget total" value={formatCFA(budget.total)} />
+        <SummaryLine label="Besoin réel" value={formatCFA(budget.realNeed)} />
+        <SummaryLine label="Surfinancement" value={formatCFA(budget.overfinancing)} color={budget.overfinancing ? 'var(--c-danger)' : 'var(--c-success)'} />
+        <SummaryLine label="Montant conseillé" value={formatCFA(budget.advisedAmount)} color="var(--c-primary)" />
+      </div>
+      <StepRevenus form={form} update={update} />
+    </div>
+  );
 }
 
 function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
@@ -752,7 +796,7 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
           }, controller.signal);
         } catch (error) {
           if (error.name === 'AbortError') return;
-          result = buildLocalFeasibility(project, items, [], 'unavailable');
+          result = buildLocalFeasibility(project, items, [], 'request_failed');
         }
       }
       if (active) {
@@ -769,18 +813,13 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
   const details = current?.details || {};
   const metrics = details.metrics || {};
   const declaredYield = firstMetric(metrics, ['declared_yield', 'expected_yield']);
-  const terangaYield = terangaYieldFromDetails(details);
-  const retainedYield = firstMetric(metrics, ['retained_yield']);
-  const expectedVolume = firstMetric(metrics, ['expected_volume', 'retained_production', 'saleable_production']);
+  const terangaYield = firstMetric(metrics, ['teranga_yield', 'predicted_yield_kg_ha']);
+  const retainedYield = firstMetric(metrics, ['retained_yield']) ?? declaredYield;
   const declaredRevenue = firstMetric(metrics, ['declared_revenue', 'expected_revenue']);
-  const retainedRevenue = firstMetric(metrics, ['retained_revenue']);
+  const retainedRevenue = firstMetric(metrics, ['retained_revenue']) ?? declaredRevenue;
   const revenueAdjustment = firstMetric(metrics, ['revenue_adjustment'])
     ?? (declaredRevenue != null && retainedRevenue != null ? retainedRevenue - declaredRevenue : null);
   const risk = terangaRisk(details);
-  const terangaReason = terangaYield == null
-    ? feasibilityReasonMessage(current?.source?.fallback_reason)
-    : '';
-  const missing = missingLabels(details.missing_data);
   return (
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Faisabilité agronomique</h2>
@@ -793,19 +832,18 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
           <span className={`badge ${badgeClass}`} style={{ marginBottom: 10 }}>{current.label}</span>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>{current.summary}</div>
           <div className="text-sm text-muted">{feasibilitySourceLabel(current.source)}</div>
-          {current.source?.teranga?.attempted && !current.source?.teranga?.available && (
+          {current.source?.fallback_used && (
             <div style={{ marginTop: 10, padding: '8px 10px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius)', color: '#92400e', fontSize: 'var(--fs-11)' }}>
-              Tentative Teranga échouée : {feasibilityReasonMessage(current.source.fallback_reason)}. Le moteur local FresCoop reste autoritaire et aucune pénalité n’est appliquée.
+              Teranga AI indisponible : le moteur local reste autoritaire et aucune réduction automatique n’est appliquée.
             </div>
           )}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: 10, marginBottom: 14 }}>
-          <SummaryLine label="Rendement déclaré" value={formatYield(declaredYield, 'rendement attendu manquant')} />
-          <SummaryLine label="Rendement Teranga" value={formatYield(terangaYield, terangaReason)} color="#2563eb" />
-          <SummaryLine label="Rendement retenu" value={formatYield(retainedYield, 'rendement exploitable manquant')} color="#1b6b52" />
-          <SummaryLine label="Volume attendu" value={expectedVolume == null ? 'Non calculé — surface, rendement ou pertes manquants' : `${new Intl.NumberFormat('fr-FR').format(expectedVolume)} kg`} />
-          <SummaryLine label="Revenu déclaré" value={declaredRevenue == null ? 'Non calculé — surface, rendement, pertes ou prix manquants' : formatCFA(declaredRevenue)} />
-          <SummaryLine label="Revenu retenu" value={retainedRevenue == null ? 'Non calculé — données de revenu incomplètes' : formatCFA(retainedRevenue)} color="#1b6b52" />
+          <SummaryLine label="Rendement" value={formatYield(declaredYield)} />
+          <SummaryLine label="Rendement Teranga" value={formatYield(terangaYield)} color="#2563eb" />
+          <SummaryLine label="Rendement retenu" value={formatYield(retainedYield)} color="#1b6b52" />
+          <SummaryLine label="Revenu déclaré" value={declaredRevenue == null ? '—' : formatCFA(declaredRevenue)} />
+          <SummaryLine label="Revenu retenu" value={retainedRevenue == null ? '—' : formatCFA(retainedRevenue)} color="#1b6b52" />
           <SummaryLine label="Différence de revenu" value={revenueAdjustment == null ? '—' : formatCFA(revenueAdjustment)} color={revenueAdjustment < 0 ? '#d97706' : '#1b6b52'} />
         </div>
         {(risk.score != null || risk.level || risk.recommendation) && (
@@ -826,12 +864,11 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
         <details style={{ marginTop: 14, padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>
           <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Voir les constats et recommandations</summary>
           <div style={{ marginTop: 12, fontSize: 'var(--fs-12)' }}>
-            {missing.length > 0 && <div style={{ marginBottom: 10 }}><strong>Données à compléter :</strong> {missing.join(', ')}</div>}
-            {current.report && <div style={{ marginBottom: 10 }}><strong>Rapport agronomique :</strong> <p style={{ marginTop: 5 }}>{current.report}</p></div>}
+            {details.missing_data?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Données manquantes :</strong> {details.missing_data.join(', ')}</div>}
             {details.findings?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Constats :</strong><ul>{details.findings.map(item => <li key={item.code}>{item.explanation}</li>)}</ul></div>}
             {details.recommendations?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Recommandations :</strong><ul>{details.recommendations.map(item => <li key={item}>{item}</li>)}</ul></div>}
             {details.external_signals?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Informations agricoles complémentaires :</strong><ul>{details.external_signals.map((item, index) => <li key={`${item.type}-${index}`}>{item.explanation}</li>)}</ul></div>}
-            {current.source?.fallback_reason && <div className="text-muted">Teranga : {feasibilityReasonMessage(current.source.fallback_reason)}. Le résultat repose sur l’analyse FresCoop.</div>}
+            {current.source?.fallback_reason && <div className="text-muted">Certaines données externes ne sont pas disponibles ; le résultat repose sur l’analyse FresCoop.</div>}
           </div>
         </details>
       </>}
@@ -953,15 +990,7 @@ function StepPreuves({ evidence, setEvidence }) {
   function saveEvidence() {
     if (!draft.label.trim()) return;
     if (draft.file && (!['application/pdf', 'image/jpeg', 'image/png'].includes(draft.file.type) || draft.file.size > 2 * 1024 * 1024)) return;
-    const metadata = draft.file
-      ? { file_name: draft.file.name, file_type: draft.file.type, file_size: draft.file.size, upload_pending: true }
-      : (draft.metadata || {});
-    const item = {
-      ...draft,
-      id: editingId || crypto.randomUUID(),
-      metadata,
-      file_reselection_required: Boolean(metadata.file_name && !draft.file),
-    };
+    const item = { ...draft, id: editingId || crypto.randomUUID(), metadata: draft.file ? { file_name: draft.file.name, file_type: draft.file.type, file_size: draft.file.size, upload_pending: true } : (draft.metadata || {}) };
     setEvidence(list => editingId ? list.map(x => x.id === editingId ? item : x) : [...list, item]);
     setDraft({ category: 'projet', label: '', source: 'document', source_detail: '', verification_level: 'C', file: null });
     setEditingId(null);
@@ -982,7 +1011,7 @@ function StepPreuves({ evidence, setEvidence }) {
         <div className="field"><label className="field-label">Fichier PDF, JPEG ou PNG</label><input className="input" type="file" accept="application/pdf,image/jpeg,image/png" onChange={e => { const file = e.target.files?.[0] || null; if (file && file.size > 2 * 1024 * 1024) { e.target.value = ''; return; } setDraft(d => ({ ...d, file, verification_level: file ? 'C' : d.verification_level })); }} /><div className="field-hint">2 Mo maximum par fichier, 10 Mo par dossier. Envoi authentifié et empreinte SHA-256.</div></div>
         <button type="button" className="btn btn-primary btn-sm" onClick={saveEvidence}>{editingId ? 'Enregistrer les modifications' : 'Ajouter la preuve'}</button>
       </div>
-      {evidence.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '10px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span><strong>{item.verification_level}</strong> · {item.label}{item.metadata?.file_name ? ` · ${item.metadata.file_name}` : ''}{item.file_reselection_required && !item.file ? <span style={{ color: 'var(--c-warning)' }}> · fichier à resélectionner</span> : ''}</span><span><button type="button" className="btn btn-ghost btn-sm" onClick={() => editEvidence(item)}><Pencil size={13} /></button><button type="button" className="btn btn-ghost btn-sm" onClick={() => setEvidence(list => list.filter(x => x.id !== item.id))}><Trash2 size={13} /></button></span></div>)}
+      {evidence.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '10px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span><strong>{item.verification_level}</strong> · {item.label}{item.metadata?.file_name ? ` · ${item.metadata.file_name}` : ''}</span><span><button type="button" className="btn btn-ghost btn-sm" onClick={() => editEvidence(item)}><Pencil size={13} /></button><button type="button" className="btn btn-ghost btn-sm" onClick={() => setEvidence(list => list.filter(x => x.id !== item.id))}><Trash2 size={13} /></button></span></div>)}
     </div>
   );
 }
@@ -1013,10 +1042,13 @@ function StepAnalyse({ form, items = [], debts = [] }) {
   const totalExpAnnuel = (expAgri + expHousehold) * 12;
   const totalDebtAnnuel = debts.reduce((sum, debt) => sum + Number(debt.periodic_payment || 0) * (debt.frequency === 'trimestriel' ? 4 : debt.frequency === 'saisonnier' ? 1 : 12), 0);
   const fluxNet = totalRevAnnuel - totalExpAnnuel - totalDebtAnnuel;
-  const amount = Number(form.amount_requested) || 0;
-  const duration = Number(form.duration_months) || 1;
-  const echeance = amount > 0 ? Math.ceil(amount / duration) : 0;
-  const calculable = Boolean(resolveCrop(form.crop_selection, form.crop_other_label).crop_label && Number(form.project_surface_ha) > 0 && Number(form.expected_yield) > 0 && Number(form.expected_price) > 0 && projectBudget > 0);
+  const loanSchedule = buildDetailedRepaymentSchedule(creditCalculationInput(form));
+  const amount = loanSchedule.terms.principal;
+  const interest = loanSchedule.terms.interest_amount;
+  const totalCredit = loanSchedule.terms.total_repayable;
+  const repayment = repaymentEstimate(form);
+  const annualCreditService = loanSchedule.installments.slice(0, 12).reduce((sum, installment) => sum + installment.payment, 0);
+  const calculable = Boolean(form.crop_name && Number(form.project_surface_ha) > 0 && Number(form.expected_yield) > 0 && Number(form.expected_price) > 0 && projectBudget > 0);
 
   return (
     <div>
@@ -1040,21 +1072,59 @@ function StepAnalyse({ form, items = [], debts = [] }) {
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 'var(--fs-12)' }}>
           <span className="text-muted">Durée</span>
-          <span className="font-semibold">{duration} mois</span>
+          <span className="font-semibold">{loanSchedule.terms.duration_months || '—'} mois</span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 'var(--fs-12)' }}>
+          <span className="text-muted">Intérêts estimés</span>
+          <span className="font-semibold">{formatCFA(interest)}</span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 'var(--fs-12)' }}>
+          <span className="text-muted">Capital + intérêts</span>
+          <span className="font-semibold">{formatCFA(totalCredit)}</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-12)' }}>
-          <span className="text-muted">Échéance mensuelle estimée</span>
-          <span className="font-semibold">{formatCFA(echeance)}</span>
+          <span className="text-muted">{repayment.label}</span>
+          <span className="font-semibold">{formatCFA(repayment.installment)} × {repayment.count}</span>
         </div>
       </div>
 
-      {echeance > 0 && fluxNet > 0 && (
-        <div style={{ padding: 12, borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)', background: echeance * 12 <= fluxNet ? 'var(--c-success-bg)' : 'var(--c-warning-bg)', color: echeance * 12 <= fluxNet ? 'var(--c-success)' : 'var(--c-warning)' }}>
-          {echeance * 12 <= fluxNet
+      {totalCredit > 0 && fluxNet > 0 && (
+        <div style={{ padding: 12, borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)', background: annualCreditService <= fluxNet ? 'var(--c-success-bg)' : 'var(--c-warning-bg)', color: annualCreditService <= fluxNet ? 'var(--c-success)' : 'var(--c-warning)' }}>
+          {annualCreditService <= fluxNet
             ? 'Le flux net annuel estimé couvre les échéances annuelles.'
             : 'Attention : le flux net estimé pourrait ne pas couvrir toutes les échéances. Un calendrier saisonnier peut être envisagé.'}
         </div>
       )}
+    </div>
+  );
+}
+
+function canSubmitDossier(form) {
+  return Boolean(form.applicant_name && form.applicant_id_number && form.amount_requested && form.credit_purpose && (form.crops?.length || form.crop_name) && (!form.third_party_commitment || (form.guarantor_name && form.guarantor_id_number && form.guarantor_phone && form.guarantor_consent)));
+}
+
+function StepResume({ form, update, items, debts, evidence }) {
+  const loan = loanTotals(form);
+  const repayment = repaymentEstimate(form);
+  const budget = projectBudget(items, form);
+  return (
+    <div>
+      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Résumé de la demande</h2>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 18 }}>
+        <SummaryLine label="Demandeur" value={form.applicant_name || '—'} />
+        <SummaryLine label="Cultures" value={(form.crops || []).map(crop => crop.name).join(', ') || form.crop_name || '—'} />
+        <SummaryLine label="Budget total" value={formatCFA(budget.total)} />
+        <SummaryLine label="Besoin réel" value={formatCFA(budget.realNeed)} />
+        <SummaryLine label="Montant conseillé" value={formatCFA(budget.advisedAmount)} color="var(--c-primary)" />
+        <SummaryLine label="Surfinancement" value={formatCFA(budget.overfinancing)} color={budget.overfinancing ? 'var(--c-danger)' : 'var(--c-success)'} />
+        <SummaryLine label="Capital demandé" value={formatCFA(loan.principal)} />
+        <SummaryLine label="Intérêts retenus" value={formatCFA(loan.interest)} />
+        <SummaryLine label="Total dû" value={formatCFA(loan.totalDue)} color="var(--c-primary)" />
+        <SummaryLine label={repayment.label} value={`${formatCFA(repayment.installment)} × ${repayment.count}`} />
+        <SummaryLine label="Preuves" value={`${evidence.length}`} />
+        <SummaryLine label="Dettes déclarées" value={`${debts.length}`} />
+      </div>
+      <div className="field"><label className="field-label">Note de l'agent</label><textarea className="input" rows={4} value={form.agent_note} onChange={e => update('agent_note', e.target.value)} placeholder="Observations terrain et points d'attention…" /></div>
     </div>
   );
 }
@@ -1064,42 +1134,6 @@ function SummaryLine({ label, value, color }) {
     <div style={{ padding: 12, background: '#fff', border: '1px solid var(--c-border)', borderRadius: 'var(--radius-md)' }}>
       <div className="text-sm text-muted">{label}</div>
       <div style={{ fontSize: 'var(--fs-16)', fontWeight: 700, color, marginTop: 2 }}>{value}</div>
-    </div>
-  );
-}
-
-function StepSoumission({ form, update, saving, onSave, setStep }) {
-  const hasCrop = Boolean(resolveCrop(form.crop_selection, form.crop_other_label).crop_label);
-  const canSubmit = form.applicant_name && form.applicant_id_number && form.amount_requested && form.credit_purpose && hasCrop && form.project_surface_ha && (!form.third_party_commitment || (form.guarantor_name && form.guarantor_id_number && form.guarantor_phone && form.guarantor_consent));
-
-  return (
-    <div>
-      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Vérification et soumission</h2>
-
-      <div style={{ marginBottom: 20, padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <div><span className="text-muted">Demandeur :</span> <span className="font-semibold">{form.applicant_name || '—'}</span></div>
-          <div><span className="text-muted">Montant :</span> <span className="font-semibold">{formatCFA(Number(form.amount_requested) || 0)}</span></div>
-          <div><span className="text-muted">Objet :</span> <span className="font-semibold">{form.credit_purpose || '—'}</span></div>
-          <div><span className="text-muted">Durée :</span> <span className="font-semibold">{form.duration_months || '—'} mois</span></div>
-          <div><span className="text-muted">Localisation :</span> <span className="font-semibold">{form.applicant_location || '—'}</span></div>
-          <div><span className="text-muted">Activité :</span> <span className="font-semibold">{form.activity_type || form.sector || '—'}</span></div>
-        </div>
-      </div>
-
-      <div className="field">
-        <label className="field-label">Note de l'agent</label>
-        <textarea className="input" rows={4} value={form.agent_note} onChange={e => update('agent_note', e.target.value)} placeholder="Observations terrain, contexte, points d'attention pour le superviseur..." />
-      </div>
-
-      <div className="flex justify-between items-center" style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--c-border)' }}>
-        <button className="btn btn-secondary" onClick={() => setStep(5)}>
-          <ArrowLeft size={14} /> Revenir en arrière
-        </button>
-        <button className="btn btn-primary btn-lg" onClick={onSave} disabled={saving || !canSubmit}>
-          <Save size={16} /> {saving ? 'Enregistrement...' : 'Créer le dossier'}
-        </button>
-      </div>
     </div>
   );
 }
