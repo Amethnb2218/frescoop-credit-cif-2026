@@ -2,7 +2,8 @@ import * as feasibilityContract from '../../shared/agriculturalFeasibilityContra
 import { assessAgriculturalProject, AGRICULTURAL_RULES_VERSION } from './agriculturalAssessment.js';
 
 export const AGRICULTURAL_FEASIBILITY_VERSION = feasibilityContract.AGRICULTURAL_FEASIBILITY_CONTRACT_VERSION ?? 3;
-const DEFAULT_TIMEOUT_MS = 2500;
+const DEFAULT_TERANGA_BASE_URL = 'https://teranga-ai.onrender.com';
+const DEFAULT_TIMEOUT_MS = 30000;
 
 function finiteNumber(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -12,6 +13,14 @@ function finiteNumber(value) {
 
 function strictResponseNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function findResponseNumber(payload, paths) {
+  for (const path of paths) {
+    const value = strictResponseNumber(pickFirst(payload, [path]));
+    if (value != null) return value;
+  }
+  return null;
 }
 
 function safeText(value) {
@@ -184,10 +193,12 @@ function pickFirst(object, paths) {
 }
 
 export function normalizeYieldResponse(payload, expectedYield) {
-  const predicted = strictResponseNumber(pickFirst(payload, [
-    'predicted_yield_kg_ha', 'ensemble.predicted_yield_kg_ha', 'ensemble.predicted_yield_kg',
-    'result.predicted_yield_kg_ha', 'data.predicted_yield_kg_ha',
-  ]));
+  const predicted = findResponseNumber(payload, [
+    'predicted_yield_kg_ha', 'predicted_yield_kg',
+    'ensemble.predicted_yield_kg_ha', 'ensemble.predicted_yield_kg',
+    'result.predicted_yield_kg_ha', 'result.predicted_yield_kg',
+    'data.predicted_yield_kg_ha', 'data.predicted_yield_kg',
+  ]);
   if (predicted == null || predicted <= 0 || predicted > 50000) return null;
   const expected = finiteNumber(expectedYield);
   const signal = {
@@ -203,9 +214,25 @@ export function normalizeYieldResponse(payload, expectedYield) {
 }
 
 export function normalizeRiskResponse(payload) {
-  const safetyScore = strictResponseNumber(pickFirst(payload, ['safety_score', 'result.safety_score', 'data.safety_score']));
-  const level = safeText(pickFirst(payload, ['niveau', 'result.niveau', 'data.niveau'])).toLowerCase();
-  const recommendation = safeText(pickFirst(payload, ['recommandation', 'result.recommandation', 'data.recommandation']));
+  const safetyScore = findResponseNumber(payload, [
+    'safety_score', 'safetyScore',
+    'result.safety_score', 'result.safetyScore',
+    'data.safety_score', 'data.safetyScore',
+  ]);
+  const rawLevel = safeText(pickFirst(payload, [
+    'niveau', 'level', 'risk_level',
+    'result.niveau', 'result.level', 'result.risk_level',
+    'data.niveau', 'data.level', 'data.risk_level',
+  ])).toLowerCase();
+  const recommendation = safeText(pickFirst(payload, [
+    'recommandation', 'recommendation',
+    'result.recommandation', 'result.recommendation',
+    'data.recommandation', 'data.recommendation',
+  ]));
+  let level = rawLevel;
+  if (!level && safetyScore != null) {
+    level = safetyScore >= 70 ? 'information' : safetyScore >= 40 ? 'moderate' : 'high';
+  }
   if (safetyScore == null || safetyScore < 0 || safetyScore > 100
     || !['high', 'moderate', 'information'].includes(level) || !recommendation) return null;
   return { type: 'risk', safety_score: safetyScore, level, recommendation, explanation: recommendation };
@@ -293,7 +320,10 @@ export async function assessAgriculturalFeasibility(input = {}, options = {}) {
   const inputItems = Array.isArray(input.input_items) ? input.input_items : [];
   const evidence = Array.isArray(input.evidence) ? input.evidence : [];
   const local = assessAgriculturalProject(project, inputItems, evidence);
-  const baseUrl = String(options.baseUrl ?? process.env.TERANGA_BASE_URL ?? '').replace(/\/$/, '');
+  const requestedBaseUrl = Object.prototype.hasOwnProperty.call(options, 'baseUrl')
+    ? options.baseUrl
+    : process.env.TERANGA_BASE_URL || DEFAULT_TERANGA_BASE_URL;
+  const baseUrl = String(requestedBaseUrl ?? '').replace(/\/$/, '');
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const timeoutMs = finiteNumber(options.timeoutMs ?? process.env.TERANGA_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
   const city = safeText(input.context?.city || input.context?.location || project.agro_zone).replace(/\s*\([^)]*\)\s*$/, '');

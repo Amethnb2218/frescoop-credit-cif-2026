@@ -2,26 +2,30 @@ import { useState, useEffect } from 'react';
 import { api, getUser } from '../lib/api';
 import { ROLE_LABELS, formatDateTime } from '../lib/format';
 import { Users, Key, Shield, UserPlus, Lock, AlertTriangle, Search } from 'lucide-react';
+import PageHeader from '../components/ui/PageHeader';
+import Panel from '../components/ui/Panel';
+import Alert from '../components/ui/Alert';
+import LoadingState from '../components/ui/LoadingState';
+import ErrorState from '../components/ui/ErrorState';
+import EmptyState from '../components/ui/EmptyState';
+import Dialog from '../components/ui/Dialog';
 
 export default function AdminPage() {
   const user = getUser();
   const [tab, setTab] = useState('users');
 
   if (!['ADMIN', 'SUPERADMIN', 'SUPPORT'].includes(user?.role)) {
-    return <div className="empty-state"><div className="empty-state-title">Accès refusé</div></div>;
+    return <EmptyState title="Accès refusé" description="Votre rôle ne permet pas d’ouvrir l’administration." />;
   }
 
   return (
     <div>
-      <div className="page-header">
-        <h1 className="page-title">Administration</h1>
-        <p className="page-subtitle">Gestion des utilisateurs et paramètres</p>
-      </div>
+      <PageHeader eyebrow="Paramètres de l’institution" title="Administration" subtitle="Gestion des utilisateurs, accès et diagnostic du système." />
 
-      <div className="tab-list">
-        <button className={`tab-item ${tab === 'users' ? 'active' : ''}`} onClick={() => setTab('users')}><Users size={14} /> Utilisateurs</button>
-        <button className={`tab-item ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}><AlertTriangle size={14} /> Système</button>
-        <button className={`tab-item ${tab === 'password' ? 'active' : ''}`} onClick={() => setTab('password')}><Lock size={14} /> Mon mot de passe</button>
+      <div className="tab-list" role="tablist" aria-label="Rubriques d’administration">
+        <button type="button" role="tab" aria-selected={tab === 'users'} className={`tab-item ${tab === 'users' ? 'active' : ''}`} onClick={() => setTab('users')}><Users size={14} /> Utilisateurs</button>
+        <button type="button" role="tab" aria-selected={tab === 'system'} className={`tab-item ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}><AlertTriangle size={14} /> Système</button>
+        <button type="button" role="tab" aria-selected={tab === 'password'} className={`tab-item ${tab === 'password' ? 'active' : ''}`} onClick={() => setTab('password')}><Lock size={14} /> Mon mot de passe</button>
       </div>
 
       {tab === 'users' && <UsersTab />}
@@ -45,6 +49,8 @@ function UsersTab() {
   useEffect(() => { loadUsers(); }, []);
 
   async function loadUsers() {
+    setLoading(true);
+    setError('');
     try {
       const res = await api.getUsers();
       setUsers(res.users || []);
@@ -117,10 +123,6 @@ function UsersTab() {
     if (!createForm.name || !createForm.email || !createForm.password) { setError('Nom, email et mot de passe requis'); return; }
     if (createForm.password.length < 6) { setError('Le mot de passe doit faire au moins 6 caractères'); return; }
     try {
-      const user = getUser();
-      await api.login(user.email, ''); // we need tenant_id
-    } catch {}
-    try {
       const currentUser = getUser();
       const res = await fetch('/api/auth/register', {
         method: 'POST',
@@ -136,12 +138,12 @@ function UsersTab() {
     } catch (err) { setError(err.message); }
   }
 
-  if (loading) return <div className="loading-state">Chargement...</div>;
+  if (loading) return <LoadingState message="Chargement des utilisateurs…" />;
 
   return (
     <div>
-      {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '10px 14px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
-      {success && <div style={{ background: '#ecfdf5', color: '#059669', padding: '10px 14px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #a7f3d0' }}>{success}</div>}
+      {error && <ErrorState title="Opération impossible" message={error} onRetry={loadUsers} />}
+      {success && <Alert tone="success" title="Opération terminée">{success}</Alert>}
 
       <div className="flex justify-between items-center mb-4">
         <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600 }}>Utilisateurs ({users.length})</h2>
@@ -156,7 +158,7 @@ function UsersTab() {
 
       <div style={{ marginBottom: 16, position: 'relative' }}>
         <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--c-400)' }} />
-        <input className="input" style={{ paddingLeft: 32 }} placeholder="Rechercher par nom ou email..." value={search} onChange={e => setSearch(e.target.value)} />
+        <input className="input" style={{ paddingLeft: 32 }} aria-label="Rechercher un utilisateur" placeholder="Rechercher par nom ou email..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
 
       {creating && (
@@ -164,20 +166,20 @@ function UsersTab() {
           <h3 style={{ fontSize: 'var(--fs-md)', fontWeight: 600, marginBottom: 12 }}>Créer un utilisateur</h3>
           <div className="grid-2">
             <div className="field">
-              <label className="field-label">Nom complet *</label>
-              <input className="input" value={createForm.name} onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))} />
+              <label className="field-label" htmlFor="admin-user-name">Nom complet *</label>
+              <input id="admin-user-name" className="input" value={createForm.name} onChange={e => setCreateForm(f => ({ ...f, name: e.target.value }))} />
             </div>
             <div className="field">
-              <label className="field-label">Email *</label>
-              <input className="input" type="email" value={createForm.email} onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))} />
+              <label className="field-label" htmlFor="admin-user-email">Email *</label>
+              <input id="admin-user-email" className="input" type="email" value={createForm.email} onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))} />
             </div>
             <div className="field">
-              <label className="field-label">Mot de passe *</label>
-              <input className="input" type="text" value={createForm.password} onChange={e => setCreateForm(f => ({ ...f, password: e.target.value }))} placeholder="Min 6 caractères" />
+              <label className="field-label" htmlFor="admin-user-password">Mot de passe *</label>
+              <input id="admin-user-password" className="input" type="text" value={createForm.password} onChange={e => setCreateForm(f => ({ ...f, password: e.target.value }))} placeholder="Min 6 caractères" />
             </div>
             <div className="field">
-              <label className="field-label">Rôle</label>
-              <select className="input" value={createForm.role} onChange={e => setCreateForm(f => ({ ...f, role: e.target.value }))}>
+              <label className="field-label" htmlFor="admin-user-role">Rôle</label>
+              <select id="admin-user-role" className="input" value={createForm.role} onChange={e => setCreateForm(f => ({ ...f, role: e.target.value }))}>
                 <option value="AGENT">Agent de crédit</option>
                 <option value="SUPERVISEUR">Superviseur</option>
                 <option value="COMITE">Comité de crédit</option>
@@ -188,12 +190,12 @@ function UsersTab() {
               </select>
             </div>
             <div className="field">
-              <label className="field-label">Téléphone</label>
-              <input className="input" value={createForm.phone} onChange={e => setCreateForm(f => ({ ...f, phone: e.target.value }))} />
+              <label className="field-label" htmlFor="admin-user-phone">Téléphone</label>
+              <input id="admin-user-phone" className="input" value={createForm.phone} onChange={e => setCreateForm(f => ({ ...f, phone: e.target.value }))} />
             </div>
             <div className="field">
-              <label className="field-label">Agence</label>
-              <input className="input" value={createForm.agency} onChange={e => setCreateForm(f => ({ ...f, agency: e.target.value }))} />
+              <label className="field-label" htmlFor="admin-user-agency">Agence</label>
+              <input id="admin-user-agency" className="input" value={createForm.agency} onChange={e => setCreateForm(f => ({ ...f, agency: e.target.value }))} />
             </div>
           </div>
           <div className="flex gap-2" style={{ marginTop: 12 }}>
@@ -241,24 +243,23 @@ function UsersTab() {
         </div>
       </div>
 
-      {resetUserId && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#fff', borderRadius: 'var(--radius-md)', padding: 24, width: 400, boxShadow: '0 20px 60px rgba(0,0,0,.2)' }}>
-            <h3 style={{ fontSize: 'var(--fs-md)', fontWeight: 600, marginBottom: 16 }}>Réinitialiser le mot de passe</h3>
-            <p style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', marginBottom: 12 }}>
-              Utilisateur : <strong>{users.find(u => u.id === resetUserId)?.name}</strong>
-            </p>
-            <div className="field">
-              <label className="field-label">Nouveau mot de passe</label>
-              <input className="input" type="text" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Min 6 caractères" autoFocus />
-            </div>
-            <div className="flex gap-2" style={{ marginTop: 16 }}>
-              <button className="btn btn-primary btn-sm" onClick={handleReset}>Réinitialiser</button>
-              <button className="btn btn-secondary btn-sm" onClick={() => setResetUserId(null)}>Annuler</button>
-            </div>
-          </div>
+      <Dialog
+        open={Boolean(resetUserId)}
+        title="Réinitialiser le mot de passe"
+        description={`Utilisateur : ${users.find(item => item.id === resetUserId)?.name || ''}`}
+        onClose={() => setResetUserId(null)}
+        footer={(
+          <>
+            <button type="button" className="btn btn-secondary" onClick={() => setResetUserId(null)}>Annuler</button>
+            <button type="button" className="btn btn-primary" onClick={handleReset}>Réinitialiser</button>
+          </>
+        )}
+      >
+        <div className="field">
+          <label className="field-label" htmlFor="reset-password">Nouveau mot de passe</label>
+          <input id="reset-password" className="input" type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} placeholder="6 caractères minimum" autoFocus />
         </div>
-      )}
+      </Dialog>
     </div>
   );
 }
@@ -267,16 +268,20 @@ function SystemTab() {
   const [health, setHealth] = useState(null);
   const [errors, setErrors] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => { checkSystem(); }, []);
 
   async function checkSystem() {
+    setLoading(true);
+    setError('');
     const checks = [];
     try {
       const h = await api.health();
       setHealth(h);
     } catch (err) {
       checks.push({ level: 'critical', source: 'API', message: `Serveur inaccessible : ${err.message}`, time: new Date().toISOString() });
+      setError(err.message || 'Serveur inaccessible');
     }
 
     try { await api.getDossiers(); }
@@ -297,10 +302,11 @@ function SystemTab() {
 
   const levelStyle = { critical: { bg: '#fef2f2', border: '#fca5a5', color: '#991b1b' }, error: { bg: '#fef2f2', border: '#fca5a5', color: '#dc2626' }, warning: { bg: '#fffbeb', border: '#fde68a', color: '#92400e' } };
 
-  if (loading) return <div className="loading-state">Vérification du système...</div>;
+  if (loading) return <LoadingState message="Vérification du système…" />;
 
   return (
     <div>
+      {error && <ErrorState title="Serveur inaccessible" message={error} onRetry={checkSystem} />}
       <div className="surface mb-4">
         <div className="surface-title">État du serveur</div>
         {health ? (
@@ -384,20 +390,20 @@ function PasswordTab() {
       <div className="surface">
         <h3 style={{ fontSize: 'var(--fs-md)', fontWeight: 600, marginBottom: 16 }}>Changer mon mot de passe</h3>
 
-        {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '8px 12px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
-        {success && <div style={{ background: '#ecfdf5', color: '#059669', padding: '8px 12px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #a7f3d0' }}>{success}</div>}
+        {error && <Alert tone="danger" title="Modification impossible">{error}</Alert>}
+        {success && <Alert tone="success" title="Mot de passe modifié">{success}</Alert>}
 
         <div className="field">
-          <label className="field-label">Mot de passe actuel</label>
-          <input className="input" type="password" value={form.current} onChange={e => setForm(f => ({ ...f, current: e.target.value }))} />
+          <label className="field-label" htmlFor="current-password">Mot de passe actuel</label>
+          <input id="current-password" className="input" type="password" autoComplete="current-password" value={form.current} onChange={e => setForm(f => ({ ...f, current: e.target.value }))} />
         </div>
         <div className="field">
-          <label className="field-label">Nouveau mot de passe</label>
-          <input className="input" type="password" value={form.new1} onChange={e => setForm(f => ({ ...f, new1: e.target.value }))} />
+          <label className="field-label" htmlFor="new-password">Nouveau mot de passe</label>
+          <input id="new-password" className="input" type="password" autoComplete="new-password" value={form.new1} onChange={e => setForm(f => ({ ...f, new1: e.target.value }))} />
         </div>
         <div className="field">
-          <label className="field-label">Confirmer le nouveau mot de passe</label>
-          <input className="input" type="password" value={form.new2} onChange={e => setForm(f => ({ ...f, new2: e.target.value }))} />
+          <label className="field-label" htmlFor="confirm-password">Confirmer le nouveau mot de passe</label>
+          <input id="confirm-password" className="input" type="password" autoComplete="new-password" value={form.new2} onChange={e => setForm(f => ({ ...f, new2: e.target.value }))} />
         </div>
         <button className="btn btn-primary" style={{ width: '100%', marginTop: 12 }} onClick={handleChange}>Modifier le mot de passe</button>
       </div>

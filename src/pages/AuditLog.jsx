@@ -1,7 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { Search } from 'lucide-react';
 import { api } from '../lib/api';
 import { formatDateTime } from '../lib/format';
-import { Search } from 'lucide-react';
+import PageHeader from '../components/ui/PageHeader';
+import Panel from '../components/ui/Panel';
+import StatusBadge from '../components/ui/StatusBadge';
+import LoadingState from '../components/ui/LoadingState';
+import ErrorState from '../components/ui/ErrorState';
+import EmptyState from '../components/ui/EmptyState';
 
 const ACTION_LABELS = {
   LOGIN: 'Connexion',
@@ -20,78 +26,96 @@ const ACTION_LABELS = {
   SYNC_PUSH: 'Synchronisation',
 };
 
+function logDetail(log) {
+  try {
+    const details = JSON.parse(log.details || '{}');
+    if (log.action === 'STATUS_CHANGED') return `${details.from} → ${details.to}`;
+    if (log.action === 'DECISION_MADE' || log.action === 'DECISION_OVERRIDE') {
+      return `Décision : ${details.decision}${details.amount ? ` — ${details.amount.toLocaleString('fr-FR')} FCFA` : ''}`;
+    }
+    if (log.action === 'EVIDENCE_ADDED') return `${details.category} — Niveau ${details.level}`;
+    if (log.action === 'RULES_EVALUATED') return `Préqualification : ${details.prequalification}`;
+  } catch {
+    return '';
+  }
+  return '';
+}
+
 export default function AuditLog() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [filter, setFilter] = useState('');
 
-  useEffect(() => { loadLogs(); }, []);
-
-  async function loadLogs() {
+  const loadLogs = useCallback(async () => {
+    setLoading(true);
+    setError('');
     try {
-      const res = await api.getAuditLog({ limit: '200' });
-      setLogs(res.logs || []);
-    } catch {} finally { setLoading(false); }
-  }
+      const response = await api.getAuditLog({ limit: '200' });
+      setLogs(response.logs || []);
+    } catch (err) {
+      setError(err.message || 'Impossible de charger le journal.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const filtered = logs.filter(l => {
+  useEffect(() => { loadLogs(); }, [loadLogs]);
+
+  const filtered = logs.filter(log => {
     if (!filter) return true;
-    const q = filter.toLowerCase();
-    return (l.user_name || '').toLowerCase().includes(q) ||
-           (l.action || '').toLowerCase().includes(q);
+    const query = filter.toLowerCase();
+    return (log.user_name || '').toLowerCase().includes(query)
+      || (log.action || '').toLowerCase().includes(query);
   });
-
   const importantActions = ['DECISION_MADE', 'DECISION_OVERRIDE', 'STATUS_CHANGED'];
 
   return (
     <div>
-      <div className="page-header">
-        <h1 className="page-title">Journal d'audit</h1>
-        <p className="page-subtitle">Historique complet des opérations et décisions</p>
-      </div>
+      <PageHeader eyebrow="Traçabilité" title="Journal d’audit" subtitle="Historique append-only des opérations, contrôles et décisions." />
 
-      <div className="surface" style={{ marginBottom: 16, padding: '12px 16px' }}>
-        <div style={{ position: 'relative', maxWidth: 360 }}>
-          <Search size={15} style={{ position: 'absolute', left: 10, top: 9, color: 'var(--c-400)' }} />
-          <input className="input" style={{ paddingLeft: 32 }} placeholder="Rechercher par utilisateur, action..." value={filter} onChange={e => setFilter(e.target.value)} />
-        </div>
-      </div>
+      <Panel className="filter-panel">
+        <label className="search-field" htmlFor="audit-search">
+          <Search size={16} aria-hidden="true" />
+          <span className="sr-only">Rechercher dans le journal</span>
+          <input
+            id="audit-search"
+            className="input"
+            placeholder="Rechercher par utilisateur ou action…"
+            value={filter}
+            onChange={event => setFilter(event.target.value)}
+          />
+        </label>
+      </Panel>
 
-      <div className="surface">
-        {loading ? (
-          <div className="loading-state">Chargement du journal...</div>
-        ) : filtered.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-title">Aucune entrée d'audit</div>
-            <div className="empty-state-desc">Les opérations effectuées sur la plateforme apparaîtront ici.</div>
-          </div>
-        ) : (
-          <div className="audit-timeline">
-            {filtered.map(l => {
-              const isImportant = importantActions.includes(l.action);
-              let detail = '';
-              try {
-                const d = JSON.parse(l.details || '{}');
-                if (l.action === 'STATUS_CHANGED') detail = `${d.from} → ${d.to}`;
-                else if (l.action === 'DECISION_MADE' || l.action === 'DECISION_OVERRIDE') detail = `Décision: ${d.decision}${d.amount ? ` — ${d.amount.toLocaleString('fr-FR')} FCFA` : ''}`;
-                else if (l.action === 'EVIDENCE_ADDED') detail = `${d.category} — Niveau ${d.level}`;
-                else if (l.action === 'RULES_EVALUATED') detail = `Préqualification: ${d.prequalification}`;
-              } catch {}
-
-              return (
-                <div key={l.id} className={`audit-event ${isImportant ? 'important' : ''}`}>
-                  <div className="audit-time">{formatDateTime(l.created_at)}</div>
-                  <div className="audit-actor">{l.user_name} <span className="badge badge-neutral" style={{ marginLeft: 6 }}>{l.user_role}</span></div>
-                  <div className="audit-action">
-                    {ACTION_LABELS[l.action] || l.action}
-                    {detail && <span style={{ marginLeft: 8, color: 'var(--c-500)' }}>— {detail}</span>}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      <Panel>
+        {loading ? <LoadingState message="Chargement du journal…" />
+          : error ? <ErrorState title="Journal indisponible" message={error} onRetry={loadLogs} />
+            : filtered.length === 0 ? (
+              <EmptyState
+                title={logs.length ? 'Aucun résultat' : 'Aucune entrée d’audit'}
+                description={logs.length ? 'Modifiez votre recherche pour afficher d’autres opérations.' : 'Les opérations effectuées sur la plateforme apparaîtront ici.'}
+              />
+            ) : (
+              <div className="audit-timeline">
+                {filtered.map(log => {
+                  const detail = logDetail(log);
+                  return (
+                    <article key={log.id} className={`audit-event ${importantActions.includes(log.action) ? 'important' : ''}`}>
+                      <time className="audit-time" dateTime={log.created_at}>{formatDateTime(log.created_at)}</time>
+                      <div className="audit-actor">
+                        {log.user_name || 'Système'} <StatusBadge tone="neutral">{log.user_role || 'SYSTEM'}</StatusBadge>
+                      </div>
+                      <div className="audit-action">
+                        <strong>{ACTION_LABELS[log.action] || log.action}</strong>
+                        {detail && <span className="audit-detail">— {detail}</span>}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+      </Panel>
     </div>
   );
 }

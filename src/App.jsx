@@ -26,7 +26,7 @@ function PageLoader() {
 const NAV_ITEMS = {
   dashboard: { to: '/', icon: Home, label: 'Tableau de bord' },
   dossiers: { to: '/dossiers', icon: FileText, label: 'Dossiers' },
-  decisions: { to: '/dossiers?status=committee', icon: Gavel, label: 'Décisions' },
+  decisions: { to: '/dossiers?status=decisions', icon: Gavel, label: 'Décisions' },
   rules: { to: '/rules', icon: Scale, label: 'Règles' },
   audit: { to: '/audit', icon: BookOpen, label: 'Audit' },
   stats: { to: '/stats', icon: BarChart3, label: 'Statistiques' },
@@ -40,7 +40,7 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
-function Navigation({ mobileOpen, setMobileOpen }) {
+function Navigation({ mobileOpen, setMobileOpen, online }) {
   const location = useLocation();
   const navigate = useNavigate();
   const user = getUser();
@@ -55,7 +55,7 @@ function Navigation({ mobileOpen, setMobileOpen }) {
         let count = 0;
         if (role === 'AGENT') count = dossiers.filter(d => ['draft', 'incomplete'].includes(d.status)).length;
         else if (role === 'SUPERVISEUR') count = dossiers.filter(d => ['submitted', 'verification', 'review'].includes(d.status)).length;
-        else if (role === 'COMITE') count = dossiers.filter(d => d.status === 'committee').length;
+        else if (role === 'COMITE') count = dossiers.filter(d => ['committee_ready', 'committee'].includes(d.status)).length;
         else count = dossiers.filter(d => ['submitted', 'verification', 'review', 'committee'].includes(d.status)).length;
         setBadge(count);
       }).catch(() => {});
@@ -65,9 +65,14 @@ function Navigation({ mobileOpen, setMobileOpen }) {
   return (
     <nav className={`nav-sidebar ${mobileOpen ? 'mobile-open' : ''}`}>
       <div className="nav-brand">
-        <div className="nav-brand-name">FresCoop</div>
-        <div className="nav-brand-desc">Crédit agricole</div>
-        <button className="mobile-close-btn" onClick={() => setMobileOpen(false)}><X size={18} /></button>
+        <div className="nav-brand-identity">
+          <div className="nav-monogram" aria-hidden="true">FC</div>
+          <div>
+            <div className="nav-brand-name">FresCoop</div>
+            <div className="nav-brand-desc">Instruction du crédit agricole</div>
+          </div>
+        </div>
+        <button className="mobile-close-btn" onClick={() => setMobileOpen(false)} aria-label="Fermer la navigation"><X size={18} /></button>
       </div>
 
       <div className="nav-section">
@@ -75,7 +80,22 @@ function Navigation({ mobileOpen, setMobileOpen }) {
         {allowedKeys.map(key => {
           const item = NAV_ITEMS[key];
           if (!item) return null;
-          const isActive = item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to.split('?')[0]);
+          const [itemPath, itemQuery] = item.to.split('?');
+          const queryMatches = itemQuery
+            ? new URLSearchParams(location.search).get('status') === new URLSearchParams(itemQuery).get('status')
+            : false;
+          const queryRouteActive = allowedKeys.some(allowedKey => {
+            const allowedTarget = NAV_ITEMS[allowedKey]?.to;
+            if (!allowedTarget?.includes('?')) return false;
+            const [allowedPath, allowedQuery] = allowedTarget.split('?');
+            return location.pathname === allowedPath
+              && new URLSearchParams(location.search).get('status') === new URLSearchParams(allowedQuery).get('status');
+          });
+          const isActive = item.to === '/'
+            ? location.pathname === '/'
+            : itemQuery
+              ? location.pathname === itemPath && queryMatches
+              : location.pathname.startsWith(itemPath) && !queryRouteActive;
           const showBadge = key === 'dossiers' && badge > 0;
           return (
             <Link key={key} to={item.to} className={`nav-item ${isActive ? 'active' : ''}`} onClick={() => setMobileOpen(false)}>
@@ -88,9 +108,19 @@ function Navigation({ mobileOpen, setMobileOpen }) {
       </div>
 
       <div className="nav-footer">
-        <div className="nav-user-name">{user?.name}</div>
-        <div className="nav-user-role">{ROLE_LABELS[user?.role] || user?.role}</div>
-        <button className="btn btn-ghost btn-sm" style={{ marginTop: 12, width: '100%', justifyContent: 'center', color: '#9ca3af' }} onClick={() => { logout(); navigate('/login'); }}>
+        <div className="nav-connectivity" role="status">
+          <span className={`network-dot ${online ? 'online' : 'offline'}`} aria-hidden="true" />
+          {online ? 'Connecté au service' : 'Mode hors connexion'}
+        </div>
+        <div className="nav-user-card">
+          <div className="nav-user-avatar" aria-hidden="true">{user?.name?.trim()?.charAt(0)?.toUpperCase() || 'U'}</div>
+          <div className="nav-user-details">
+            <div className="nav-user-name">{user?.name}</div>
+            <div className="nav-user-role">{ROLE_LABELS[user?.role] || user?.role}</div>
+            {user?.agency && <div className="nav-user-agency">{user.agency}</div>}
+          </div>
+        </div>
+        <button className="btn btn-ghost btn-sm nav-logout" onClick={() => { logout(); navigate('/login'); }}>
           <LogOut size={14} /> Déconnexion
         </button>
       </div>
@@ -113,6 +143,17 @@ export default function App() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => onConnectivityChange(setOnline), []);
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [online]);
+  useEffect(() => {
+    if (!mobileOpen) return undefined;
+    function handleEscape(event) {
+      if (event.key === 'Escape') setMobileOpen(false);
+    }
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [mobileOpen]);
 
   return (
     <Routes>
@@ -121,9 +162,15 @@ export default function App() {
       <Route path="*" element={
         <ProtectedRoute>
           <div className="app-layout">
-            <button className="mobile-hamburger" onClick={() => setMobileOpen(true)}><Menu size={20} /></button>
-            {mobileOpen && <div className="mobile-overlay" onClick={() => setMobileOpen(false)}></div>}
-            <Navigation mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} />
+            <div className="mobile-topbar">
+              <button className="mobile-hamburger" onClick={() => setMobileOpen(true)} aria-label="Ouvrir la navigation" aria-expanded={mobileOpen}>
+                <Menu size={20} />
+              </button>
+              <div className="mobile-brand"><span className="mobile-monogram">FC</span><span>FresCoop</span></div>
+              <span className={`network-dot ${online ? 'online' : 'offline'}`} title={online ? 'En ligne' : 'Hors connexion'} />
+            </div>
+            {mobileOpen && <div className="mobile-overlay" onClick={() => setMobileOpen(false)} aria-hidden="true"></div>}
+            <Navigation mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} online={online} />
             <OfflineBanner online={online} />
             <div className="page-content">
               <div className="page-inner">

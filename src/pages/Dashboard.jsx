@@ -1,19 +1,34 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { AlertTriangle, BookOpen, CheckCircle, Clock, FileText, Plus } from 'lucide-react';
 import { api, getUser } from '../lib/api';
-import { formatCFA, STATUS_LABELS, prequalLabel, prequalColor } from '../lib/format';
-import { isOnline, getSyncQueue } from '../lib/offline';
-import { Plus, FileText, AlertTriangle, CheckCircle, Clock, BookOpen } from 'lucide-react';
+import { formatCFA, isScoreAvailable, prequalColor, prequalLabel, STATUS_LABELS } from '../lib/format';
+import { getSyncQueue, isOnline } from '../lib/offline';
+
+const CAN_CREATE = ['AGENT', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'];
+const MANAGEMENT_ROLES = ['SUPERVISEUR', 'RISK_MANAGER', 'ADMIN', 'SUPERADMIN', 'SUPPORT'];
+
+function actionableForRole(dossiers, role) {
+  if (role === 'AGENT') return dossiers.filter(d => ['draft', 'incomplete', 'submitted'].includes(d.status));
+  if (role === 'COMITE') return dossiers.filter(d => ['committee_ready', 'committee'].includes(d.status));
+  if (role === 'AUDITEUR') return dossiers.filter(d => ['decided', 'exported', 'disbursed'].includes(d.status));
+  if (role === 'JURY') return dossiers.filter(d => d.prequalification);
+  return dossiers.filter(d => ['submitted', 'verification', 'review', 'committee_ready'].includes(d.status));
+}
 
 export default function Dashboard() {
   const [dossiers, setDossiers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [pendingSync, setPendingSync] = useState(0);
   const user = getUser();
+  const online = isOnline();
 
   useEffect(() => { loadData(); }, []);
 
   async function loadData() {
+    setLoading(true);
+    setError('');
     try {
       if (isOnline()) {
         const res = await api.getDossiers();
@@ -21,271 +36,150 @@ export default function Dashboard() {
       }
       const queue = await getSyncQueue();
       setPendingSync(queue.length);
-    } catch {} finally { setLoading(false); }
+    } catch (err) {
+      setError(err.message || 'Les données du tableau de bord sont indisponibles.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   const role = user?.role;
+  const actions = actionableForRole(dossiers, role);
   const stats = {
     total: dossiers.length,
-    draft: dossiers.filter(d => d.status === 'draft').length,
+    draft: dossiers.filter(d => ['draft', 'incomplete'].includes(d.status)).length,
     pending: dossiers.filter(d => ['submitted', 'verification', 'review'].includes(d.status)).length,
-    committee: dossiers.filter(d => d.status === 'committee').length,
+    committee: dossiers.filter(d => ['committee_ready', 'committee'].includes(d.status)).length,
     decided: dossiers.filter(d => ['decided', 'exported', 'disbursed'].includes(d.status)).length,
     prequalified: dossiers.filter(d => d.prequalification === 'PREQUALIFIE').length,
     reviewRequired: dossiers.filter(d => d.prequalification === 'REVUE_REQUISE').length,
   };
+  const scored = dossiers.filter(d => isScoreAvailable(d.prequalification_score));
+  const averageScore = scored.length
+    ? Math.round(scored.reduce((sum, dossier) => sum + Number(dossier.prequalification_score), 0) / scored.length)
+    : null;
 
   return (
-    <div>
-      <div className="page-header">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="page-title">Tableau de bord</h1>
-            <p className="page-subtitle">
-              {isOnline() ? (
-                <span className="network-status"><span className="network-dot online"></span> Connecté</span>
-              ) : (
-                <span className="network-status"><span className="network-dot offline"></span> Hors connexion</span>
-              )}
-              {pendingSync > 0 && <span style={{ marginLeft: 16 }} className="badge badge-warning">{pendingSync} en attente de synchronisation</span>}
-            </p>
+    <div className="dashboard-page">
+      <header className="page-header page-header-row">
+        <div>
+          <p className="page-kicker">Espace de travail</p>
+          <h1 className="page-title">Tableau de bord</h1>
+          <div className="dashboard-connectivity">
+            <span className="network-status"><span className={`network-dot ${online ? 'online' : 'offline'}`} />{online ? 'Données en ligne' : 'Mode hors connexion'}</span>
+            {pendingSync > 0 && <span className="badge badge-warning">{pendingSync} opération{pendingSync > 1 ? 's' : ''} à synchroniser</span>}
           </div>
-          {['AGENT', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(role) && (
-            <Link to="/dossiers/new" className="btn btn-primary"><Plus size={16} /> Nouveau dossier</Link>
-          )}
         </div>
-      </div>
+        {CAN_CREATE.includes(role) && <Link to="/dossiers/new" className="btn btn-primary"><Plus size={17} /> Nouveau dossier</Link>}
+      </header>
 
-      {/* Agent view */}
-      {role === 'AGENT' && (
-        <>
-          <div className="metrics-row">
-            <div className="metric-card">
-              <div className="metric-value">{stats.draft}</div>
-              <div className="metric-label">Brouillons à compléter</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-value">{stats.pending}</div>
-              <div className="metric-label">En cours d'instruction</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-value">{stats.decided}</div>
-              <div className="metric-label">Décidés</div>
-            </div>
-          </div>
-          <AgentActionList dossiers={dossiers} loading={loading} />
-        </>
+      {!online && (
+        <div className="alert alert-warning" role="status">
+          <AlertTriangle size={18} />
+          <div><strong>Vue non actualisée</strong><p>Reconnectez-vous pour charger les dossiers les plus récents. Les opérations locales restent conservées.</p></div>
+        </div>
+      )}
+      {error && (
+        <div className="alert alert-danger" role="alert">
+          <AlertTriangle size={18} />
+          <div><strong>Chargement impossible</strong><p>{error}</p><button className="btn btn-secondary btn-sm" onClick={loadData}>Réessayer</button></div>
+        </div>
       )}
 
-      {/* Committee view */}
-      {role === 'COMITE' && (
-        <>
-          <div className="metrics-row">
-            <div className="metric-card">
-              <div className="metric-value" style={{ color: 'var(--c-warning)' }}>{stats.committee}</div>
-              <div className="metric-label">Dossiers à examiner</div>
+      <section className="dashboard-priority" aria-labelledby="priority-title">
+        <div className="section-heading">
+          <div><p className="section-eyebrow">Priorité</p><h2 id="priority-title">À traiter maintenant</h2></div>
+          <Link to="/dossiers" className="btn btn-secondary btn-sm">Voir tous les dossiers</Link>
+        </div>
+        <ActionList dossiers={actions} loading={loading} role={role} />
+      </section>
+
+      <section aria-labelledby="activity-title">
+        <div className="section-heading"><div><p className="section-eyebrow">Activité</p><h2 id="activity-title">Repères du portefeuille</h2></div></div>
+        <MetricGrid role={role} stats={stats} averageScore={averageScore} />
+      </section>
+
+      {MANAGEMENT_ROLES.includes(role) && (
+        <div className="grid-2 dashboard-support-grid">
+          <section className="surface">
+            <h2 className="surface-title">Qualité des dossiers</h2>
+            <div className="dashboard-breakdown">
+              <BreakdownRow icon={<CheckCircle size={18} />} tone="success" label="Préqualifiés" count={stats.prequalified} />
+              <BreakdownRow icon={<AlertTriangle size={18} />} tone="warning" label="Revue requise" count={stats.reviewRequired} />
+              <BreakdownRow icon={<Clock size={18} />} tone="neutral" label="Non évalués" count={dossiers.filter(d => !d.prequalification).length} />
             </div>
-            <div className="metric-card">
-              <div className="metric-value">{stats.decided}</div>
-              <div className="metric-label">Décisions prises</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-value">{stats.prequalified}</div>
-              <div className="metric-label">Préqualifiés</div>
-            </div>
-          </div>
-          <CommitteeQueue dossiers={dossiers.filter(d => d.status === 'committee')} loading={loading} />
-        </>
+          </section>
+          <section className="surface dashboard-guidance">
+            <h2 className="surface-title">Lecture du score</h2>
+            <p>Le score explique la solidité technique d'un dossier. L'éligibilité dépend aussi des règles bloquantes, des preuves, de la capacité de remboursement et des risques.</p>
+            <Link to="/rules" className="btn btn-secondary btn-sm">Consulter les règles</Link>
+          </section>
+        </div>
       )}
 
-      {/* Jury view — simplified scoring overview */}
-      {role === 'JURY' && (
-        <>
-          <div className="metrics-row">
-            <div className="metric-card">
-              <div className="metric-value">{stats.total}</div>
-              <div className="metric-label">Dossiers instruits</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-value" style={{ color: 'var(--c-success)' }}>{stats.prequalified}</div>
-              <div className="metric-label">Scorés favorablement</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-value" style={{ color: 'var(--c-warning)' }}>{stats.reviewRequired}</div>
-              <div className="metric-label">Revue requise</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-value" style={{ color: 'var(--c-success)' }}>{stats.decided}</div>
-              <div className="metric-label">Décisions prises</div>
-            </div>
-          </div>
-          <div className="surface">
-            <div className="surface-title">Dossiers avec scoring</div>
-            {dossiers.filter(d => d.prequalification).slice(0, 5).map(d => (
-              <div key={d.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--c-100)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 'var(--fs-base)' }}>{d.applicant_name || 'Sans nom'}</div>
-                  <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--c-500)' }}>{d.activity_type} — {formatCFA(d.amount_requested)}</div>
-                </div>
-                <Link to={`/dossiers/${d.id}`} className="btn btn-primary btn-sm">Voir le scoring</Link>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-
-      {/* Supervisor / Risk Manager / Admin / SuperAdmin / Support view */}
-      {['SUPERVISEUR', 'RISK_MANAGER', 'ADMIN', 'SUPERADMIN', 'SUPPORT'].includes(role) && (
-        <>
-          <div className="metrics-row">
-            <div className="metric-card">
-              <div className="metric-value">{stats.total}</div>
-              <div className="metric-label">Total dossiers</div>
-            </div>
-            <div className="metric-card">
-              {(() => {
-                const scored = dossiers.filter(d => d.prequalification_score != null);
-                const avg = scored.length > 0 ? Math.round(scored.reduce((s, d) => s + d.prequalification_score, 0) / scored.length) : null;
-                const color = avg == null ? 'var(--c-400)' : avg > 70 ? 'var(--c-success)' : avg >= 40 ? 'var(--c-warning)' : 'var(--c-error)';
-                return (<><div className="metric-value" style={{ color }}>{avg != null ? `${avg}/100` : '—'}</div><div className="metric-label">Score moyen</div></>);
-              })()}
-            </div>
-            <div className="metric-card">
-              <div className="metric-value" style={{ color: 'var(--c-warning)' }}>{stats.pending}</div>
-              <div className="metric-label">En instruction</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-value" style={{ color: 'var(--c-success)' }}>{stats.decided}</div>
-              <div className="metric-label">Décidés</div>
-            </div>
-          </div>
-
-          <div className="grid-2">
-            <div className="surface">
-              <div className="surface-title">Préqualification</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <Row icon={<CheckCircle size={16} color="var(--c-success)" />} label="Préqualifiés" count={stats.prequalified} />
-                <Row icon={<AlertTriangle size={16} color="var(--c-warning)" />} label="Revue requise" count={stats.reviewRequired} />
-                <Row icon={<Clock size={16} color="var(--c-400)" />} label="Non évalués" count={dossiers.filter(d => !d.prequalification).length} />
-              </div>
-            </div>
-            <div className="surface">
-              <div className="surface-title">Dossiers récents nécessitant une action</div>
-              {dossiers.filter(d => ['submitted', 'verification', 'review'].includes(d.status)).slice(0, 5).map(d => (
-                <div key={d.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--c-100)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: 'var(--fs-base)' }}>{d.applicant_name || 'Sans nom'}</div>
-                    <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--c-500)' }}>{formatCFA(d.amount_requested)}</div>
-                  </div>
-                  <Link to={`/dossiers/${d.id}`} className="btn btn-secondary btn-sm">Ouvrir</Link>
-                </div>
-              ))}
-              {dossiers.filter(d => ['submitted', 'verification', 'review'].includes(d.status)).length === 0 && (
-                <p style={{ color: 'var(--c-500)', fontSize: 'var(--fs-base)' }}>Aucun dossier ne nécessite une action pour le moment.</p>
-              )}
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Auditor view */}
       {role === 'AUDITEUR' && (
-        <>
-          <div className="metrics-row">
-            <div className="metric-card">
-              <div className="metric-value">{stats.total}</div>
-              <div className="metric-label">Dossiers consultables</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-value">{stats.decided}</div>
-              <div className="metric-label">Décisions auditables</div>
-            </div>
-          </div>
-          <div className="surface">
-            <div className="surface-title">Accès rapide</div>
-            <p style={{ color: 'var(--c-600)', marginBottom: 16 }}>Consultez le journal d'audit pour retracer l'historique complet des opérations.</p>
-            <Link to="/audit" className="btn btn-primary"><BookOpen size={16} /> Ouvrir le journal d'audit</Link>
-          </div>
-        </>
+        <section className="surface dashboard-guidance">
+          <h2 className="surface-title">Traçabilité des décisions</h2>
+          <p>Consultez le journal append-only pour retracer les opérations et décisions.</p>
+          <Link to="/audit" className="btn btn-primary"><BookOpen size={17} /> Ouvrir le journal d'audit</Link>
+        </section>
       )}
     </div>
   );
 }
 
-function Row({ icon, label, count }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      {icon}
-      <span style={{ flex: 1, fontSize: 'var(--fs-base)' }}>{label}</span>
-      <span style={{ fontWeight: 700, fontSize: 'var(--fs-md)' }}>{count}</span>
-    </div>
-  );
+function MetricGrid({ role, stats, averageScore }) {
+  const metrics = role === 'AGENT'
+    ? [[stats.draft, 'Brouillons à compléter', 'draft'], [stats.pending, "En cours d'instruction", 'submitted'], [stats.decided, 'Décisions reçues', 'decided']]
+    : role === 'COMITE'
+      ? [[stats.committee, 'Décisions attendues', 'committee'], [stats.decided, 'Décisions prises', 'decided'], [stats.prequalified, 'Dossiers préqualifiés', null]]
+      : role === 'JURY'
+        ? [[stats.total, 'Dossiers instruits', ''], [stats.prequalified, 'Préqualifiés', null], [stats.reviewRequired, 'Revues requises', null], [stats.decided, 'Décisions prises', 'decided']]
+        : role === 'AUDITEUR'
+          ? [[stats.total, 'Dossiers consultables', ''], [stats.decided, 'Décisions auditables', 'decided']]
+          : [[stats.total, 'Total dossiers', ''], [averageScore == null ? '—' : `${averageScore}/100`, 'Score moyen', ''], [stats.pending, 'En instruction', 'submitted'], [stats.decided, 'Décidés', 'decided']];
+
+  return <div className="metrics-row">{metrics.map(([value, label, status]) => {
+    const target = status === null ? '/dossiers' : status ? `/dossiers?status=${status}` : '/dossiers';
+    return (
+      <Link key={label} to={target} className="metric-card metric-card-link">
+        <span className="metric-value">{value}</span><span className="metric-label">{label}</span>
+      </Link>
+    );
+  })}</div>;
 }
 
-function AgentActionList({ dossiers, loading }) {
-  const actionable = dossiers.filter(d => d.status === 'draft' || d.status === 'submitted');
-  if (loading) return <div className="loading-state">Chargement...</div>;
+function BreakdownRow({ icon, tone, label, count }) {
+  return <div className={`dashboard-breakdown-row ${tone}`}><span className="dashboard-breakdown-icon">{icon}</span><span>{label}</span><strong>{count}</strong></div>;
+}
 
-  return (
-    <div className="surface">
-      <div className="surface-header">
-        <div className="surface-title" style={{ margin: 0 }}>Mes dossiers à compléter</div>
-        <Link to="/dossiers" className="btn btn-secondary btn-sm">Voir tous</Link>
+function ActionList({ dossiers, loading, role }) {
+  if (loading) return <div className="loading-state">Chargement des priorités…</div>;
+  if (!dossiers.length) return (
+    <div className="empty-state compact">
+      <CheckCircle size={24} aria-hidden="true" />
+      <div className="empty-state-title">Aucune action urgente</div>
+      <div className="empty-state-desc">Aucun dossier ne nécessite votre intervention pour le moment.</div>
+    </div>
+  );
+
+  return <div className="surface action-list">{dossiers.slice(0, 8).map(dossier => (
+    <article className="action-list-item" key={dossier.id}>
+      <span className="action-list-icon"><FileText size={18} /></span>
+      <div className="action-list-main">
+        <strong>{dossier.applicant_name || 'Demandeur non renseigné'}</strong>
+        <span>{formatCFA(dossier.amount_requested)} · {dossier.applicant_location || dossier.activity_type || 'Localisation non renseignée'}</span>
       </div>
-      {actionable.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-title">Aucun dossier en attente</div>
-          <div className="empty-state-desc">Créez un nouveau dossier pour commencer l'instruction d'une demande de crédit.</div>
-        </div>
-      ) : (
-        <div className="table-container">
-          <table className="data-table">
-            <thead><tr><th>Demandeur</th><th>Montant</th><th>Statut</th><th></th></tr></thead>
-            <tbody>
-              {actionable.slice(0, 8).map(d => (
-                <tr key={d.id}>
-                  <td><div className="table-cell-primary">{d.applicant_name || 'Non renseigné'}</div><div className="table-cell-secondary">{d.applicant_location}</div></td>
-                  <td>{formatCFA(d.amount_requested)}</td>
-                  <td><span className={`badge badge-${d.status === 'draft' ? 'neutral' : 'warning'}`}>{STATUS_LABELS[d.status]}</span></td>
-                  <td><Link to={`/dossiers/${d.id}`} className="btn btn-secondary btn-sm">Continuer</Link></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
+      <div className="action-list-status">
+        <span className={`badge badge-${dossier.status === 'draft' ? 'neutral' : dossier.status === 'committee' ? 'warning' : 'info'}`}>{STATUS_LABELS[dossier.status] || dossier.status}</span>
+        {dossier.prequalification && <span className={`badge badge-${prequalTone(dossier.prequalification)}`}>{prequalLabel(dossier.prequalification)}</span>}
+      </div>
+      <Link to={`/dossiers/${dossier.id}`} className="btn btn-secondary btn-sm">{role === 'COMITE' ? 'Examiner' : role === 'AGENT' ? 'Continuer' : 'Ouvrir'}</Link>
+    </article>
+  ))}</div>;
 }
 
-function CommitteeQueue({ dossiers, loading }) {
-  if (loading) return <div className="loading-state">Chargement...</div>;
-
-  return (
-    <div className="surface">
-      <div className="surface-title">Dossiers en attente de décision</div>
-      {dossiers.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-title">Aucun dossier à examiner</div>
-          <div className="empty-state-desc">Les dossiers apparaîtront ici lorsqu'ils auront été transmis par un superviseur.</div>
-        </div>
-      ) : (
-        <div className="table-container">
-          <table className="data-table">
-            <thead><tr><th>Demandeur</th><th>Montant</th><th>Préqualification</th><th></th></tr></thead>
-            <tbody>
-              {dossiers.map(d => (
-                <tr key={d.id}>
-                  <td><div className="table-cell-primary">{d.applicant_name}</div><div className="table-cell-secondary">{d.activity_type} — {d.applicant_location}</div></td>
-                  <td style={{ fontWeight: 600 }}>{formatCFA(d.amount_requested)}</td>
-                  <td>{d.prequalification ? <span className={`badge badge-${prequalColor(d.prequalification) === 'green' ? 'success' : prequalColor(d.prequalification) === 'amber' ? 'warning' : 'error'}`}>{prequalLabel(d.prequalification)}</span> : '—'}</td>
-                  <td><Link to={`/dossiers/${d.id}`} className="btn btn-primary btn-sm">Examiner</Link></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
+function prequalTone(value) {
+  const color = prequalColor(value);
+  return color === 'green' ? 'success' : color === 'amber' ? 'warning' : color === 'red' ? 'error' : 'neutral';
 }

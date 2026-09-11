@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
 import { buildLocalFeasibility } from '../agriculturalFeasibilityLocal';
@@ -378,27 +378,44 @@ export default function DossierNew() {
         )}
       </div>
 
-      <div className="workflow-bar">
-        {STEPS.map((s, i) => (
-          <button key={s.key} className={`workflow-step ${i === step ? 'current' : i < step ? 'done' : ''}`} onClick={() => i <= step && setStep(i)}>
-            {i + 1}. {s.label}
-          </button>
-        ))}
+      <div className="form-progress" aria-label={`Étape ${step + 1} sur ${STEPS.length}`}>
+        <div className="form-progress-copy">
+          <span className="form-progress-count">Étape {step + 1} sur {STEPS.length}</span>
+          <strong className="form-progress-title">{STEPS[step].label}</strong>
+        </div>
+        <div className="form-progress-track" aria-hidden="true">
+          <span style={{ width: `${((step + 1) / STEPS.length) * 100}%` }} />
+        </div>
+        <div className="workflow-bar form-step-jump-list" aria-label="Étapes du dossier">
+          {STEPS.map((s, i) => (
+            <button
+              type="button"
+              key={s.key}
+              className={`workflow-step ${i === step ? 'current' : i < step ? 'done' : ''}`}
+              onClick={() => i <= step && setStep(i)}
+              disabled={i > step}
+              aria-current={i === step ? 'step' : undefined}
+              aria-label={`Étape ${i + 1} : ${s.label}`}
+            >
+              {i + 1}
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className="flex justify-between items-center" style={{ marginBottom: 12 }}>
+      <div className="form-step-actions">
         {step > 0 ? <button type="button" className="btn btn-secondary" onClick={() => setStep(s => s - 1)}><ArrowLeft size={14} /> Précédent</button> : <div />}
         {step < STEPS.length - 1
           ? <button type="button" className="btn btn-primary" onClick={nextStep}>Suivant <ArrowRight size={14} /></button>
           : <button type="button" className="btn btn-primary btn-lg" onClick={handleSave} disabled={saving || !canSubmitDossier(form)}><Save size={16} /> {saving ? 'Enregistrement...' : editing ? 'Enregistrer les modifications' : 'Créer le dossier'}</button>}
       </div>
 
-      {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '10px 14px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
+      {error && <div className="alert alert-error" role="alert">{error}</div>}
 
-      <div className="surface">
-        {step === 0 && <><StepDemandeIdentite form={form} update={update} /><div style={{ borderTop: '1px solid var(--c-border)', margin: '24px 0' }} /><StepActivite form={form} update={update} /></>}
+      <div className="surface form-document">
+        {step === 0 && <><StepDemandeIdentite form={form} update={update} /><div className="section-divider" /><StepActivite form={form} update={update} /></>}
         {step === 1 && <StepProjetAgricole form={form} update={update} items={inputItems} setItems={setInputItems} />}
-        {step === 2 && <><StepBudgetRevenus form={form} update={update} items={inputItems} /><div style={{ borderTop: '1px solid var(--c-border)', margin: '24px 0' }} /><StepCharges form={form} update={update} /></>}
+        {step === 2 && <><StepBudgetRevenus form={form} update={update} items={inputItems} /><div className="section-divider" /><StepCharges form={form} update={update} /></>}
         {step === 3 && (
           <StepFaisabiliteAgronomique
             form={form}
@@ -407,21 +424,26 @@ export default function DossierNew() {
             setAnalysis={setFeasibilityAnalysis}
           />
         )}
-        {step === 4 && <><StepPreuves evidence={initialEvidence} setEvidence={setInitialEvidence} /><div style={{ borderTop: '1px solid var(--c-border)', margin: '24px 0' }} /><StepGaranties form={form} update={update} /></>}
+        {step === 4 && <><StepPreuves evidence={initialEvidence} setEvidence={setInitialEvidence} /><div className="section-divider" /><StepGaranties form={form} update={update} /></>}
         {step === 5 && <StepDettes debts={declaredDebts} setDebts={setDeclaredDebts} />}
-        {step === 6 && <><StepAnalyse form={form} items={inputItems} debts={declaredDebts} /><div style={{ borderTop: '1px solid var(--c-border)', margin: '24px 0' }} /><StepResume form={form} update={update} items={inputItems} debts={declaredDebts} evidence={initialEvidence} /></>}
+        {step === 6 && <><StepAnalyse form={form} items={inputItems} debts={declaredDebts} /><div className="section-divider" /><StepResume form={form} update={update} items={inputItems} debts={declaredDebts} evidence={initialEvidence} /></>}
       </div>
     </div>
   );
 }
 
-function AutocompleteInput({ value, onChange, suggestions, placeholder, hint }) {
+function AutocompleteInput({ id, value, onChange, suggestions, placeholder, hint }) {
   const [open, setOpen] = useState(false);
   const [filtered, setFiltered] = useState([]);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const ref = useRef(null);
+  const generatedId = useId();
+  const inputId = id || generatedId;
+  const listId = `${inputId}-suggestions`;
 
   function handleChange(v) {
     onChange(v);
+    setActiveIndex(-1);
     if (v.length >= 1) {
       const f = suggestions.filter(s => s.toLowerCase().includes(v.toLowerCase()));
       setFiltered(f.slice(0, 8));
@@ -434,27 +456,62 @@ function AutocompleteInput({ value, onChange, suggestions, placeholder, hint }) 
   function select(s) {
     onChange(s);
     setOpen(false);
+    setActiveIndex(-1);
+  }
+
+  function handleKeyDown(event) {
+    if (!open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+      handleChange(value);
+      return;
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setActiveIndex(index => Math.min(index + 1, filtered.length - 1));
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setActiveIndex(index => Math.max(index - 1, 0));
+    } else if (event.key === 'Enter' && activeIndex >= 0) {
+      event.preventDefault();
+      select(filtered[activeIndex]);
+    } else if (event.key === 'Escape') {
+      setOpen(false);
+      setActiveIndex(-1);
+    }
   }
 
   return (
-    <div style={{ position: 'relative' }} ref={ref}>
+    <div className="autocomplete" ref={ref}>
       <input
+        id={inputId}
         className="input"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-activedescendant={activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined}
         value={value}
         onChange={e => handleChange(e.target.value)}
+        onKeyDown={handleKeyDown}
         onFocus={() => { if (value.length >= 1) handleChange(value); }}
         onBlur={() => setTimeout(() => setOpen(false), 200)}
         placeholder={placeholder}
       />
       {hint && <div className="field-hint">{hint}</div>}
       {open && filtered.length > 0 && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: '#fff', border: '1px solid var(--c-border)', borderRadius: 'var(--radius)', boxShadow: '0 4px 12px rgba(0,0,0,.1)', maxHeight: 200, overflowY: 'auto' }}>
-          {filtered.map(s => (
-            <div key={s} onMouseDown={() => select(s)} style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 'var(--fs-12)', borderBottom: '1px solid var(--c-border-light)' }}
-              onMouseEnter={e => e.currentTarget.style.background = 'var(--c-bg)'}
-              onMouseLeave={e => e.currentTarget.style.background = '#fff'}>
+        <div id={listId} className="autocomplete-list" role="listbox">
+          {filtered.map((s, index) => (
+            <button
+              type="button"
+              id={`${listId}-${index}`}
+              key={s}
+              className={`autocomplete-option ${activeIndex === index ? 'active' : ''}`}
+              role="option"
+              aria-selected={activeIndex === index}
+              onMouseDown={event => { event.preventDefault(); select(s); }}
+              onMouseEnter={() => setActiveIndex(index)}
+            >
               {s}
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -462,13 +519,15 @@ function AutocompleteInput({ value, onChange, suggestions, placeholder, hint }) 
   );
 }
 
-function NeantField({ label, value, onChange, type = 'number', hint }) {
+function NeantField({ id, label, value, onChange, type = 'number', hint }) {
+  const generatedId = useId();
+  const fieldId = id || `neant-${generatedId.replace(/:/g, '')}`;
   const isNeant = value === '0' || value === 'neant';
   return (
     <div className="field">
-      <label className="field-label">{label}</label>
+      <label className="field-label" htmlFor={fieldId}>{label}</label>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-        <input className="input" type={type} min="0" value={isNeant ? '0' : value} onChange={e => onChange(e.target.value)} style={{ flex: 1 }} disabled={value === 'neant'} />
+        <input id={fieldId} className="input" type={type} min="0" value={isNeant ? '0' : value} onChange={e => onChange(e.target.value)} style={{ flex: 1 }} disabled={value === 'neant'} />
         <button type="button" className={`btn btn-sm ${value === 'neant' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => onChange(value === 'neant' ? '' : 'neant')} style={{ whiteSpace: 'nowrap', fontSize: 11 }}>
           Néant
         </button>
@@ -494,15 +553,15 @@ function LoanFields({ form, update }) {
   return (
     <div className="grid-2" style={{ gridColumn: '1 / -1' }}>
       <div className="field" style={{ gridColumn: '1 / -1' }}>
-        <label className="field-label">Mode de calcul des intérêts</label>
-        <select className="input" value={form.interest_calculation_mode} onChange={e => update('interest_calculation_mode', e.target.value)}>
+        <label className="field-label" htmlFor="interest-calculation-mode">Mode de calcul des intérêts</label>
+        <select id="interest-calculation-mode" className="input" value={form.interest_calculation_mode} onChange={e => update('interest_calculation_mode', e.target.value)}>
           <option value="rate">Taux annualisé</option>
           <option value="fixed">Montant fixe</option>
         </select>
       </div>
       {fixedMode
-        ? <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label">Montant fixe des intérêts (FCFA)</label><input className="input" type="number" min="0" value={form.interest_amount} onChange={e => update('interest_amount', e.target.value)} placeholder="Ex : 60000" /><div className="field-hint">Le montant saisi est retenu tel quel pour toute la durée.</div></div>
-        : <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label">Taux d'intérêt annualisé (%)</label><input className="input" type="number" min="0" step="0.01" value={form.interest_rate} onChange={e => update('interest_rate', e.target.value)} placeholder="Ex : 8" /><div className="field-hint">Les intérêts tiennent compte du taux annuel et de la durée en mois.</div></div>}
+        ? <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label" htmlFor="fixed-interest-amount">Montant fixe des intérêts (FCFA)</label><input id="fixed-interest-amount" className="input" type="number" min="0" value={form.interest_amount} onChange={e => update('interest_amount', e.target.value)} placeholder="Ex : 60000" /><div className="field-hint">Le montant saisi est retenu tel quel pour toute la durée.</div></div>
+        : <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label" htmlFor="annual-interest-rate">Taux d'intérêt annualisé (%)</label><input id="annual-interest-rate" className="input" type="number" min="0" step="0.01" value={form.interest_rate} onChange={e => update('interest_rate', e.target.value)} placeholder="Ex : 8" /><div className="field-hint">Les intérêts tiennent compte du taux annuel et de la durée en mois.</div></div>}
       <SummaryLine label="Intérêts retenus" value={formatCFA(interest)} />
       <SummaryLine label="Total dû" value={formatCFA(totalDue)} color="var(--c-primary)" />
     </div>
@@ -515,21 +574,21 @@ function StepDemande({ form, update }) {
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Demande de crédit</h2>
       <div className="grid-2">
         <div className="field">
-          <label className="field-label">Montant demandé (FCFA) *</label>
-          <input className="input" type="number" min="0" step="10000" value={form.amount_requested} onChange={e => update('amount_requested', e.target.value)} placeholder="Ex: 500000" />
+          <label className="field-label" htmlFor="amount-requested">Montant demandé (FCFA) *</label>
+          <input id="amount-requested" className="input" type="number" min="0" step="10000" value={form.amount_requested} onChange={e => update('amount_requested', e.target.value)} placeholder="Ex: 500000" />
         </div>
         <div className="field">
-          <label className="field-label">Durée souhaitée (mois) *</label>
-          <input className="input" type="number" min="1" max="60" value={form.duration_months} onChange={e => update('duration_months', e.target.value)} placeholder="Ex: 12" />
+          <label className="field-label" htmlFor="duration-months">Durée souhaitée (mois) *</label>
+          <input id="duration-months" className="input" type="number" min="1" max="60" value={form.duration_months} onChange={e => update('duration_months', e.target.value)} placeholder="Ex: 12" />
         </div>
         <LoanFields form={form} update={update} />
         <div className="field" style={{ gridColumn: '1 / -1' }}>
-          <label className="field-label">Objet du crédit *</label>
-          <textarea className="input" rows={3} value={form.credit_purpose} onChange={e => update('credit_purpose', e.target.value)} placeholder="Décrivez précisément l'utilisation prévue du financement" />
+          <label className="field-label" htmlFor="credit-purpose">Objet du crédit *</label>
+          <textarea id="credit-purpose" className="input" rows={3} value={form.credit_purpose} onChange={e => update('credit_purpose', e.target.value)} placeholder="Décrivez précisément l'utilisation prévue du financement" />
         </div>
         <div className="field" style={{ gridColumn: '1 / -1' }}>
-          <label className="field-label">Calendrier de remboursement souhaité</label>
-          <select className="input" value={form.desired_schedule} onChange={e => update('desired_schedule', e.target.value)}>
+          <label className="field-label" htmlFor="desired-schedule">Calendrier de remboursement souhaité</label>
+          <select id="desired-schedule" className="input" value={form.desired_schedule} onChange={e => update('desired_schedule', e.target.value)}>
             <option value="">Sélectionner</option>
             <option value="mensuel">Mensuel</option>
             <option value="trimestriel">Trimestriel</option>
@@ -564,32 +623,32 @@ function StepIdentite({ form, update }) {
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Identité du demandeur</h2>
       <div className="grid-2">
         <div className="field">
-          <label className="field-label">Nom complet *</label>
-          <input className="input" value={form.applicant_name} onChange={e => update('applicant_name', e.target.value)} placeholder="Prénom et nom" />
+          <label className="field-label" htmlFor="applicant-name">Nom complet *</label>
+          <input id="applicant-name" className="input" value={form.applicant_name} onChange={e => update('applicant_name', e.target.value)} placeholder="Prénom et nom" />
         </div>
         <div className="field">
-          <label className="field-label">Téléphone</label>
-          <input className="input" type="tel" value={form.applicant_phone} onChange={e => update('applicant_phone', e.target.value)} placeholder="77 xxx xx xx" />
+          <label className="field-label" htmlFor="applicant-phone">Téléphone</label>
+          <input id="applicant-phone" className="input" type="tel" value={form.applicant_phone} onChange={e => update('applicant_phone', e.target.value)} placeholder="77 xxx xx xx" />
         </div>
         <div className="field">
-          <label className="field-label">N° CNI *</label>
-          <input className="input" required value={form.applicant_id_number} onChange={e => update('applicant_id_number', e.target.value)} placeholder="Numéro de carte nationale d’identité" />
-          {!form.applicant_id_number && <div className="field-error">Le numéro de CNI est obligatoire pour poursuivre et soumettre le dossier.</div>}
+          <label className="field-label" htmlFor="applicant-id-number">N° CNI *</label>
+          <input id="applicant-id-number" className="input" required value={form.applicant_id_number} onChange={e => update('applicant_id_number', e.target.value)} placeholder="Numéro de carte nationale d’identité" aria-describedby={!form.applicant_id_number ? 'applicant-id-error' : undefined} />
+          {!form.applicant_id_number && <div id="applicant-id-error" className="field-error">Le numéro de CNI est obligatoire pour poursuivre et soumettre le dossier.</div>}
         </div>
         <div className="field">
-          <label className="field-label">Localisation</label>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <div style={{ flex: 1 }}>
-              <AutocompleteInput value={form.applicant_location} onChange={v => update('applicant_location', v)} suggestions={LOCATIONS} placeholder="Commencez à taper..." hint="Village, commune, région" />
+          <label className="field-label" htmlFor="applicant-location">Localisation</label>
+          <div className="field-with-action">
+            <div className="field-with-action-control">
+              <AutocompleteInput id="applicant-location" value={form.applicant_location} onChange={v => update('applicant_location', v)} suggestions={LOCATIONS} placeholder="Commencez à taper..." hint="Village, commune, région" />
             </div>
-            <button type="button" className="btn btn-secondary btn-sm" onClick={getGPS} title="Localisation GPS actuelle" style={{ height: 36, padding: '0 8px' }}>
+            <button type="button" className="btn btn-secondary btn-sm icon-button" onClick={getGPS} title="Localisation GPS actuelle" aria-label="Utiliser la localisation GPS actuelle">
               <MapPin size={14} />
             </button>
           </div>
         </div>
         <div className="field" style={{ gridColumn: '1 / -1' }}>
-          <label className="field-label">Activité principale déclarée</label>
-          <input className="input" value="Agriculteur" readOnly aria-readonly="true" />
+          <label className="field-label" htmlFor="applicant-activity">Activité principale déclarée</label>
+          <input id="applicant-activity" className="input" value="Agriculteur" readOnly aria-readonly="true" />
         </div>
       </div>
     </div>
@@ -602,30 +661,30 @@ function StepActivite({ form, update }) {
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Activité agricole</h2>
       <div className="grid-2">
         <div className="field">
-          <label className="field-label">Filière</label>
-          <input className="input" value="Agriculture" readOnly aria-readonly="true" />
+          <label className="field-label" htmlFor="applicant-sector">Filière</label>
+          <input id="applicant-sector" className="input" value="Agriculture" readOnly aria-readonly="true" />
         </div>
         <div className="field">
-          <label className="field-label">Type d'activité</label>
-          <AutocompleteInput value={form.activity_type} onChange={v => update('activity_type', v)} suggestions={ACTIVITY_TYPES} placeholder="Commencez à taper..." hint="Grandes cultures, maraîchage, céréales, arachide ou horticulture" />
+          <label className="field-label" htmlFor="activity-type">Type d'activité</label>
+          <AutocompleteInput id="activity-type" value={form.activity_type} onChange={v => update('activity_type', v)} suggestions={ACTIVITY_TYPES} placeholder="Commencez à taper..." hint="Grandes cultures, maraîchage, céréales, arachide ou horticulture" />
         </div>
         <div className="field">
-          <label className="field-label">Années d'expérience</label>
-          <input className="input" type="number" min="0" value={form.years_experience} onChange={e => update('years_experience', e.target.value)} placeholder="Ex: 5" />
+          <label className="field-label" htmlFor="years-experience">Années d'expérience</label>
+          <input id="years-experience" className="input" type="number" min="0" value={form.years_experience} onChange={e => update('years_experience', e.target.value)} placeholder="Ex: 5" />
         </div>
         <div className="field">
-          <label className="field-label">Superficie exploitée (ha)</label>
-          <input className="input" type="number" step="0.1" min="0" value={form.surface_ha} onChange={e => update('surface_ha', e.target.value)} placeholder="Ex: 2.5" />
+          <label className="field-label" htmlFor="surface-ha">Superficie exploitée (ha)</label>
+          <input id="surface-ha" className="input" type="number" step="0.1" min="0" value={form.surface_ha} onChange={e => update('surface_ha', e.target.value)} placeholder="Ex: 2.5" />
         </div>
         <div className="field" style={{ gridColumn: '1 / -1' }}>
-          <label className="field-label">Cycle de production</label>
+          <span className="field-label" id="production-cycle-label">Cycle de production</span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <select className="input" value={form.production_cycle_start} onChange={e => update('production_cycle_start', e.target.value)} style={{ flex: 1 }}>
+            <select id="production-cycle-start" aria-labelledby="production-cycle-label" aria-label="Mois de début du cycle de production" className="input" value={form.production_cycle_start} onChange={e => update('production_cycle_start', e.target.value)} style={{ flex: 1 }}>
               <option value="">Mois de début</option>
               {MONTHS.map((m, i) => <option key={i} value={i}>{m}</option>)}
             </select>
             <span style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', fontWeight: 500 }}>à</span>
-            <select className="input" value={form.production_cycle_end} onChange={e => update('production_cycle_end', e.target.value)} style={{ flex: 1 }}>
+            <select id="production-cycle-end" aria-labelledby="production-cycle-label" aria-label="Mois de fin du cycle de production" className="input" value={form.production_cycle_end} onChange={e => update('production_cycle_end', e.target.value)} style={{ flex: 1 }}>
               <option value="">Mois de fin</option>
               {MONTHS.map((m, i) => <option key={i} value={i}>{m}</option>)}
             </select>
@@ -657,29 +716,29 @@ function StepProjetAgricole({ form, update, items, setItems }) {
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Projet agricole</h2>
       <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Ajoutez toutes les cultures et leur mode de conduite.</p>
       <div className="grid-2" style={{ padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', marginBottom: 14 }}>
-        <div className="field"><label className="field-label">Culture *</label><input className="input" value={cropDraft.name} onChange={e => setCropDraft(d => ({ ...d, name: e.target.value }))} placeholder="Maïs, arachide, tomate…" /></div>
-        <div className="field"><label className="field-label">Variété</label><input className="input" value={cropDraft.variety} onChange={e => setCropDraft(d => ({ ...d, variety: e.target.value }))} /></div>
-        <div className="field"><label className="field-label">Surface (ha) *</label><input className="input" type="number" min="0" step="0.1" value={cropDraft.surface_ha} onChange={e => setCropDraft(d => ({ ...d, surface_ha: e.target.value }))} /></div>
-        <div className="field"><label className="field-label">Mode</label><select className="input" value={cropDraft.mode} onChange={e => setCropDraft(d => ({ ...d, mode: e.target.value }))}><option value="">Sélectionner</option><option value="pluvial">Pluvial</option><option value="irrigué">Irrigué</option><option value="mixte">Mixte</option><option value="sous serre">Sous serre</option></select></div>
+        <div className="field"><label className="field-label" htmlFor="crop-draft-name">Culture *</label><input id="crop-draft-name" className="input" value={cropDraft.name} onChange={e => setCropDraft(d => ({ ...d, name: e.target.value }))} placeholder="Maïs, arachide, tomate…" /></div>
+        <div className="field"><label className="field-label" htmlFor="crop-draft-variety">Variété</label><input id="crop-draft-variety" className="input" value={cropDraft.variety} onChange={e => setCropDraft(d => ({ ...d, variety: e.target.value }))} /></div>
+        <div className="field"><label className="field-label" htmlFor="crop-draft-surface">Surface (ha) *</label><input id="crop-draft-surface" className="input" type="number" min="0" step="0.1" value={cropDraft.surface_ha} onChange={e => setCropDraft(d => ({ ...d, surface_ha: e.target.value }))} /></div>
+        <div className="field"><label className="field-label" htmlFor="crop-draft-mode">Mode</label><select id="crop-draft-mode" className="input" value={cropDraft.mode} onChange={e => setCropDraft(d => ({ ...d, mode: e.target.value }))}><option value="">Sélectionner</option><option value="pluvial">Pluvial</option><option value="irrigué">Irrigué</option><option value="mixte">Mixte</option><option value="sous serre">Sous serre</option></select></div>
         <button type="button" className="btn btn-secondary btn-sm" onClick={addCrop} disabled={!cropDraft.name.trim() || !Number(cropDraft.surface_ha)}><Plus size={14} /> Ajouter la culture</button>
       </div>
-      {(form.crops || []).map(crop => <div key={crop.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span><strong>{crop.name}</strong>{crop.variety ? ` · ${crop.variety}` : ''} · {crop.surface_ha} ha · {crop.mode || 'mode non précisé'}</span><button type="button" className="btn btn-ghost btn-sm" onClick={() => { const next = form.crops.filter(item => item.id !== crop.id); update('crops', next); update('crop_name', next.map(item => item.name).join(', ')); update('project_surface_ha', next.reduce((sum, item) => sum + Number(item.surface_ha || 0), 0)); update('cultivation_modes', [...new Set(next.map(item => item.mode).filter(Boolean))]); }}><Trash2 size={13} /></button></div>)}
-      <div className="field" style={{ marginTop: 16 }}><label className="field-label">Modes de culture utilisés</label><div className="flex gap-2" style={{ flexWrap: 'wrap' }}>{['Pluvial', 'Irrigué', 'Mixte', 'Sous serre'].map(mode => { const selected = (form.cultivation_modes || []).includes(mode.toLowerCase()); return <button key={mode} type="button" className={`btn btn-sm ${selected ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { const value = mode.toLowerCase(); const modes = selected ? form.cultivation_modes.filter(item => item !== value) : [...(form.cultivation_modes || []), value]; update('cultivation_modes', modes); update('irrigation_mode', modes.join(', ')); }}>{mode}</button>; })}</div></div>
+      {(form.crops || []).map(crop => <div key={crop.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span><strong>{crop.name}</strong>{crop.variety ? ` · ${crop.variety}` : ''} · {crop.surface_ha} ha · {crop.mode || 'mode non précisé'}</span><button type="button" className="btn btn-ghost btn-sm icon-button" onClick={() => { const next = form.crops.filter(item => item.id !== crop.id); update('crops', next); update('crop_name', next.map(item => item.name).join(', ')); update('project_surface_ha', next.reduce((sum, item) => sum + Number(item.surface_ha || 0), 0)); update('cultivation_modes', [...new Set(next.map(item => item.mode).filter(Boolean))]); }} aria-label={`Supprimer la culture ${crop.name}`} title="Supprimer cette culture"><Trash2 size={13} /></button></div>)}
+      <div className="field" style={{ marginTop: 16 }}><span className="field-label" id="cultivation-modes-label">Modes de culture utilisés</span><div className="flex gap-2" role="group" aria-labelledby="cultivation-modes-label" style={{ flexWrap: 'wrap' }}>{['Pluvial', 'Irrigué', 'Mixte', 'Sous serre'].map(mode => { const selected = (form.cultivation_modes || []).includes(mode.toLowerCase()); return <button key={mode} type="button" className={`btn btn-sm ${selected ? 'btn-primary' : 'btn-secondary'}`} aria-pressed={selected} onClick={() => { const value = mode.toLowerCase(); const modes = selected ? form.cultivation_modes.filter(item => item !== value) : [...(form.cultivation_modes || []), value]; update('cultivation_modes', modes); update('irrigation_mode', modes.join(', ')); }}>{mode}</button>; })}</div></div>
       <div className="grid-2" style={{ marginTop: 16 }}>
-        <div className="field"><label className="field-label">Expérience sur ces cultures (années)</label><input className="input" type="number" min="0" value={form.crop_experience_years} onChange={e => update('crop_experience_years', e.target.value)} /></div>
-        <div className="field"><label className="field-label">Surface totale (ha)</label><input className="input" value={form.project_surface_ha} readOnly /></div>
-        <div className="field"><label className="field-label">Accès à la parcelle</label><select className="input" value={form.land_access} onChange={e => update('land_access', e.target.value)}><option value="">Sélectionner</option><option>Propriété</option><option>Location</option><option>Prêt familial</option><option>Parcelle communautaire</option></select></div>
-        <div className="field"><label className="field-label">Zone agroécologique</label><input className="input" value={form.agro_zone} onChange={e => update('agro_zone', e.target.value)} /></div>
-        <div className="field"><label className="field-label">Type / aptitude du sol</label><input className="input" value={form.soil_type} onChange={e => update('soil_type', e.target.value)} /></div>
-        <div className="field"><label className="field-label">Source de l'information sur le sol</label><input className="input" value={form.soil_source} onChange={e => update('soil_source', e.target.value)} placeholder="Analyse, technicien, déclaration…" /></div>
-        <div className="field"><label className="field-label">Saison</label><input className="input" value={form.season} onChange={e => update('season', e.target.value)} placeholder="Hivernage, saison sèche…" /></div>
-        <div className="field"><label className="field-label">Source d'eau</label><input className="input" value={form.water_source} onChange={e => update('water_source', e.target.value)} /></div>
-        <div className="field"><label className="field-label">Fiabilité de l'eau</label><select className="input" value={form.water_reliability} onChange={e => update('water_reliability', e.target.value)}><option value="">Sélectionner</option><option value="sécurisée">Sécurisée</option><option value="partielle">Partielle</option><option value="incertaine">Incertaine</option></select></div>
-        <div className="field"><label className="field-label">Rendement moyen (kg/ha)</label><input className="input" type="number" min="0" value={form.expected_yield} onChange={e => update('expected_yield', e.target.value)} /></div>
-        <div className="field"><label className="field-label">Prix moyen (FCFA/kg)</label><input className="input" type="number" min="0" value={form.expected_price} onChange={e => update('expected_price', e.target.value)} /></div>
-        <div className="field"><label className="field-label">Pertes estimées (%)</label><input className="input" type="number" min="0" max="100" value={form.loss_percent} onChange={e => update('loss_percent', e.target.value)} /></div>
-        <div className="field"><label className="field-label">Risques principaux</label><input className="input" value={form.climate_risks} onChange={e => update('climate_risks', e.target.value)} placeholder="Sécheresse, ravageurs, prix…" /></div>
-        <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label">Mesures d'atténuation</label><textarea className="input" rows={2} value={form.mitigations} onChange={e => update('mitigations', e.target.value)} /></div>
+        <div className="field"><label className="field-label" htmlFor="crop-experience-years">Expérience sur ces cultures (années)</label><input id="crop-experience-years" className="input" type="number" min="0" value={form.crop_experience_years} onChange={e => update('crop_experience_years', e.target.value)} /></div>
+        <div className="field"><label className="field-label" htmlFor="project-surface-ha">Surface totale (ha)</label><input id="project-surface-ha" className="input" value={form.project_surface_ha} readOnly /></div>
+        <div className="field"><label className="field-label" htmlFor="land-access">Accès à la parcelle</label><select id="land-access" className="input" value={form.land_access} onChange={e => update('land_access', e.target.value)}><option value="">Sélectionner</option><option>Propriété</option><option>Location</option><option>Prêt familial</option><option>Parcelle communautaire</option></select></div>
+        <div className="field"><label className="field-label" htmlFor="agro-zone">Zone agroécologique</label><input id="agro-zone" className="input" value={form.agro_zone} onChange={e => update('agro_zone', e.target.value)} /></div>
+        <div className="field"><label className="field-label" htmlFor="soil-type">Type / aptitude du sol</label><input id="soil-type" className="input" value={form.soil_type} onChange={e => update('soil_type', e.target.value)} /></div>
+        <div className="field"><label className="field-label" htmlFor="soil-source">Source de l'information sur le sol</label><input id="soil-source" className="input" value={form.soil_source} onChange={e => update('soil_source', e.target.value)} placeholder="Analyse, technicien, déclaration…" /></div>
+        <div className="field"><label className="field-label" htmlFor="project-season">Saison</label><input id="project-season" className="input" value={form.season} onChange={e => update('season', e.target.value)} placeholder="Hivernage, saison sèche…" /></div>
+        <div className="field"><label className="field-label" htmlFor="water-source">Source d'eau</label><input id="water-source" className="input" value={form.water_source} onChange={e => update('water_source', e.target.value)} /></div>
+        <div className="field"><label className="field-label" htmlFor="water-reliability">Fiabilité de l'eau</label><select id="water-reliability" className="input" value={form.water_reliability} onChange={e => update('water_reliability', e.target.value)}><option value="">Sélectionner</option><option value="sécurisée">Sécurisée</option><option value="partielle">Partielle</option><option value="incertaine">Incertaine</option></select></div>
+        <div className="field"><label className="field-label" htmlFor="expected-yield">Rendement moyen (kg/ha)</label><input id="expected-yield" className="input" type="number" min="0" value={form.expected_yield} onChange={e => update('expected_yield', e.target.value)} /></div>
+        <div className="field"><label className="field-label" htmlFor="expected-price">Prix moyen (FCFA/kg)</label><input id="expected-price" className="input" type="number" min="0" value={form.expected_price} onChange={e => update('expected_price', e.target.value)} /></div>
+        <div className="field"><label className="field-label" htmlFor="loss-percent">Pertes estimées (%)</label><input id="loss-percent" className="input" type="number" min="0" max="100" value={form.loss_percent} onChange={e => update('loss_percent', e.target.value)} /></div>
+        <div className="field"><label className="field-label" htmlFor="climate-risks">Risques principaux</label><input id="climate-risks" className="input" value={form.climate_risks} onChange={e => update('climate_risks', e.target.value)} placeholder="Sécheresse, ravageurs, prix…" /></div>
+        <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label" htmlFor="mitigations">Mesures d'atténuation</label><textarea id="mitigations" className="input" rows={2} value={form.mitigations} onChange={e => update('mitigations', e.target.value)} /></div>
       </div>
       <div style={{ borderTop: '1px solid var(--c-border)', margin: '24px 0' }} />
       <InputItemsEditor items={items} setItems={setItems} />
@@ -735,18 +794,21 @@ function InputItemsEditor({ items, setItems }) {
       {categories.map(category => {
         const categoryItems = items.filter(item => item.category === category);
         const subtotal = categoryItems.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_cost || 0), 0);
-        return <div key={category} style={{ marginBottom: 14, padding: 12, border: '1px solid var(--c-border-light)', borderRadius: 'var(--radius-md)' }}>
-          <div className="flex justify-between items-center" style={{ marginBottom: 8 }}><strong>{category}</strong><button type="button" className="btn btn-secondary btn-sm" onClick={() => addCategoryLine(category)}><Plus size={13} /> Ligne</button></div>
-          {categoryItems.length === 0 ? <div className="text-xs text-muted">Aucun besoin renseigné.</div> : categoryItems.map(item => <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1fr .7fr .8fr 1fr 1fr auto', gap: 6, marginBottom: 6 }}>
-            <input className="input" value={item.label === category ? '' : item.label || ''} onChange={e => updateItem(item.id, 'label', e.target.value || category)} placeholder="Désignation" />
-            <input className="input" type="number" min="0" value={item.quantity} onChange={e => updateItem(item.id, 'quantity', e.target.value)} placeholder="Quantité" />
-            <input className="input" value={item.unit} onChange={e => updateItem(item.id, 'unit', e.target.value)} placeholder="Unité" />
-            <input className="input" type="number" min="0" value={item.unit_cost} onChange={e => updateItem(item.id, 'unit_cost', e.target.value)} placeholder="Coût unitaire" />
-            <input className="input" value={item.supplier} onChange={e => updateItem(item.id, 'supplier', e.target.value)} placeholder="Fournisseur" />
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setItems(list => list.filter(current => current.id !== item.id))}><Trash2 size={13} /></button>
-          </div>)}
-          <div className="text-xs text-muted" style={{ textAlign: 'right' }}>Sous-total : <strong>{formatCFA(subtotal)}</strong></div>
-        </div>;
+        return <section key={category} className="input-category">
+          <div className="input-category-header"><strong>{category}</strong><button type="button" className="btn btn-secondary btn-sm" onClick={() => addCategoryLine(category)}><Plus size={13} /> Ligne</button></div>
+          {categoryItems.length === 0 ? <div className="text-xs text-muted">Aucun besoin renseigné.</div> : categoryItems.map((item, index) => {
+            const prefix = `input-${item.id}`;
+            return <div key={item.id} className="input-item-row">
+              <div className="input-item-field"><label className="field-label" htmlFor={`${prefix}-label`}>Désignation</label><input id={`${prefix}-label`} className="input" value={item.label === category ? '' : item.label || ''} onChange={e => updateItem(item.id, 'label', e.target.value || category)} placeholder="Désignation" /></div>
+              <div className="input-item-field"><label className="field-label" htmlFor={`${prefix}-quantity`}>Quantité</label><input id={`${prefix}-quantity`} className="input" type="number" min="0" value={item.quantity} onChange={e => updateItem(item.id, 'quantity', e.target.value)} placeholder="Quantité" /></div>
+              <div className="input-item-field"><label className="field-label" htmlFor={`${prefix}-unit`}>Unité</label><input id={`${prefix}-unit`} className="input" value={item.unit} onChange={e => updateItem(item.id, 'unit', e.target.value)} placeholder="Unité" /></div>
+              <div className="input-item-field"><label className="field-label" htmlFor={`${prefix}-cost`}>Coût unitaire</label><input id={`${prefix}-cost`} className="input" type="number" min="0" value={item.unit_cost} onChange={e => updateItem(item.id, 'unit_cost', e.target.value)} placeholder="Coût unitaire" /></div>
+              <div className="input-item-field"><label className="field-label" htmlFor={`${prefix}-supplier`}>Fournisseur</label><input id={`${prefix}-supplier`} className="input" value={item.supplier} onChange={e => updateItem(item.id, 'supplier', e.target.value)} placeholder="Fournisseur" /></div>
+              <button type="button" className="btn btn-ghost btn-sm icon-button input-item-delete" onClick={() => setItems(list => list.filter(current => current.id !== item.id))} aria-label={`Supprimer la ligne ${index + 1} de ${category}`} title="Supprimer cette ligne"><Trash2 size={13} /></button>
+            </div>;
+          })}
+          <div className="input-category-subtotal">Sous-total : <strong>{formatCFA(subtotal)}</strong></div>
+        </section>;
       })}
     </div>
   );
@@ -759,8 +821,8 @@ function StepBudgetRevenus({ form, update, items }) {
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Budget et revenus</h2>
       <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Résumé calculé depuis les besoins détaillés du projet agricole.</p>
       <div className="grid-2">
-        <div className="field"><label className="field-label">Apport personnel (FCFA)</label><input className="input" type="number" min="0" value={form.own_contribution} onChange={e => update('own_contribution', e.target.value)} /></div>
-        <div className="field"><label className="field-label">Autres financements (FCFA)</label><input className="input" type="number" min="0" value={form.other_funding} onChange={e => update('other_funding', e.target.value)} /></div>
+        <div className="field"><label className="field-label" htmlFor="own-contribution">Apport personnel (FCFA)</label><input id="own-contribution" className="input" type="number" min="0" value={form.own_contribution} onChange={e => update('own_contribution', e.target.value)} /></div>
+        <div className="field"><label className="field-label" htmlFor="other-funding">Autres financements (FCFA)</label><input id="other-funding" className="input" type="number" min="0" value={form.other_funding} onChange={e => update('other_funding', e.target.value)} /></div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, margin: '16px 0' }}>
         <SummaryLine label="Budget total" value={formatCFA(budget.total)} />
@@ -883,13 +945,13 @@ function StepRevenus({ form, update }) {
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Revenus complémentaires</h2>
       <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Le revenu agricole est calculé uniquement depuis le projet agricole afin d’éviter tout double comptage.</p>
       <div className="grid-2">
-        <NeantField label="Revenus commerce (FCFA / période)" value={form.revenue_commerce} onChange={v => update('revenue_commerce', v)} hint="Mettre Néant si pas de commerce" />
-        <div className="field"><label className="field-label">Fréquence — commerce</label><select className="input" value={form.commerce_revenue_frequency} onChange={e => update('commerce_revenue_frequency', e.target.value)}>{frequencies}</select></div>
-        <NeantField label="Autres revenus (FCFA / période)" value={form.revenue_other} onChange={v => update('revenue_other', v)} hint="Transferts, pension, etc." />
-        <div className="field"><label className="field-label">Fréquence — autres revenus</label><select className="input" value={form.other_revenue_frequency} onChange={e => update('other_revenue_frequency', e.target.value)}>{frequencies}</select></div>
+        <NeantField id="revenue-commerce" label="Revenus commerce (FCFA / période)" value={form.revenue_commerce} onChange={v => update('revenue_commerce', v)} hint="Mettre Néant si pas de commerce" />
+        <div className="field"><label className="field-label" htmlFor="commerce-revenue-frequency">Fréquence — commerce</label><select id="commerce-revenue-frequency" className="input" value={form.commerce_revenue_frequency} onChange={e => update('commerce_revenue_frequency', e.target.value)}>{frequencies}</select></div>
+        <NeantField id="revenue-other" label="Autres revenus (FCFA / période)" value={form.revenue_other} onChange={v => update('revenue_other', v)} hint="Transferts, pension, etc." />
+        <div className="field"><label className="field-label" htmlFor="other-revenue-frequency">Fréquence — autres revenus</label><select id="other-revenue-frequency" className="input" value={form.other_revenue_frequency} onChange={e => update('other_revenue_frequency', e.target.value)}>{frequencies}</select></div>
         <div className="field" style={{ gridColumn: '1 / -1' }}>
-          <label className="field-label">Acheteur principal du projet agricole</label>
-          <input className="input" value={form.main_buyer} onChange={e => update('main_buyer', e.target.value)} placeholder="Coopérative, marché, acheteur B2B..." />
+          <label className="field-label" htmlFor="main-buyer">Acheteur principal du projet agricole</label>
+          <input id="main-buyer" className="input" value={form.main_buyer} onChange={e => update('main_buyer', e.target.value)} placeholder="Coopérative, marché, acheteur B2B..." />
         </div>
       </div>
     </div>
@@ -901,8 +963,8 @@ function StepCharges({ form, update }) {
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Charges mensuelles</h2>
       <div className="grid-2">
-        <NeantField label="Charges agricoles (FCFA / mois)" value={form.expenses_agriculture} onChange={v => update('expenses_agriculture', v)} hint="Semences, intrants, matériel, main-d'œuvre et transport hors budget détaillé" />
-        <NeantField label="Charges du ménage (FCFA / mois)" value={form.expenses_household} onChange={v => update('expenses_household', v)} hint="Alimentation, santé, éducation, logement, cotisations et obligations sociales" />
+        <NeantField id="expenses-agriculture" label="Charges agricoles (FCFA / mois)" value={form.expenses_agriculture} onChange={v => update('expenses_agriculture', v)} hint="Semences, intrants, matériel, main-d'œuvre et transport hors budget détaillé" />
+        <NeantField id="expenses-household" label="Charges du ménage (FCFA / mois)" value={form.expenses_household} onChange={v => update('expenses_household', v)} hint="Alimentation, santé, éducation, logement, cotisations et obligations sociales" />
       </div>
     </div>
   );
@@ -921,18 +983,18 @@ function StepDettes({ debts, setDebts }) {
       <p className="text-sm text-muted" style={{ marginBottom: 12 }}>Ajoutez chaque dette séparément. La consultation BIC synthétique sera disponible sur le dossier après enregistrement d’un consentement explicite.</p>
       <div style={{ padding: 10, background: 'var(--c-warning-bg)', color: 'var(--c-warning)', borderRadius: 'var(--radius)', marginBottom: 16, fontSize: 'var(--fs-12)' }}><strong>Données synthétiques de démonstration — BIC non connecté</strong></div>
       <div className="grid-2">
-        <div className="field"><label className="field-label">Institution</label><input className="input" value={draft.institution} onChange={e => setDraft(d => ({ ...d, institution: e.target.value }))} /></div>
-        <div className="field"><label className="field-label">Type de crédit</label><input className="input" value={draft.credit_type} onChange={e => setDraft(d => ({ ...d, credit_type: e.target.value }))} /></div>
-        <div className="field"><label className="field-label">Montant initial</label><input className="input" type="number" min="0" value={draft.initial_amount} onChange={e => setDraft(d => ({ ...d, initial_amount: e.target.value }))} /></div>
-        <div className="field"><label className="field-label">Encours restant *</label><input className="input" type="number" min="0" value={draft.outstanding} onChange={e => setDraft(d => ({ ...d, outstanding: e.target.value }))} /></div>
-        <div className="field"><label className="field-label">Échéance périodique</label><input className="input" type="number" min="0" value={draft.periodic_payment} onChange={e => setDraft(d => ({ ...d, periodic_payment: e.target.value }))} /></div>
-        <div className="field"><label className="field-label">Périodicité</label><select className="input" value={draft.frequency} onChange={e => setDraft(d => ({ ...d, frequency: e.target.value }))}><option value="mensuel">Mensuelle</option><option value="trimestriel">Trimestrielle</option><option value="saisonnier">Saisonnière</option></select></div>
-        <div className="field"><label className="field-label">Statut</label><select className="input" value={draft.status} onChange={e => setDraft(d => ({ ...d, status: e.target.value }))}><option value="en_cours">En cours</option><option value="retard">En retard</option><option value="termine">Terminé</option></select></div>
-        <div className="field"><label className="field-label">Jours de retard</label><input className="input" type="number" min="0" value={draft.days_late} onChange={e => setDraft(d => ({ ...d, days_late: e.target.value }))} /></div>
-        <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label">Objet</label><input className="input" value={draft.purpose} onChange={e => setDraft(d => ({ ...d, purpose: e.target.value }))} /></div>
+        <div className="field"><label className="field-label" htmlFor="debt-institution">Institution</label><input id="debt-institution" className="input" value={draft.institution} onChange={e => setDraft(d => ({ ...d, institution: e.target.value }))} /></div>
+        <div className="field"><label className="field-label" htmlFor="debt-credit-type">Type de crédit</label><input id="debt-credit-type" className="input" value={draft.credit_type} onChange={e => setDraft(d => ({ ...d, credit_type: e.target.value }))} /></div>
+        <div className="field"><label className="field-label" htmlFor="debt-initial-amount">Montant initial</label><input id="debt-initial-amount" className="input" type="number" min="0" value={draft.initial_amount} onChange={e => setDraft(d => ({ ...d, initial_amount: e.target.value }))} /></div>
+        <div className="field"><label className="field-label" htmlFor="debt-outstanding">Encours restant *</label><input id="debt-outstanding" className="input" type="number" min="0" value={draft.outstanding} onChange={e => setDraft(d => ({ ...d, outstanding: e.target.value }))} /></div>
+        <div className="field"><label className="field-label" htmlFor="debt-periodic-payment">Échéance périodique</label><input id="debt-periodic-payment" className="input" type="number" min="0" value={draft.periodic_payment} onChange={e => setDraft(d => ({ ...d, periodic_payment: e.target.value }))} /></div>
+        <div className="field"><label className="field-label" htmlFor="debt-frequency">Périodicité</label><select id="debt-frequency" className="input" value={draft.frequency} onChange={e => setDraft(d => ({ ...d, frequency: e.target.value }))}><option value="mensuel">Mensuelle</option><option value="trimestriel">Trimestrielle</option><option value="saisonnier">Saisonnière</option></select></div>
+        <div className="field"><label className="field-label" htmlFor="debt-status">Statut</label><select id="debt-status" className="input" value={draft.status} onChange={e => setDraft(d => ({ ...d, status: e.target.value }))}><option value="en_cours">En cours</option><option value="retard">En retard</option><option value="termine">Terminé</option></select></div>
+        <div className="field"><label className="field-label" htmlFor="debt-days-late">Jours de retard</label><input id="debt-days-late" className="input" type="number" min="0" value={draft.days_late} onChange={e => setDraft(d => ({ ...d, days_late: e.target.value }))} /></div>
+        <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label" htmlFor="debt-purpose">Objet</label><input id="debt-purpose" className="input" value={draft.purpose} onChange={e => setDraft(d => ({ ...d, purpose: e.target.value }))} /></div>
       </div>
       <button type="button" className="btn btn-secondary btn-sm" onClick={addDebt}><Plus size={14} /> Ajouter la dette</button>
-      {debts.map(debt => <div key={debt.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span>{debt.institution} · encours {formatCFA(Number(debt.outstanding))} · échéance {formatCFA(Number(debt.periodic_payment))}</span><button type="button" className="btn btn-ghost btn-sm" onClick={() => setDebts(list => list.filter(x => x.id !== debt.id))}><Trash2 size={13} /></button></div>)}
+      {debts.map(debt => <div key={debt.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span>{debt.institution} · encours {formatCFA(Number(debt.outstanding))} · échéance {formatCFA(Number(debt.periodic_payment))}</span><button type="button" className="btn btn-ghost btn-sm icon-button" onClick={() => setDebts(list => list.filter(x => x.id !== debt.id))} aria-label={`Supprimer la dette auprès de ${debt.institution}`} title="Supprimer cette dette"><Trash2 size={13} /></button></div>)}
     </div>
   );
 }
@@ -942,34 +1004,34 @@ function StepGaranties({ form, update }) {
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 16 }}>Épargne et garanties</h2>
       <div className="grid-2">
-        <NeantField label="Épargne disponible (FCFA)" value={form.savings_amount} onChange={v => update('savings_amount', v)} hint="Compte épargne, tontine, etc." />
+        <NeantField id="savings-amount" label="Épargne disponible (FCFA)" value={form.savings_amount} onChange={v => update('savings_amount', v)} hint="Compte épargne, tontine, etc." />
         <div className="field">
-          <label className="field-label">Type de garantie principale</label>
-          <select className="input" value={form.guarantee_type} onChange={e => update('guarantee_type', e.target.value)}>
+          <label className="field-label" htmlFor="guarantee-type">Type de garantie principale</label>
+          <select id="guarantee-type" className="input" value={form.guarantee_type} onChange={e => update('guarantee_type', e.target.value)}>
             <option value="">Sélectionner une garantie</option>
             {GUARANTEE_TYPES.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
           </select>
         </div>
         {form.guarantee_type === 'Caution solidaire' && (
           <div className="field" style={{ gridColumn: '1 / -1' }}>
-            <label className="field-label">Groupe de caution solidaire</label>
-            <input className="input" value={form.group_guarantee} onChange={e => update('group_guarantee', e.target.value)} placeholder="Nom du groupe et nombre de membres" />
+            <label className="field-label" htmlFor="group-guarantee">Groupe de caution solidaire</label>
+            <input id="group-guarantee" className="input" value={form.group_guarantee} onChange={e => update('group_guarantee', e.target.value)} placeholder="Nom du groupe et nombre de membres" />
           </div>
         )}
         <div className="field" style={{ gridColumn: '1 / -1' }}>
-          <label className="field-label">Garanties complémentaires</label>
-          <textarea className="input" rows={2} value={form.other_guarantees} onChange={e => update('other_guarantees', e.target.value)} placeholder="Autres biens ou sûretés" />
+          <label className="field-label" htmlFor="other-guarantees">Garanties complémentaires</label>
+          <textarea id="other-guarantees" className="input" rows={2} value={form.other_guarantees} onChange={e => update('other_guarantees', e.target.value)} placeholder="Autres biens ou sûretés" />
         </div>
-        <label style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, alignItems: 'center', fontSize: 'var(--fs-12)' }}><input type="checkbox" checked={form.third_party_commitment} onChange={e => update('third_party_commitment', e.target.checked)} /> Cette garantie comprend l'engagement d'un tiers</label>
+        <label htmlFor="third-party-commitment" style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, alignItems: 'center', fontSize: 'var(--fs-12)' }}><input id="third-party-commitment" type="checkbox" checked={form.third_party_commitment} onChange={e => update('third_party_commitment', e.target.checked)} /> Cette garantie comprend l'engagement d'un tiers</label>
         {form.third_party_commitment && <>
-          <div className="field"><label className="field-label">Nom complet du garant *</label><input className="input" value={form.guarantor_name} onChange={e => update('guarantor_name', e.target.value)} /></div>
-          <div className="field"><label className="field-label">N° CNI du garant *</label><input className="input" value={form.guarantor_id_number} onChange={e => update('guarantor_id_number', e.target.value)} /></div>
-          <div className="field"><label className="field-label">Téléphone *</label><input className="input" type="tel" value={form.guarantor_phone} onChange={e => update('guarantor_phone', e.target.value)} /></div>
-          <div className="field"><label className="field-label">Localisation / adresse</label><input className="input" value={form.guarantor_location} onChange={e => update('guarantor_location', e.target.value)} /></div>
-          <div className="field"><label className="field-label">Lien avec le demandeur</label><input className="input" value={form.guarantor_relationship} onChange={e => update('guarantor_relationship', e.target.value)} /></div>
-          <div className="field"><label className="field-label">Nature de l'engagement</label><input className="input" value={form.guarantor_commitment_type} onChange={e => update('guarantor_commitment_type', e.target.value)} placeholder="Caution personnelle, garantie solidaire…" /></div>
-          <div className="field"><label className="field-label">Plafond de l'engagement (FCFA)</label><input className="input" type="number" min="0" value={form.guarantor_commitment_amount} onChange={e => update('guarantor_commitment_amount', e.target.value)} /></div>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 'var(--fs-12)' }}><input type="checkbox" checked={form.guarantor_consent} onChange={e => update('guarantor_consent', e.target.checked)} /> Consentement du garant recueilli *</label>
+          <div className="field"><label className="field-label" htmlFor="guarantor-name">Nom complet du garant *</label><input id="guarantor-name" className="input" value={form.guarantor_name} onChange={e => update('guarantor_name', e.target.value)} /></div>
+          <div className="field"><label className="field-label" htmlFor="guarantor-id-number">N° CNI du garant *</label><input id="guarantor-id-number" className="input" value={form.guarantor_id_number} onChange={e => update('guarantor_id_number', e.target.value)} /></div>
+          <div className="field"><label className="field-label" htmlFor="guarantor-phone">Téléphone *</label><input id="guarantor-phone" className="input" type="tel" value={form.guarantor_phone} onChange={e => update('guarantor_phone', e.target.value)} /></div>
+          <div className="field"><label className="field-label" htmlFor="guarantor-location">Localisation / adresse</label><input id="guarantor-location" className="input" value={form.guarantor_location} onChange={e => update('guarantor_location', e.target.value)} /></div>
+          <div className="field"><label className="field-label" htmlFor="guarantor-relationship">Lien avec le demandeur</label><input id="guarantor-relationship" className="input" value={form.guarantor_relationship} onChange={e => update('guarantor_relationship', e.target.value)} /></div>
+          <div className="field"><label className="field-label" htmlFor="guarantor-commitment-type">Nature de l'engagement</label><input id="guarantor-commitment-type" className="input" value={form.guarantor_commitment_type} onChange={e => update('guarantor_commitment_type', e.target.value)} placeholder="Caution personnelle, garantie solidaire…" /></div>
+          <div className="field"><label className="field-label" htmlFor="guarantor-commitment-amount">Plafond de l'engagement (FCFA)</label><input id="guarantor-commitment-amount" className="input" type="number" min="0" value={form.guarantor_commitment_amount} onChange={e => update('guarantor_commitment_amount', e.target.value)} /></div>
+          <label htmlFor="guarantor-consent" style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 'var(--fs-12)' }}><input id="guarantor-consent" type="checkbox" checked={form.guarantor_consent} onChange={e => update('guarantor_consent', e.target.checked)} /> Consentement du garant recueilli *</label>
         </>}
       </div>
 
@@ -1004,14 +1066,14 @@ function StepPreuves({ evidence, setEvidence }) {
         {['A', 'B', 'C', 'D'].map(level => <button type="button" key={level} className="btn btn-secondary" onClick={() => chooseLevel(level)} style={{ minHeight: 54 }}><strong>{level}</strong><span style={{ display: 'block', fontSize: 10 }}>{level === 'A' ? 'Interne vérifiée' : level === 'B' ? 'Externe crédible' : level === 'C' ? 'Document à vérifier' : 'Déclaration'}</span></button>)}
       </div>
       <div id="evidence-form" className="grid-2" style={{ padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>
-        <div className="field"><label className="field-label">Élément concerné</label><select className="input" value={draft.category} onChange={e => setDraft(d => ({ ...d, category: e.target.value }))}><option value="identite">Identité</option><option value="projet">Projet agricole</option><option value="revenu">Revenu</option><option value="charge">Charge</option><option value="dette">Dette</option><option value="intrant">Intrant</option><option value="parcelle">Parcelle</option><option value="garantie">Garantie</option></select></div>
-        <div className="field"><label className="field-label">Niveau initial</label><input className="input" value={draft.verification_level} readOnly /></div>
-        <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label">Libellé *</label><input className="input" value={draft.label} onChange={e => setDraft(d => ({ ...d, label: e.target.value }))} placeholder="Ex : reçu d'achat de semences" /></div>
-        <div className="field"><label className="field-label">Source / émetteur</label><input className="input" value={draft.source_detail} onChange={e => setDraft(d => ({ ...d, source_detail: e.target.value }))} /></div>
-        <div className="field"><label className="field-label">Fichier PDF, JPEG ou PNG</label><input className="input" type="file" accept="application/pdf,image/jpeg,image/png" onChange={e => { const file = e.target.files?.[0] || null; if (file && file.size > 2 * 1024 * 1024) { e.target.value = ''; return; } setDraft(d => ({ ...d, file, verification_level: file ? 'C' : d.verification_level })); }} /><div className="field-hint">2 Mo maximum par fichier, 10 Mo par dossier. Envoi authentifié et empreinte SHA-256.</div></div>
+        <div className="field"><label className="field-label" htmlFor="evidence-category">Élément concerné</label><select id="evidence-category" className="input" value={draft.category} onChange={e => setDraft(d => ({ ...d, category: e.target.value }))}><option value="identite">Identité</option><option value="projet">Projet agricole</option><option value="revenu">Revenu</option><option value="charge">Charge</option><option value="dette">Dette</option><option value="intrant">Intrant</option><option value="parcelle">Parcelle</option><option value="garantie">Garantie</option></select></div>
+        <div className="field"><label className="field-label" htmlFor="evidence-level">Niveau initial</label><input id="evidence-level" className="input" value={draft.verification_level} readOnly /></div>
+        <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label" htmlFor="evidence-label">Libellé *</label><input id="evidence-label" className="input" value={draft.label} onChange={e => setDraft(d => ({ ...d, label: e.target.value }))} placeholder="Ex : reçu d'achat de semences" /></div>
+        <div className="field"><label className="field-label" htmlFor="evidence-source-detail">Source / émetteur</label><input id="evidence-source-detail" className="input" value={draft.source_detail} onChange={e => setDraft(d => ({ ...d, source_detail: e.target.value }))} /></div>
+        <div className="field"><label className="field-label" htmlFor="evidence-file">Fichier PDF, JPEG ou PNG</label><input id="evidence-file" className="input" type="file" accept="application/pdf,image/jpeg,image/png" onChange={e => { const file = e.target.files?.[0] || null; if (file && file.size > 2 * 1024 * 1024) { e.target.value = ''; return; } setDraft(d => ({ ...d, file, verification_level: file ? 'C' : d.verification_level })); }} /><div className="field-hint">2 Mo maximum par fichier, 10 Mo par dossier. Envoi authentifié et empreinte SHA-256.</div></div>
         <button type="button" className="btn btn-primary btn-sm" onClick={saveEvidence}>{editingId ? 'Enregistrer les modifications' : 'Ajouter la preuve'}</button>
       </div>
-      {evidence.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '10px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span><strong>{item.verification_level}</strong> · {item.label}{item.metadata?.file_name ? ` · ${item.metadata.file_name}` : ''}</span><span><button type="button" className="btn btn-ghost btn-sm" onClick={() => editEvidence(item)}><Pencil size={13} /></button><button type="button" className="btn btn-ghost btn-sm" onClick={() => setEvidence(list => list.filter(x => x.id !== item.id))}><Trash2 size={13} /></button></span></div>)}
+      {evidence.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '10px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span><strong>{item.verification_level}</strong> · {item.label}{item.metadata?.file_name ? ` · ${item.metadata.file_name}` : ''}</span><span><button type="button" className="btn btn-ghost btn-sm icon-button" onClick={() => editEvidence(item)} aria-label={`Modifier la preuve ${item.label}`} title="Modifier cette preuve"><Pencil size={13} /></button><button type="button" className="btn btn-ghost btn-sm icon-button" onClick={() => setEvidence(list => list.filter(x => x.id !== item.id))} aria-label={`Supprimer la preuve ${item.label}`} title="Supprimer cette preuve"><Trash2 size={13} /></button></span></div>)}
     </div>
   );
 }
@@ -1124,7 +1186,7 @@ function StepResume({ form, update, items, debts, evidence }) {
         <SummaryLine label="Preuves" value={`${evidence.length}`} />
         <SummaryLine label="Dettes déclarées" value={`${debts.length}`} />
       </div>
-      <div className="field"><label className="field-label">Note de l'agent</label><textarea className="input" rows={4} value={form.agent_note} onChange={e => update('agent_note', e.target.value)} placeholder="Observations terrain et points d'attention…" /></div>
+      <div className="field"><label className="field-label" htmlFor="agent-note">Note de l'agent</label><textarea id="agent-note" className="input" rows={4} value={form.agent_note} onChange={e => update('agent_note', e.target.value)} placeholder="Observations terrain et points d'attention…" /></div>
     </div>
   );
 }

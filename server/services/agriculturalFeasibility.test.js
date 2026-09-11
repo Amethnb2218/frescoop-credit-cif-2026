@@ -37,6 +37,7 @@ test('la synthèse locale distingue faisable, ajustement et revue humaine', () =
 test('le rendement Teranga exige une valeur numérique native sans lire le texte', () => {
   assert.equal(normalizeYieldResponse({ predicted_yield_kg_ha: 3900 }, 4000).predicted_yield_kg_ha, 3900);
   assert.equal(normalizeYieldResponse({ ensemble: { predicted_yield_kg: 3700 } }, 4000).predicted_yield_kg_ha, 3700);
+  assert.equal(normalizeYieldResponse({ predicted_yield_kg_ha: null, ensemble: { predicted_yield_kg: 3596 } }, 4000).predicted_yield_kg_ha, 3596);
   assert.equal(normalizeYieldResponse({ predicted_yield_kg_ha: 1800 }, 4000).level, 'conflict');
   assert.equal(normalizeYieldResponse({ ensemble: { predicted_yield_kg: '3700' } }, 4000), null);
   assert.equal(normalizeYieldResponse({ predicted_yield_kg_ha: '3900' }, 4000), null);
@@ -50,7 +51,14 @@ test('le risque Teranga exige strictement ses trois champs', () => {
     type: 'risk', safety_score: 42, level: 'high',
     recommendation: 'Reporter le semis', explanation: 'Reporter le semis',
   });
-  assert.equal(normalizeRiskResponse({ safety_score: 60, recommandation: 'Sans niveau' }), null);
+  assert.deepEqual(normalizeRiskResponse({
+    safetyScore: 98, recommendation: 'Risque acceptable — procéder au semis',
+  }), {
+    type: 'risk', safety_score: 98, level: 'information',
+    recommendation: 'Risque acceptable — procéder au semis',
+    explanation: 'Risque acceptable — procéder au semis',
+  });
+  assert.equal(normalizeRiskResponse({ safety_score: 60, recommandation: 'Sans niveau' })?.level, 'moderate');
 });
 
 test('le chat valide uniquement un texte et sépare ses métadonnées', () => {
@@ -65,22 +73,40 @@ test('le chat valide uniquement un texte et sépare ses métadonnées', () => {
   assert.equal(normalizeChatResponse({ predicted_yield_kg_ha: 3900 }), null);
 });
 
-test('sans configuration, conserve le rapport local déterministe avec cause explicite', async () => {
-  const result = await assessAgriculturalFeasibility({ project, input_items: inputItems });
-  assert.equal(result.source.mode, 'local_offline');
+test('sans configuration explicite, utilise le backend public Teranga par défaut', async () => {
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(url);
+    if (url.endsWith('/api/chat')) return response({ message: 'Rapport Teranga.', source: 'teranga-api' });
+    if (url.includes('predict-yield')) return response({ ensemble: { predicted_yield_kg: 3200 } });
+    return response({ safetyScore: 84, recommendation: 'Risque acceptable' });
+  };
+  const result = await assessAgriculturalFeasibility({ project, input_items: inputItems }, { fetchImpl });
+  assert.equal(result.source.mode, 'hybrid');
   assert.equal(result.source.contract_version, 3);
-  assert.equal(result.source.fallback_reason, 'not_configured');
-  assert.equal(result.source.teranga.degraded, true);
-  assert.ok(result.source.teranga.notice.includes("n'est pas configuré"));
+  assert.equal(result.source.fallback_reason, null);
+  assert.equal(result.source.teranga.available, true);
+  assert.ok(calls.every(url => url.startsWith('https://teranga-ai.onrender.com/')));
   assert.equal(result.details.metrics.real_financing_need, 200000);
   assert.equal(result.details.metrics.overfinancing, 0);
   assert.equal(result.details.metrics.interest_amount, 20000);
   assert.equal(result.details.metrics.total_due, 220000);
   assert.equal(result.details.metrics.declared_yield, 4000);
-  assert.equal(result.details.metrics.predicted_yield_kg_ha, null);
-  assert.equal(result.details.metrics.retained_revenue, 1900000);
-  assert.equal(result.details.metrics.stress_revenue_minus_20_percent, 1520000);
+  assert.equal(result.details.metrics.predicted_yield_kg_ha, 3200);
+  assert.equal(result.details.metrics.retained_revenue, 1520000);
+  assert.equal(result.details.metrics.stress_revenue_minus_20_percent, 1216000);
   assert.ok(result.report.narrative.includes('besoin réel'));
+});
+
+test('une configuration vide explicite conserve le rapport local déterministe', async () => {
+  const result = await assessAgriculturalFeasibility(
+    { project, input_items: inputItems },
+    { baseUrl: '' },
+  );
+  assert.equal(result.source.mode, 'local_offline');
+  assert.equal(result.source.fallback_reason, 'not_configured');
+  assert.equal(result.source.teranga.degraded, true);
+  assert.ok(result.source.teranga.notice.includes("n'est pas configuré"));
 });
 
 test('appelle rendement, risque et POST /api/chat avec des messages français structurés', async () => {

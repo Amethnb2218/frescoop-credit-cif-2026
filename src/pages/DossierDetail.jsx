@@ -6,6 +6,19 @@ import { EVIDENCE_LEVELS } from '../lib/tokens';
 import { isOnline, addToSyncQueue, saveEvidenceOffline, deleteEvidenceOffline } from '../lib/offline';
 import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff, Shield, MapPin, FileCheck, Printer, Download, Trash2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import {
+  Alert,
+  Button,
+  Dialog,
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  Metric,
+  PageHeader,
+  Panel,
+  ScoreBadge,
+  StatusBadge,
+} from '../components/ui/index.jsx';
 
 const DECISION_AUTHORITY_THRESHOLD = 1_000_000;
 const DECISION_STATUSES_BY_AUTHORITY = {
@@ -84,6 +97,7 @@ export default function DossierDetail() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [tab, setTab] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [bicData, setBicData] = useState(null);
   const [actionError, setActionError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -98,6 +112,8 @@ export default function DossierDetail() {
   }, [user?.role]);
 
   async function loadDossier() {
+    setLoading(true);
+    setLoadError('');
     try {
       const res = await api.getDossier(id);
       setDossier(res.dossier);
@@ -107,34 +123,48 @@ export default function DossierDetail() {
       setStressTests(res.stress_tests || []);
       setRuleEvals(res.rule_evaluations || []);
       setRiskFlags(res.risk_flags || []);
-    } catch (err) {}
-    finally { setLoading(false); }
+    } catch (err) {
+      setLoadError(err.message || 'Impossible de charger le dossier.');
+      setDossier(null);
+    } finally { setLoading(false); }
   }
 
   async function loadAudit() {
-    try { const res = await api.getDossierAudit(id); setAuditLogs(res.logs || []); } catch {}
+    setActionError('');
+    try { const res = await api.getDossierAudit(id); setAuditLogs(res.logs || []); }
+    catch (err) { setActionError(err.message || 'Impossible de charger le journal d’audit.'); }
   }
 
   async function checkBic() {
     if (!dossier?.id) return;
-    try { const res = await api.checkBic(dossier.id); setBicData(res); } catch {}
+    setActionError('');
+    try { const res = await api.checkBic(dossier.id); setBicData(res); }
+    catch (err) { setActionError(err.message || 'Consultation BIC impossible.'); }
   }
 
   async function runStressTest() {
-    try { const res = await api.runStressTest(id); setStressTests(res.stress_tests || []); } catch {}
+    setActionError('');
+    try { const res = await api.runStressTest(id); setStressTests(res.stress_tests || []); }
+    catch (err) { setActionError(err.message || 'Stress test impossible.'); }
   }
 
   async function evaluateRules() {
-    try { await api.evaluateRules(id); await loadDossier(); } catch {}
+    setActionError('');
+    try { await api.evaluateRules(id); await loadDossier(); }
+    catch (err) { setActionError(err.message || 'Évaluation des règles impossible.'); }
   }
 
   async function advanceStatus(newStatus) {
+    if (submitting) return;
+    setSubmitting(true);
     setActionError('');
     try { await api.updateStatus(id, newStatus); await loadDossier(); }
     catch (err) { setActionError(err.message); }
+    finally { setSubmitting(false); }
   }
 
   async function resubmit() {
+    if (submitting) return;
     setSubmitting(true);
     setActionError('');
     try { await api.resubmitDossier(id); await loadDossier(); }
@@ -144,107 +174,131 @@ export default function DossierDetail() {
 
   useEffect(() => { if (tab === 'Audit') loadAudit(); }, [tab]);
 
-  if (loading) return <div className="loading-state">Chargement du dossier...</div>;
-  if (!dossier) return <div className="empty-state"><div className="empty-state-title">Dossier introuvable</div></div>;
+  if (loading) return <LoadingState label="Chargement du dossier…" />;
+  if (loadError) return <ErrorState title="Impossible de charger le dossier" description={loadError} onRetry={loadDossier} />;
+  if (!dossier) return <EmptyState title="Dossier introuvable" description="Ce dossier n’existe pas ou n’est plus accessible." />;
 
   const workflowSteps = dossier.status === 'incomplete'
-    ? ['draft', 'incomplete', 'submitted', 'verification', 'review', 'committee', 'decided']
-    : ['draft', 'submitted', 'verification', 'review', 'committee', 'decided'];
+    ? ['draft', 'incomplete', 'submitted', 'verification', 'review', 'committee_ready', 'committee', 'decided']
+    : ['draft', 'submitted', 'verification', 'review', 'committee_ready', 'committee', 'decided'];
   const currentIdx = workflowSteps.indexOf(dossier.status);
   const role = user?.role;
 
   const canAdvance = (targetStatus) => {
     if (targetStatus === 'submitted' && ['draft', 'incomplete'].includes(dossier.status)) return ['AGENT', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(role);
-    if (['verification', 'review', 'committee'].includes(targetStatus)) return ['SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(role);
+    if (['verification', 'review', 'committee_ready', 'committee'].includes(targetStatus)) return ['SUPERVISEUR', 'ADMIN', 'SUPERADMIN'].includes(role);
     return false;
   };
 
   const nextStatus = () => {
+    if (['committee_ready', 'committee'].includes(dossier.status)) return null;
     const next = workflowSteps[currentIdx + 1];
     if (!next || next === 'decided') return null;
     return canAdvance(next) ? next : null;
   };
 
   const ns = nextStatus();
-  const nextLabel = { submitted: 'Soumettre', verification: 'Lancer vérification', review: 'Passer en revue', committee: 'Transmettre au comité' };
+  const nextLabel = { submitted: 'Soumettre', verification: 'Lancer vérification', review: 'Passer en revue', committee_ready: 'Transmettre au comité', committee: 'Transmettre au comité' };
   const agentCanEdit = role === 'AGENT' && ['draft', 'incomplete'].includes(dossier.status);
   const hasScore = isScoreAvailable(dossier.prequalification_score);
   const provisionalScore = isProvisionalScore(dossier.prequalification_score_details);
   const missingScoreData = getMissingScoreData(dossier.prequalification_score_details);
   const decisionAuthority = resolveDecisionAuthority(dossier.amount_requested);
   const canTakeDecision = canDecideDossier(dossier, role);
+  const scoreDetails = parseScoreDetails(dossier.prequalification_score_details) || {};
+  const { monthlyPayment, totalRepayable } = repaymentTerms(dossier, scoreDetails);
+  const interestAmount = nonNegativeNumber(scoreDetails.interest_amount)
+    ?? nonNegativeNumber(dossier.interest_amount)
+    ?? (totalRepayable != null && positiveNumber(dossier.amount_requested) != null
+      ? totalRepayable - Number(dossier.amount_requested) : null);
+  const orientation = dossier.prequalification ? prequalLabel(dossier.prequalification) : 'Non évaluée';
+  const visibleTabs = getTabsForRole(role);
+  const activeTabId = tab ? `dossier-tab-${visibleTabs.indexOf(tab)}` : undefined;
 
   return (
-    <div>
-      <button className="btn btn-ghost btn-sm" onClick={() => navigate('/dossiers')} style={{ marginBottom: 12 }}>
-        <ArrowLeft size={14} /> Dossiers
-      </button>
+    <div className="dossier-detail-page">
+      <Button variant="ghost" size="sm" onClick={() => navigate('/dossiers')} className="detail-back-button">
+        <ArrowLeft size={14} aria-hidden="true" /> Dossiers
+      </Button>
 
-      <div className="flex justify-between items-center" style={{ marginBottom: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <ScoreCircle score={dossier.prequalification_score} />
-          <div>
-            <h1 className="page-title">{dossier.applicant_name || 'Dossier'}</h1>
-            <p className="page-subtitle">{dossier.applicant_location} · {dossier.activity_type || dossier.sector} · {formatCFA(dossier.amount_requested)}</p>
-            {hasScore ? (
-              <p className="text-xs text-muted" style={{ marginTop: 4 }}>
-                {provisionalScore ? 'Score provisoire — données à compléter' : 'Score définitif calculé sur les données disponibles'}
-              </p>
-            ) : <p className="text-xs text-muted" style={{ marginTop: 4 }}>Non calculé — données insuffisantes</p>}
+      <PageHeader
+        eyebrow={`Dossier ${dossier.id}`}
+        title={dossier.applicant_name || 'Dossier de crédit'}
+        subtitle={[dossier.applicant_location, dossier.activity_type || dossier.sector].filter(Boolean).join(' · ')}
+        actions={(
+          <div className="detail-header-actions">
+            {agentCanEdit && <Button variant="secondary" size="sm" onClick={() => navigate(`/dossiers/${id}/edit`)}>Modifier le dossier</Button>}
+            {agentCanEdit && dossier.status === 'incomplete' && <Button size="sm" onClick={resubmit} loading={submitting}>Resoumettre</Button>}
+            {ns && !(agentCanEdit && dossier.status === 'incomplete') && <Button size="sm" onClick={() => advanceStatus(ns)} loading={submitting}>{nextLabel[ns]}</Button>}
+            {canTakeDecision && <Button size="sm" onClick={() => setTab('Décision')}>Décision du {decisionAuthorityLabel(decisionAuthority)}</Button>}
           </div>
-        </div>
-        <div className="flex gap-2">
-          {agentCanEdit && <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/dossiers/${id}/edit`)}>Modifier le dossier</button>}
-          {agentCanEdit && dossier.status === 'incomplete' && <button className="btn btn-primary btn-sm" onClick={resubmit} disabled={submitting}>{submitting ? 'Resoumission...' : 'Resoumettre'}</button>}
-          {ns && !(agentCanEdit && dossier.status === 'incomplete') && <button className="btn btn-primary btn-sm" onClick={() => advanceStatus(ns)}>{nextLabel[ns]}</button>}
-          {canTakeDecision && <button className="btn btn-primary btn-sm" onClick={() => setTab('Décision')}>Décision du {decisionAuthorityLabel(decisionAuthority)}</button>}
-        </div>
-      </div>
+        )}
+      />
 
-      {actionError && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '10px 14px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{actionError}</div>}
+      {actionError && <Alert variant="danger" title="Action impossible">{actionError}</Alert>}
 
       {dossier.status === 'incomplete' && dossier.decision_motif && (
-        <div style={{ padding: '12px 16px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-md)', marginBottom: 12, color: '#92400e' }}>
-          <strong>Complément demandé :</strong> {dossier.decision_motif}
-        </div>
+        <Alert variant="warning" title="Complément demandé">{dossier.decision_motif}</Alert>
       )}
 
       {(provisionalScore || !hasScore) && <MissingDataPanel missing={missingScoreData} />}
 
-      {hasScore && (() => {
-        const style = scoreStyle(dossier.prequalification_score);
-        return (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '10px 16px', background: '#f9fafb', borderRadius: 'var(--radius-md)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid var(--c-border-light)' }}>
-            <span style={{ fontWeight: 600, color: 'var(--c-text)' }}>Score technique : <span style={{ color: style.color, fontSize: 'var(--fs-md)' }}>{dossier.prequalification_score}/100</span></span>
-            <span style={{ color: 'var(--c-500)' }}>|</span>
-            <span>Confiance preuves: <strong>{dossier.evidence_confidence || '—'}</strong></span>
-            <span style={{ color: 'var(--c-500)' }}>|</span>
-            <span>Capacité: <strong>{dossier.repayment_capacity || '—'}</strong></span>
-            <span style={{ color: 'var(--c-500)' }}>|</span>
-            <span>{evidence.filter(e => ['A', 'B'].includes(e.verification_level)).length} preuves vérifiées</span>
+      <Panel className="decision-summary" aria-label="Synthèse décisionnelle">
+        <div className="decision-summary-heading">
+          <div>
+            <div className="page-eyebrow">Synthèse décisionnelle</div>
+            <h2>{orientation}</h2>
+            <p>Le score technique éclaire l’instruction ; la décision demeure humaine et relève du {decisionAuthorityLabel(decisionAuthority)}.</p>
           </div>
-        );
-      })()}
+          <ScoreBadge score={dossier.prequalification_score} details={dossier.prequalification_score_details} showLabel />
+        </div>
+        <div className="decision-summary-metrics">
+          <Metric label="Montant demandé" value={formatCFA(dossier.amount_requested)} />
+          <Metric label="Intérêts" value={interestAmount == null ? '—' : formatCFA(interestAmount)} />
+          <Metric label="Total remboursable" value={totalRepayable == null ? '—' : formatCFA(totalRepayable)} detail={monthlyPayment == null ? null : `Échéance estimée : ${formatCFA(monthlyPayment)}`} />
+          <Metric label="Capacité" value={dossier.repayment_capacity || 'Non calculée'} detail={scoreDetails.capacity_ratio == null ? null : `${Number(scoreDetails.capacity_ratio).toFixed(2)}× l’échéance`} />
+          <Metric label="Autorité" value={decisionAuthorityLabel(decisionAuthority)} />
+          <Metric label="Statut" value={<StatusBadge status={dossier.status} />} />
+        </div>
+      </Panel>
 
-      <div className="workflow-bar">
+      <div className="workflow-bar" aria-label="Progression du dossier">
         {workflowSteps.map((s, i) => (
           <span key={s} className={`workflow-step ${i === currentIdx ? 'current' : i < currentIdx ? 'done' : ''}`}>{STATUS_LABELS[s]}</span>
         ))}
       </div>
 
-      <div className="tab-list">
-        {getTabsForRole(role).map(t => <button key={t} className={`tab-item ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>{t}</button>)}
+      <div className="tab-list detail-tabs" role="tablist" aria-label="Sections du dossier">
+        {visibleTabs.map((t, index) => {
+          const tabId = `dossier-tab-${index}`;
+          return (
+            <button
+              id={tabId}
+              key={t}
+              type="button"
+              role="tab"
+              aria-selected={tab === t}
+              aria-controls="dossier-tabpanel"
+              className={`tab-item ${tab === t ? 'active' : ''}`}
+              onClick={() => setTab(t)}
+            >
+              {t}
+            </button>
+          );
+        })}
       </div>
 
-      {tab === 'Résumé' && <SummaryTab dossier={dossier} projectAssessment={projectAssessment} evidence={evidence} cashflow={cashflow} bicData={bicData} onCheckBic={checkBic} />}
-      {tab === 'Mémo décision' && <MemoTab dossier={dossier} evidence={evidence} cashflow={cashflow} ruleEvals={ruleEvals} />}
-      {tab === 'Preuves' && <EvidenceTab dossierId={id} dossierStatus={dossier.status} evidence={evidence} onReload={loadDossier} />}
-      {tab === 'Cash-flow' && <CashflowTab dossierId={id} cashflow={cashflow} dossier={dossier} onReload={loadDossier} />}
-      {tab === 'Stress test' && <StressTab stressTests={stressTests} onRun={runStressTest} />}
-      {tab === 'Préqualification' && <PrequalTab dossier={dossier} projectAssessment={projectAssessment} ruleEvals={ruleEvals} onEvaluate={evaluateRules} />}
-      {tab === 'Contrôles' && <ControlsTab dossierId={id} dossier={dossier} />}
-      {tab === 'Décision' && <DecisionTab dossier={dossier} onReload={loadDossier} />}
-      {tab === 'Audit' && <AuditTab logs={auditLogs} />}
+      <div id="dossier-tabpanel" className="detail-tab-panel" role="tabpanel" aria-labelledby={activeTabId}>
+        {tab === 'Résumé' && <SummaryTab dossier={dossier} projectAssessment={projectAssessment} evidence={evidence} cashflow={cashflow} bicData={bicData} onCheckBic={checkBic} />}
+        {tab === 'Mémo décision' && <MemoTab dossier={dossier} evidence={evidence} cashflow={cashflow} ruleEvals={ruleEvals} />}
+        {tab === 'Preuves' && <EvidenceTab dossierId={id} dossierStatus={dossier.status} evidence={evidence} onReload={loadDossier} />}
+        {tab === 'Cash-flow' && <CashflowTab dossierId={id} cashflow={cashflow} dossier={dossier} onReload={loadDossier} />}
+        {tab === 'Stress test' && <StressTab stressTests={stressTests} onRun={runStressTest} />}
+        {tab === 'Préqualification' && <PrequalTab dossier={dossier} projectAssessment={projectAssessment} ruleEvals={ruleEvals} onEvaluate={evaluateRules} />}
+        {tab === 'Contrôles' && <ControlsTab dossierId={id} dossier={dossier} />}
+        {tab === 'Décision' && <DecisionTab dossier={dossier} onReload={loadDossier} />}
+        {tab === 'Audit' && <AuditTab logs={auditLogs} />}
+      </div>
     </div>
   );
 }
@@ -262,19 +316,8 @@ function MissingDataPanel({ missing, compact = false }) {
   );
 }
 
-function ScoreCircle({ score }) {
-  if (!isScoreAvailable(score)) return null;
-  const numericScore = Number(score);
-  const style = scoreStyle(numericScore);
-  return (
-    <div aria-label={`${style.label}, score technique ${numericScore} sur 100`} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 56, height: 56, borderRadius: '50%', background: style.background, border: `3px solid ${style.border}`, flexShrink: 0 }}>
-      <span style={{ fontSize: 18, fontWeight: 700, color: style.color }}>{numericScore}</span>
-    </div>
-  );
-}
-
 function ScoreComponent({ label, value }) {
-  if (!value) return null;
+  if (value == null) return null;
   return (
     <div style={{ padding: 10, borderRadius: 'var(--radius-sm)', background: '#f9fafb', border: '1px solid var(--c-border-light)' }}>
       <div className="text-xs text-muted">{label}</div>
@@ -298,7 +341,6 @@ function MemoTab({ dossier, evidence, cashflow, ruleEvals }) {
       <div className="print-area" style={{ background: '#fff', border: '1px solid var(--c-border)', borderRadius: 'var(--radius-md)', padding: 24 }}>
         <div style={{ textAlign: 'center', marginBottom: 24, paddingBottom: 16, borderBottom: '2px solid var(--c-primary)' }}>
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16 }}>
-            {isScoreAvailable(dossier.prequalification_score) && <ScoreCircle score={dossier.prequalification_score} />}
             <div>
               <h2 style={{ fontSize: 'var(--fs-xl)', fontWeight: 700, color: 'var(--c-primary)' }}>Mémo de crédit</h2>
               <p style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', marginTop: 4 }}>{dossier.applicant_name} — {formatCFA(dossier.amount_requested)}</p>
@@ -385,8 +427,7 @@ function MemoTab({ dossier, evidence, cashflow, ruleEvals }) {
         {isScoreAvailable(dossier.prequalification_score) && (
           <div style={{ textAlign: 'center', paddingTop: 16, borderTop: '2px solid var(--c-primary)' }}>
             <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginBottom: 4 }}>SCORE TECHNIQUE</div>
-            <ScoreCircle score={dossier.prequalification_score} />
-            <div style={{ fontSize: 'var(--fs-12)', color: '#6b7280', marginTop: 4 }}>/100</div>
+            <strong style={{ fontSize: 'var(--fs-lg)' }}>{Number(dossier.prequalification_score)}/100</strong>
           </div>
         )}
       </div>
@@ -510,7 +551,6 @@ function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, o
   const totalDebt = cashflow.reduce((s, e) => s + (e.debt_payments || 0), 0);
   const fluxNet = totalRevenue - totalExpenses - totalDebt;
   const scoreDetails = parseScoreDetails(dossier.prequalification_score_details) || {};
-  const scoreVisual = scoreStyle(Number(dossier.prequalification_score));
   const missingScoreData = getMissingScoreData(scoreDetails);
   const provisionalScore = isProvisionalScore(scoreDetails);
   const { monthlyPayment, totalRepayable } = repaymentTerms(dossier, scoreDetails);
@@ -555,35 +595,6 @@ function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, o
 
       <AgronomicAssessmentCard projectAssessment={projectAssessment} />
 
-      {/* Score + Key metrics banner */}
-      <div className={`summary-score-grid ${!isScoreAvailable(dossier.prequalification_score) ? 'no-score' : ''}`}>
-        {isScoreAvailable(dossier.prequalification_score) && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 16, background: scoreVisual.background, borderRadius: 'var(--radius-md)', border: `2px solid ${scoreVisual.softBorder}` }}>
-            <ScoreCircle score={dossier.prequalification_score} />
-            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', marginTop: 6, fontWeight: 600 }}>SCORE TECHNIQUE</div>
-          </div>
-        )}
-        <div className="key-metrics-grid">
-          <div style={{ padding: '12px 10px', background: '#f9fafb', borderRadius: 'var(--radius)', textAlign: 'center', border: '1px solid #e5e7eb' }}>
-            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Montant demandé</div>
-            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, marginTop: 2 }}>{formatCFA(dossier.amount_requested)}</div>
-          </div>
-          <div style={{ padding: '12px 10px', background: '#f9fafb', borderRadius: 'var(--radius)', textAlign: 'center', border: '1px solid #e5e7eb' }}>
-            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Durée</div>
-            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, marginTop: 2 }}>{dossier.duration_months} mois</div>
-          </div>
-          <div style={{ padding: '12px 10px', background: fluxNet >= 0 ? '#ecfdf5' : '#fef2f2', borderRadius: 'var(--radius)', textAlign: 'center', border: `1px solid ${fluxNet >= 0 ? '#a7f3d0' : '#fca5a5'}` }}>
-            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Flux net annuel</div>
-            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, marginTop: 2, color: fluxNet >= 0 ? '#059669' : '#dc2626' }}>{formatCFA(fluxNet)}</div>
-          </div>
-          <div style={{ padding: '12px 10px', background: '#f9fafb', borderRadius: 'var(--radius)', textAlign: 'center', border: '1px solid #e5e7eb' }}>
-            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280' }}>Preuves</div>
-            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, marginTop: 2 }}>{evidence.length} <span style={{ fontSize: 'var(--fs-xs)', fontWeight: 400, color: '#6b7280' }}>({evidence.filter(e => ['A','B'].includes(e.verification_level)).length} vérifiées)</span></div>
-          </div>
-        </div>
-      </div>
-
-      {/* Decision banner if exists */}
       {dossier.decision && (
         <div style={{ marginBottom: 16, padding: '12px 16px', borderRadius: 'var(--radius-md)', borderLeft: `4px solid ${dossier.decision === 'approved' || dossier.decision === 'modified' ? '#059669' : dossier.decision === 'refused' ? '#dc2626' : '#d97706'}`, background: dossier.decision === 'approved' || dossier.decision === 'modified' ? '#ecfdf5' : dossier.decision === 'refused' ? '#fef2f2' : '#fffbeb', display: 'flex', alignItems: 'center', gap: 10 }}>
           {dossier.decision === 'approved' || dossier.decision === 'modified' ? <CheckCircle size={18} color="#059669" /> : dossier.decision === 'refused' ? <XCircle size={18} color="#dc2626" /> : <AlertTriangle size={18} color="#d97706" />}
@@ -594,9 +605,8 @@ function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, o
         </div>
       )}
 
-      <div className="grid-2">
-        {/* Left column - Applicant info */}
-        <div className="surface">
+      <div className="summary-document">
+        <Panel title="Identité et activité" className="summary-section">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid #e5e7eb' }}>
             <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#1b6b52', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14 }}>{(dossier.applicant_name || '?')[0]}</div>
             <div>
@@ -631,12 +641,10 @@ function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, o
               <p style={{ fontSize: 'var(--fs-12)', fontStyle: 'italic', color: '#374151' }}>{dossier.agent_note}</p>
             </div>
           )}
-        </div>
+        </Panel>
 
-        {/* Right column - Financial */}
-        <div>
-          <div className="surface mb-4">
-            <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 12 }}>Cash-flow annuel</div>
+        <div className="summary-financial-column">
+          <Panel title="Financement et cash-flow" className="summary-section mb-4">
             <div className="cashflow-metrics">
               <div style={{ textAlign: 'center', padding: 10, background: '#ecfdf5', borderRadius: 'var(--radius)' }}>
                 <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700, color: '#059669' }}>{formatCFA(totalRevenue)}</div>
@@ -658,11 +666,10 @@ function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, o
               </div>
             )}
             {totalRepayable != null && <div className="text-xs text-muted" style={{ marginTop: 6 }}>Total remboursable : <strong>{formatCFA(totalRepayable)}</strong></div>}
-          </div>
+          </Panel>
 
           {dossier.prequalification && (
-            <div className="surface mb-4" style={{ borderLeft: `3px solid ${prequalColor(dossier.prequalification) === 'green' ? '#059669' : prequalColor(dossier.prequalification) === 'amber' ? '#d97706' : '#dc2626'}` }}>
-              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 8 }}>Préqualification</div>
+            <Panel title="Préqualification" className="summary-section mb-4" style={{ borderLeft: `3px solid ${prequalColor(dossier.prequalification) === 'green' ? '#059669' : prequalColor(dossier.prequalification) === 'amber' ? '#d97706' : '#dc2626'}` }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span style={{ padding: '3px 8px', borderRadius: 'var(--radius)', fontSize: 'var(--fs-12)', fontWeight: 600, background: prequalColor(dossier.prequalification) === 'green' ? '#d1fae5' : prequalColor(dossier.prequalification) === 'amber' ? '#fef3c7' : '#fee2e2', color: prequalColor(dossier.prequalification) === 'green' ? '#065f46' : prequalColor(dossier.prequalification) === 'amber' ? '#92400e' : '#991b1b' }}>{prequalLabel(dossier.prequalification)}</span>
               </div>
@@ -671,14 +678,10 @@ function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, o
                 <div><span style={{ color: '#6b7280' }}>Capacité</span><div style={{ fontWeight: 600, marginTop: 2 }}>{dossier.repayment_capacity || '—'}</div></div>
                 <div><span style={{ color: '#6b7280' }}>Preuves</span><div style={{ fontWeight: 600, marginTop: 2 }}>{evidence.length}</div></div>
               </div>
-            </div>
+            </Panel>
           )}
 
-          <div className="surface">
-            <div className="flex justify-between items-center">
-              <div style={{ fontSize: 'var(--fs-xs)', color: '#6b7280', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.4px' }}>BIC</div>
-              <button className="btn btn-secondary btn-sm" onClick={onCheckBic}>Consulter</button>
-            </div>
+          <Panel title="Contrôle BIC" className="summary-section" actions={<Button variant="secondary" size="sm" onClick={onCheckBic}>Consulter</Button>}>
             <div style={{ marginTop: 8, padding: '7px 9px', borderRadius: 'var(--radius)', background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', fontSize: 'var(--fs-11)', fontWeight: 600 }}>
               Données synthétiques de démonstration — BIC non connecté
             </div>
@@ -694,7 +697,7 @@ function SummaryTab({ dossier, projectAssessment, evidence, cashflow, bicData, o
                 )}
               </div>
             )}
-          </div>
+          </Panel>
         </div>
       </div>
     </div>
@@ -830,8 +833,8 @@ function EvidenceTab({ dossierId, dossierStatus, evidence, onReload }) {
         <div className="surface mb-4">
           <div className="grid-2">
             <div className="field">
-              <label className="field-label">Catégorie</label>
-              <select className="input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+              <label className="field-label" htmlFor="detail-evidence-category">Catégorie</label>
+              <select id="detail-evidence-category" className="input" value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
                 <option value="VENTE">Vente</option>
                 <option value="LIVRAISON">Livraison</option>
                 <option value="HISTORIQUE_IMF">Historique IMF</option>
@@ -842,36 +845,36 @@ function EvidenceTab({ dossierId, dossierStatus, evidence, onReload }) {
               </select>
             </div>
             <div className="field">
-              <label className="field-label">Niveau de vérification</label>
-              <select className="input" value={form.verification_level} onChange={e => setForm(f => ({ ...f, verification_level: e.target.value }))}>
+              <label className="field-label" htmlFor="detail-evidence-level">Niveau de vérification</label>
+              <select id="detail-evidence-level" className="input" value={form.verification_level} onChange={e => setForm(f => ({ ...f, verification_level: e.target.value }))}>
                 <option value="C">C — Document non vérifié</option>
                 <option value="D">D — Déclaration</option>
               </select>
               <div className="field-hint">Les niveaux A et B sont attribués après vérification par un rôle habilité.</div>
             </div>
             <div className="field" style={{ gridColumn: '1 / -1' }}>
-              <label className="field-label">Libellé *</label>
-              <input className="input" value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} placeholder="Ex: Photo CNI recto, Attestation coopérative Kaffrine..." />
+              <label className="field-label" htmlFor="detail-evidence-label">Libellé *</label>
+              <input id="detail-evidence-label" className="input" value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} placeholder="Ex: Photo CNI recto, Attestation coopérative Kaffrine..." />
             </div>
             <div className="field">
-              <label className="field-label">Montant (FCFA)</label>
-              <input className="input" type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
+              <label className="field-label" htmlFor="detail-evidence-amount">Montant (FCFA)</label>
+              <input id="detail-evidence-amount" className="input" type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
             </div>
             <div className="field">
-              <label className="field-label">Date</label>
-              <input className="input" type="date" value={form.evidence_date} onChange={e => setForm(f => ({ ...f, evidence_date: e.target.value }))} />
+              <label className="field-label" htmlFor="detail-evidence-date">Date</label>
+              <input id="detail-evidence-date" className="input" type="date" value={form.evidence_date} onChange={e => setForm(f => ({ ...f, evidence_date: e.target.value }))} />
             </div>
             <div className="field">
-              <label className="field-label">Source *</label>
-              <input className="input" value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} placeholder="Agent, coopérative, système..." />
+              <label className="field-label" htmlFor="detail-evidence-source">Source *</label>
+              <input id="detail-evidence-source" className="input" value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} placeholder="Agent, coopérative, système..." />
             </div>
             <div className="field">
-              <label className="field-label">Détail source</label>
-              <input className="input" value={form.source_detail} onChange={e => setForm(f => ({ ...f, source_detail: e.target.value }))} placeholder="Référence, n° de document..." />
+              <label className="field-label" htmlFor="detail-evidence-source-detail">Détail source</label>
+              <input id="detail-evidence-source-detail" className="input" value={form.source_detail} onChange={e => setForm(f => ({ ...f, source_detail: e.target.value }))} placeholder="Référence, n° de document..." />
             </div>
             <div className="field" style={{ gridColumn: '1 / -1' }}>
-              <label className="field-label">Pièce jointe sécurisée</label>
-              <input className="input" type="file" accept="application/pdf,image/jpeg,image/png" onChange={e => {
+              <label className="field-label" htmlFor="detail-evidence-file">Pièce jointe sécurisée</label>
+              <input id="detail-evidence-file" className="input" type="file" accept="application/pdf,image/jpeg,image/png" onChange={e => {
                 const file = e.target.files?.[0] || null;
                 if (file && file.size > 2 * 1024 * 1024) {
                   setError('Le fichier dépasse la limite de 2 Mo.');
@@ -1050,6 +1053,7 @@ function PrequalTab({ dossier, projectAssessment, ruleEvals, onEvaluate }) {
   const hasScore = isScoreAvailable(dossier.prequalification_score);
   const provisionalScore = isProvisionalScore(scoreDetails);
   const missingScoreData = getMissingScoreData(scoreDetails);
+  const scoreVisual = hasScore ? scoreStyle(Number(dossier.prequalification_score)) : null;
 
   return (
     <div>
@@ -1083,12 +1087,9 @@ function PrequalTab({ dossier, projectAssessment, ruleEvals, onEvaluate }) {
 
       {hasScore && (
         <div className="surface mb-4" style={{ padding: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-            <ScoreCircle score={dossier.prequalification_score} />
-            <div>
-              <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700 }}>{provisionalScore ? 'Score provisoire' : 'Score définitif'} : {Number(dossier.prequalification_score)}/100</div>
-              <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', marginTop: 2 }}>{scoreVisual.label} — la préqualification reste déterminée par les règles bloquantes</div>
-            </div>
+          <div>
+            <div style={{ fontSize: 'var(--fs-md)', fontWeight: 700 }}>{provisionalScore ? 'Score provisoire' : 'Score définitif'} : {Number(dossier.prequalification_score)}/100</div>
+            <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-500)', marginTop: 2 }}>{scoreVisual.label} — la préqualification reste déterminée par les règles bloquantes</div>
           </div>
           {components && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10, marginTop: 16 }}>
@@ -1166,7 +1167,9 @@ function ControlsTab({ dossierId, dossier }) {
       setFraudChecks(f.checks || []);
       setVisits(v.visits || []);
       setConsents(c.consents || []);
-    } catch {}
+    } catch (err) {
+      setError(err.message || 'Impossible de charger les contrôles.');
+    }
   }
 
   async function runFraud() {
@@ -1231,7 +1234,7 @@ function ControlsTab({ dossierId, dossier }) {
 
   return (
     <div>
-      {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '8px 12px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
+      {error && <Alert variant="danger" title="Contrôles indisponibles" actions={<Button variant="secondary" size="sm" onClick={loadControls}>Réessayer</Button>}>{error}</Alert>}
 
       <div className="surface mb-4">
         <div className="surface-header">
@@ -1266,44 +1269,44 @@ function ControlsTab({ dossierId, dossier }) {
           <div style={{ marginBottom: 12, padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', border: '1px solid var(--c-border)' }}>
             <div className="grid-2">
               <div className="field">
-                <label className="field-label">Surface observée (ha)</label>
-                <input className="input" type="number" step="0.1" value={visitForm.surface_observed} onChange={e => setVisitForm(f => ({ ...f, surface_observed: e.target.value }))} placeholder="Ex: 7" />
+                <label className="field-label" htmlFor="visit-surface-observed">Surface observée (ha)</label>
+                <input id="visit-surface-observed" className="input" type="number" step="0.1" value={visitForm.surface_observed} onChange={e => setVisitForm(f => ({ ...f, surface_observed: e.target.value }))} placeholder="Ex: 7" />
               </div>
-              <div className="field">
-                <label className="field-label">Coordonnées GPS</label>
+              <fieldset className="field" style={{ border: 0, padding: 0 }}>
+                <legend className="field-label">Coordonnées GPS</legend>
                 <div style={{ display: 'flex', gap: 6 }}>
-                  <input className="input" placeholder="Latitude" value={visitForm.gps_lat} onChange={e => setVisitForm(f => ({ ...f, gps_lat: e.target.value }))} style={{ flex: 1 }} />
-                  <input className="input" placeholder="Longitude" value={visitForm.gps_lon} onChange={e => setVisitForm(f => ({ ...f, gps_lon: e.target.value }))} style={{ flex: 1 }} />
-                  <button className="btn btn-primary btn-sm" onClick={getGPS} type="button" title="Obtenir position actuelle"><MapPin size={13} /></button>
+                  <input className="input" aria-label="Latitude de la visite" placeholder="Latitude" value={visitForm.gps_lat} onChange={e => setVisitForm(f => ({ ...f, gps_lat: e.target.value }))} style={{ flex: 1 }} />
+                  <input className="input" aria-label="Longitude de la visite" placeholder="Longitude" value={visitForm.gps_lon} onChange={e => setVisitForm(f => ({ ...f, gps_lon: e.target.value }))} style={{ flex: 1 }} />
+                  <button className="btn btn-primary btn-sm" onClick={getGPS} type="button" title="Obtenir position actuelle" aria-label="Obtenir la position GPS actuelle"><MapPin size={13} aria-hidden="true" /></button>
                 </div>
-              </div>
+              </fieldset>
             </div>
             <div className="field">
-              <label className="field-label">Observations terrain</label>
-              <textarea className="input" rows={3} value={visitForm.observations} onChange={e => setVisitForm(f => ({ ...f, observations: e.target.value }))} placeholder="État de la parcelle, cultures observées, équipements, bâtiments, voisinage..." />
+              <label className="field-label" htmlFor="visit-observations">Observations terrain</label>
+              <textarea id="visit-observations" className="input" rows={3} value={visitForm.observations} onChange={e => setVisitForm(f => ({ ...f, observations: e.target.value }))} placeholder="État de la parcelle, cultures observées, équipements, bâtiments, voisinage..." />
             </div>
-            <div style={{ marginBottom: 12 }}>
-              <label className="field-label">Activité confirmée ?</label>
+            <fieldset style={{ marginBottom: 12, border: 0, padding: 0 }}>
+              <legend className="field-label">Activité confirmée ?</legend>
               <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                <button type="button" className={`btn btn-sm ${visitForm.activity_confirmed ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setVisitForm(f => ({ ...f, activity_confirmed: true }))}>
+                <button type="button" aria-pressed={visitForm.activity_confirmed} className={`btn btn-sm ${visitForm.activity_confirmed ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setVisitForm(f => ({ ...f, activity_confirmed: true }))}>
                   <CheckCircle size={13} /> Oui, confirmée
                 </button>
-                <button type="button" className={`btn btn-sm ${!visitForm.activity_confirmed ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setVisitForm(f => ({ ...f, activity_confirmed: false }))}>
+                <button type="button" aria-pressed={!visitForm.activity_confirmed} className={`btn btn-sm ${!visitForm.activity_confirmed ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setVisitForm(f => ({ ...f, activity_confirmed: false }))}>
                   <XCircle size={13} /> Non confirmée
                 </button>
               </div>
-            </div>
-            <div style={{ marginBottom: 12 }}>
-              <label className="field-label">Documents collectés sur le terrain</label>
+            </fieldset>
+            <fieldset style={{ marginBottom: 12, border: 0, padding: 0 }}>
+              <legend className="field-label">Documents collectés sur le terrain</legend>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
                 {DOCS_CHECKLIST.map(doc => (
-                  <button key={doc} type="button" onClick={() => toggleDoc(doc)} style={{ padding: '5px 10px', fontSize: 'var(--fs-11)', borderRadius: 'var(--radius)', border: `1px solid ${visitForm.documents_collected.includes(doc) ? '#059669' : 'var(--c-border)'}`, background: visitForm.documents_collected.includes(doc) ? '#ecfdf5' : '#fff', color: visitForm.documents_collected.includes(doc) ? '#065f46' : 'var(--c-text)', cursor: 'pointer', fontWeight: visitForm.documents_collected.includes(doc) ? 600 : 400 }}>
+                  <button key={doc} type="button" aria-pressed={visitForm.documents_collected.includes(doc)} onClick={() => toggleDoc(doc)} style={{ padding: '5px 10px', fontSize: 'var(--fs-11)', borderRadius: 'var(--radius)', border: `1px solid ${visitForm.documents_collected.includes(doc) ? '#059669' : 'var(--c-border)'}`, background: visitForm.documents_collected.includes(doc) ? '#ecfdf5' : '#fff', color: visitForm.documents_collected.includes(doc) ? '#065f46' : 'var(--c-text)', cursor: 'pointer', fontWeight: visitForm.documents_collected.includes(doc) ? 600 : 400 }}>
                     {visitForm.documents_collected.includes(doc) && <span style={{ marginRight: 4 }}>✓</span>}{doc}
                   </button>
                 ))}
               </div>
               <div className="field-hint" style={{ marginTop: 6 }}>Cochez les documents collectés. Les fichiers (photos, PDF) seront ajoutés via l'onglet Preuves.</div>
-            </div>
+            </fieldset>
             <div className="flex gap-2">
               <button className="btn btn-primary btn-sm" onClick={saveVisit}>Enregistrer la visite</button>
               <button className="btn btn-secondary btn-sm" onClick={() => setAddingVisit(false)}>Annuler</button>
@@ -1336,8 +1339,8 @@ function ControlsTab({ dossierId, dossier }) {
           <div style={{ marginBottom: 12, padding: 12, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>
             <div className="grid-2">
               <div className="field">
-                <label className="field-label">Type de consentement</label>
-                <select className="input" value={consentForm.consent_type} onChange={e => setConsentForm(f => ({ ...f, consent_type: e.target.value }))}>
+                <label className="field-label" htmlFor="consent-type">Type de consentement</label>
+                <select id="consent-type" className="input" value={consentForm.consent_type} onChange={e => setConsentForm(f => ({ ...f, consent_type: e.target.value }))}>
                   <option value="data_collection">Collecte de données</option>
                   <option value="bic_check">Consultation BIC</option>
                   <option value="credit_check">Analyse de crédit</option>
@@ -1345,8 +1348,8 @@ function ControlsTab({ dossierId, dossier }) {
                 </select>
               </div>
               <div className="field">
-                <label className="field-label">Méthode</label>
-                <select className="input" value={consentForm.consent_method} onChange={e => setConsentForm(f => ({ ...f, consent_method: e.target.value }))}>
+                <label className="field-label" htmlFor="consent-method">Méthode</label>
+                <select id="consent-method" className="input" value={consentForm.consent_method} onChange={e => setConsentForm(f => ({ ...f, consent_method: e.target.value }))}>
                   <option value="verbal">Verbal</option>
                   <option value="written">Écrit</option>
                   <option value="sms">SMS</option>
@@ -1384,10 +1387,21 @@ function DecisionTab({ dossier, onReload }) {
   const [form, setForm] = useState({ decision: 'approved', amount: dossier.amount_requested || '', duration: dossier.duration_months || '', schedule: dossier.desired_schedule || '', motif: '' });
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   async function handleDecide() {
+    if (submitting) return;
+    setSubmitting(true);
     setError('');
-    try { await api.decideDossier(dossier.id, form); setConfirming(false); onReload(); } catch (err) { setError(err.message); }
+    try {
+      await api.decideDossier(dossier.id, form);
+      setConfirming(false);
+      await onReload();
+    } catch (err) {
+      setError(err.message || 'Impossible d’enregistrer la décision.');
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   if (dossier.decision) {
@@ -1448,8 +1462,8 @@ function DecisionTab({ dossier, onReload }) {
 
         {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '8px 12px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
 
-        <div className="field" style={{ marginBottom: 16 }}>
-          <label className="field-label">Décision</label>
+        <fieldset className="field" style={{ marginBottom: 16, border: 0, padding: 0 }}>
+          <legend className="field-label">Décision</legend>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
             {[
               { v: 'approved', l: 'Approuver', c: '#059669', bg: '#ecfdf5' },
@@ -1462,23 +1476,23 @@ function DecisionTab({ dossier, onReload }) {
               </button>
             ))}
           </div>
-        </div>
+        </fieldset>
 
         <div className="grid-2">
           <div className="field">
-            <label className="field-label">Montant accordé (FCFA)</label>
-            <input className="input" type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: Number(e.target.value) }))} />
+            <label className="field-label" htmlFor="decision-amount">Montant accordé (FCFA)</label>
+            <input id="decision-amount" className="input" type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: Number(e.target.value) }))} />
             {form.amount != dossier.amount_requested && <div className="field-hint" style={{ color: '#d97706' }}>Différent du montant demandé ({formatCFA(dossier.amount_requested)})</div>}
           </div>
           <div className="field">
-            <label className="field-label">Durée (mois)</label>
-            <input className="input" type="number" value={form.duration} onChange={e => setForm(f => ({ ...f, duration: Number(e.target.value) }))} />
+            <label className="field-label" htmlFor="decision-duration">Durée (mois)</label>
+            <input id="decision-duration" className="input" type="number" value={form.duration} onChange={e => setForm(f => ({ ...f, duration: Number(e.target.value) }))} />
           </div>
         </div>
 
         <div className="field">
-          <label className="field-label">Calendrier de remboursement</label>
-          <select className="input" value={form.schedule} onChange={e => setForm(f => ({ ...f, schedule: e.target.value }))}>
+          <label className="field-label" htmlFor="decision-schedule">Calendrier de remboursement</label>
+          <select id="decision-schedule" className="input" value={form.schedule} onChange={e => setForm(f => ({ ...f, schedule: e.target.value }))}>
             <option value="">Sélectionner</option>
             <option value="Hebdomadaire">Hebdomadaire</option>
             <option value="Mensuel classique">Mensuel classique</option>
@@ -1492,29 +1506,45 @@ function DecisionTab({ dossier, onReload }) {
         </div>
 
         <div className="field">
-          <label className="field-label">Motif de la décision *</label>
-          <textarea className="input" rows={4} value={form.motif} onChange={e => setForm(f => ({ ...f, motif: e.target.value }))} placeholder="Justification de la décision (obligatoire pour la traçabilité)" />
+          <label className="field-label" htmlFor="decision-motif">Motif de la décision *</label>
+          <textarea id="decision-motif" className="input" rows={4} value={form.motif} onChange={e => setForm(f => ({ ...f, motif: e.target.value }))} placeholder="Justification de la décision (obligatoire pour la traçabilité)" />
         </div>
 
-        {!confirming ? (
-          <button className="btn btn-primary" style={{ width: '100%', marginTop: 12 }} onClick={() => { if (!form.motif) { setError('Le motif est obligatoire'); return; } setConfirming(true); }}>
-            Valider la décision
-          </button>
-        ) : (
-          <div style={{ marginTop: 16, padding: 16, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-md)' }}>
-            <p style={{ fontSize: 'var(--fs-12)', fontWeight: 600, marginBottom: 8 }}>Confirmer cette décision ?</p>
-            {form.amount != dossier.amount_requested && (
-              <p style={{ fontSize: 'var(--fs-12)', color: '#92400e', marginBottom: 8 }}>
-                Montant modifié : {formatCFA(form.amount)} au lieu de {formatCFA(dossier.amount_requested)} (sera enregistré comme override).
-              </p>
-            )}
-            <p style={{ fontSize: 'var(--fs-11)', color: '#6b7280', marginBottom: 12 }}>Cette action est définitive et sera enregistrée dans le journal d'audit.</p>
-            <div className="flex gap-2">
-              <button className="btn btn-primary btn-sm" onClick={handleDecide}>Confirmer définitivement</button>
-              <button className="btn btn-secondary btn-sm" onClick={() => setConfirming(false)}>Annuler</button>
-            </div>
-          </div>
-        )}
+        <Button
+          className="decision-submit"
+          onClick={() => {
+            if (!form.motif.trim()) {
+              setError('Le motif est obligatoire');
+              return;
+            }
+            setConfirming(true);
+          }}
+          disabled={submitting}
+        >
+          Valider la décision
+        </Button>
+
+        <Dialog
+          open={confirming}
+          title="Confirmer la décision"
+          description="Cette action est définitive et sera inscrite au journal d’audit."
+          onClose={() => { if (!submitting) setConfirming(false); }}
+          actions={(
+            <>
+              <Button variant="secondary" onClick={() => setConfirming(false)} disabled={submitting}>Annuler</Button>
+              <Button onClick={handleDecide} loading={submitting}>Confirmer définitivement</Button>
+            </>
+          )}
+        >
+          <p><strong>Décision :</strong> {form.decision === 'approved' ? 'Approuver' : form.decision === 'modified' ? 'Approuver avec modification' : form.decision === 'complement' ? 'Demander un complément' : 'Refuser'}</p>
+          <p><strong>Montant :</strong> {formatCFA(form.amount)}</p>
+          {form.amount != dossier.amount_requested && (
+            <Alert variant="warning" title="Montant modifié">
+              {formatCFA(form.amount)} au lieu de {formatCFA(dossier.amount_requested)} ; cet écart sera enregistré comme override humain.
+            </Alert>
+          )}
+          <p><strong>Motif :</strong> {form.motif}</p>
+        </Dialog>
       </div>
     </div>
   );
