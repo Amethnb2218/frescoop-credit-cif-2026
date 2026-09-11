@@ -1,6 +1,6 @@
 const DB_NAME = 'frescoop_offline';
-const DB_VERSION = 2;
-const STORES = ['dossiers', 'evidence', 'cashflow', 'agricultural_project', 'debts', 'attachments', 'sync_queue'];
+const DB_VERSION = 3;
+const STORES = ['dossiers', 'evidence', 'cashflow', 'agricultural_project', 'debts', 'attachments', 'sync_queue', 'dossier_drafts'];
 
 let db = null;
 
@@ -49,6 +49,33 @@ export async function getDossierOffline(id) {
   return new Promise((resolve, reject) => {
     const req = store.get(id);
     req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function saveDossierDraft(draft) {
+  const store = await getStore('dossier_drafts', 'readwrite');
+  return new Promise((resolve, reject) => {
+    const req = store.put({ ...draft, updated_at: new Date().toISOString() });
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function getDossierDraft(id) {
+  const store = await getStore('dossier_drafts');
+  return new Promise((resolve, reject) => {
+    const req = store.get(id);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function deleteDossierDraft(id) {
+  const store = await getStore('dossier_drafts', 'readwrite');
+  return new Promise((resolve, reject) => {
+    const req = store.delete(id);
+    req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
 }

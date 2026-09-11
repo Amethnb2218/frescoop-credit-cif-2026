@@ -170,6 +170,65 @@ export function buildEvaluationContext(dossier, cashflow = [], evidence = [], bi
   };
 }
 
+export function listMissingPrequalificationData(
+  dossier,
+  context,
+  agriculturalProject = null,
+  agriculturalInputs = [],
+) {
+  const missing = [];
+  const add = (code, field, label) => missing.push({ code, field, label });
+
+  if (!dossier.applicant_name) {
+    add('APPLICANT_NAME_REQUIRED', 'applicant_name', 'Nom du demandeur');
+  }
+  if (!dossier.applicant_id_number) {
+    add('APPLICANT_ID_REQUIRED', 'applicant_id_number', 'Numéro d’identité');
+  }
+  if (dossier.sector !== 'Agriculture') {
+    add('AGRICULTURE_SECTOR_REQUIRED', 'sector', 'Secteur Agriculture');
+  }
+  if (!dossier.activity_type) {
+    add('ACTIVITY_TYPE_REQUIRED', 'activity_type', 'Type d’activité');
+  }
+  if (context.amountRequested <= 0) {
+    add('POSITIVE_AMOUNT_REQUIRED', 'amount_requested', 'Montant demandé positif');
+  }
+  if (context.durationMonths <= 0) {
+    add('POSITIVE_DURATION_REQUIRED', 'duration_months', 'Durée du crédit positive');
+  }
+  if (!context.hasCashflow) {
+    add('CASHFLOW_REQUIRED', 'cashflow_entries', 'Flux de trésorerie');
+  } else if (context.monthsWithRevenue <= 0) {
+    add('POSITIVE_REVENUE_MONTH_REQUIRED', 'cashflow_entries.revenue', 'Au moins un mois avec un revenu positif');
+  }
+
+  if (!agriculturalProject) {
+    add('AGRICULTURAL_PROJECT_REQUIRED', 'agricultural_project', 'Évaluation du projet agricole');
+  } else {
+    if (!agriculturalProject.crop_code && !agriculturalProject.crop_label) {
+      add('CROP_REQUIRED', 'agricultural_project.crop', 'Culture');
+    }
+    if (Number(agriculturalProject.project_surface_ha || 0) <= 0) {
+      add('POSITIVE_PROJECT_SURFACE_REQUIRED', 'agricultural_project.project_surface_ha', 'Surface agricole positive');
+    }
+    if (Number(agriculturalProject.expected_yield || 0) <= 0) {
+      add('POSITIVE_EXPECTED_YIELD_REQUIRED', 'agricultural_project.expected_yield', 'Rendement attendu positif');
+    }
+    if (Number(agriculturalProject.expected_price || 0) <= 0) {
+      add('POSITIVE_EXPECTED_PRICE_REQUIRED', 'agricultural_project.expected_price', 'Prix de vente attendu positif');
+    }
+  }
+
+  if (agriculturalInputs.length === 0) {
+    add('AGRICULTURAL_INPUT_REQUIRED', 'agricultural_input_items', 'Au moins un intrant agricole');
+  } else if (!agriculturalInputs.some(item => Number(item.total_cost || 0) > 0)) {
+    add('POSITIVE_INPUT_COST_REQUIRED', 'agricultural_input_items.total_cost', 'Au moins un intrant à coût positif');
+  }
+
+  return missing;
+}
+
 export function buildRepaymentSchedule(scheduleType, amountRequested, durationMonths, cashflow = []) {
   if (amountRequested <= 0 || durationMonths <= 0) return [];
   const months = Math.min(durationMonths, Math.max(cashflow.length, durationMonths));
@@ -446,26 +505,13 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
       };
     });
   const decision = determinePrequalification(evaluations, evidenceConfidence, repaymentCapacity);
-  const hasAgriculturalProject = Boolean(
-    agriculturalProject
-    && (agriculturalProject.crop_code || agriculturalProject.crop_label)
-    && Number(agriculturalProject.project_surface_ha || 0) > 0
-    && Number(agriculturalProject.expected_yield || 0) > 0
-    && Number(agriculturalProject.expected_price || 0) > 0
-    && agriculturalInputs.length > 0
-    && agriculturalInputs.some(item => Number(item.total_cost || 0) > 0),
+  const missingData = listMissingPrequalificationData(
+    dossier,
+    context,
+    agriculturalProject,
+    agriculturalInputs,
   );
-  const isComplete = Boolean(
-    dossier.applicant_name
-    && dossier.applicant_id_number
-    && dossier.sector === 'Agriculture'
-    && dossier.activity_type
-    && context.amountRequested > 0
-    && context.durationMonths > 0
-    && context.hasCashflow
-    && context.monthsWithRevenue > 0
-    && hasAgriculturalProject,
-  );
+  const isComplete = missingData.length === 0;
   const scoring = isComplete
     ? computePrequalificationScore(context, evaluations, decision.prequalification, capacityRatio)
     : {
@@ -476,6 +522,7 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
           raw_score: null,
           capacity_ratio: null,
           stressed_capacity_ratio: null,
+          missing_data: missingData,
           message: 'Non calculé — données insuffisantes',
         },
       };
@@ -495,14 +542,18 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
     declared_revenue: context.agronomic.declaredRevenue,
     retained_revenue: context.agronomic.retainedRevenue,
     revenue_adjustment: context.agronomic.revenueDelta,
-    declared_capacity_ratio: declaredCapacityRatio == null ? null : Number(declaredCapacityRatio.toFixed(4)),
-    retained_capacity_ratio: capacityRatio == null ? null : Number(capacityRatio.toFixed(4)),
-    declared_stressed_capacity_ratio: declaredStressedCapacityRatio == null
-      ? null
-      : Number(declaredStressedCapacityRatio.toFixed(4)),
-    retained_stressed_capacity_ratio: stressedCapacityRatio == null
-      ? null
-      : Number(stressedCapacityRatio.toFixed(4)),
+    declared_capacity_ratio: isComplete && declaredCapacityRatio != null
+      ? Number(declaredCapacityRatio.toFixed(4))
+      : null,
+    retained_capacity_ratio: isComplete && capacityRatio != null
+      ? Number(capacityRatio.toFixed(4))
+      : null,
+    declared_stressed_capacity_ratio: isComplete && declaredStressedCapacityRatio != null
+      ? Number(declaredStressedCapacityRatio.toFixed(4))
+      : null,
+    retained_stressed_capacity_ratio: isComplete && stressedCapacityRatio != null
+      ? Number(stressedCapacityRatio.toFixed(4))
+      : null,
     teranga_adjusted: context.agronomic.terangaAdjusted,
     capacity_rule_neutralized: Boolean(capacityRule?.neutralized),
     review_rules: agronomicRuleCodes,
@@ -516,15 +567,19 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
   };
   const details = {
     ...scoring.details,
-    declared_capacity_ratio: declaredCapacityRatio == null ? null : Number(declaredCapacityRatio.toFixed(4)),
-    retained_capacity_ratio: capacityRatio == null ? null : Number(capacityRatio.toFixed(4)),
-    stressed_capacity_ratio: stressedCapacityRatio == null ? null : Number(stressedCapacityRatio.toFixed(4)),
-    declared_stressed_capacity_ratio: declaredStressedCapacityRatio == null
-      ? null
-      : Number(declaredStressedCapacityRatio.toFixed(4)),
-    retained_stressed_capacity_ratio: stressedCapacityRatio == null
-      ? null
-      : Number(stressedCapacityRatio.toFixed(4)),
+    declared_capacity_ratio: isComplete && declaredCapacityRatio != null
+      ? Number(declaredCapacityRatio.toFixed(4))
+      : null,
+    retained_capacity_ratio: isComplete && capacityRatio != null ? Number(capacityRatio.toFixed(4)) : null,
+    stressed_capacity_ratio: isComplete && stressedCapacityRatio != null
+      ? Number(stressedCapacityRatio.toFixed(4))
+      : null,
+    declared_stressed_capacity_ratio: isComplete && declaredStressedCapacityRatio != null
+      ? Number(declaredStressedCapacityRatio.toFixed(4))
+      : null,
+    retained_stressed_capacity_ratio: isComplete && stressedCapacityRatio != null
+      ? Number(stressedCapacityRatio.toFixed(4))
+      : null,
     agronomic_impact: agronomicImpact,
     average_monthly_net: context.hasCashflow ? Math.round(context.averageMonthlyNet) : null,
     stressed_average_monthly_net: context.hasCashflow ? Math.round(context.stressedAverageMonthlyNet) : null,

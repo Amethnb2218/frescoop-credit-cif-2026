@@ -2,30 +2,26 @@ import {
   assessAgriculturalProject,
   AGRICULTURAL_RULES_VERSION,
 } from '../shared/agriculturalAssessment.js';
+import {
+  buildFeasibilityMetrics,
+  buildFeasibilityReport,
+  feasibilityReasonMessage,
+} from '../shared/agriculturalFeasibilityContract.js';
 
 export function buildLocalFeasibility(project = {}, inputItems = [], evidence = [], reason = 'offline') {
   const local = assessAgriculturalProject(project, inputItems, evidence);
-  const surface = Math.max(0, Number(project.project_surface_ha || 0));
-  const declaredYield = Math.max(0, Number(project.expected_yield || 0));
-  const price = Math.max(0, Number(project.expected_price || 0));
-  const lossPercent = Math.min(100, Math.max(0, Number(project.loss_percent || 0)));
-  const declaredRevenue = Math.round(surface * declaredYield * (1 - lossPercent / 100) * price);
-  const hybridMetrics = {
-    ...local.metrics,
-    project_surface_ha: surface,
-    surface_ha: surface,
-    expected_price: price,
-    price,
-    loss_percent: lossPercent,
-    declared_yield: declaredYield,
-    teranga_yield: null,
-    predicted_yield_kg_ha: null,
-    retained_yield: declaredYield,
-    declared_revenue: declaredRevenue,
-    retained_revenue: declaredRevenue,
-    revenue_adjustment: 0,
-    external_adjustment_applied: false,
+  const attempted = ['timeout', 'invalid_response', 'unavailable', 'partial_response'].includes(reason);
+  const source = {
+    mode: attempted ? 'local_fallback' : 'local',
+    contract_version: 3,
+    engine: 'frescoop-agronomic-feasibility',
+    engine_version: 3,
+    local_rules_version: AGRICULTURAL_RULES_VERSION,
+    teranga: { attempted, available: false },
+    fallback_used: attempted,
+    fallback_reason: reason,
   };
+  const metrics = buildFeasibilityMetrics(local.metrics, project, [], source);
   let status = 'FEASIBLE';
   if (local.adequacy_status === 'INCOMPATIBLE' || local.viability_status === 'NON_VIABLE') status = 'HUMAN_REVIEW';
   else if (local.adequacy_status !== 'ADEQUATE' || local.viability_status !== 'VIABLE' || local.findings.length > 0) status = 'ADJUST';
@@ -38,28 +34,18 @@ export function buildLocalFeasibility(project = {}, inputItems = [], evidence = 
     status,
     label: labels[status][0],
     summary: labels[status][1],
+    report: buildFeasibilityReport({ status, project, local, metrics, source }),
     details: {
       missing_data: local.missing_data,
       findings: local.findings,
       recommendations: local.findings.map(item => item.action).filter(Boolean),
       external_signals: [],
-      metrics: hybridMetrics,
-      risk: {
-        safety_score: null,
-        level: null,
-        recommendation: null,
-      },
-      caveats: ['Analyse locale uniquement — Teranga AI sera consulté au retour du réseau.'],
+      metrics,
+      risk: { safety_score: null, level: null, recommendation: null },
+      caveats: [feasibilityReasonMessage(reason)],
     },
-    source: {
-      mode: 'local_offline',
-      engine: 'frescoop-agronomic-feasibility',
-      engine_version: 1,
-      local_rules_version: AGRICULTURAL_RULES_VERSION,
-      teranga: { attempted: false, available: false },
-      fallback_used: true,
-      fallback_reason: reason,
-    },
+    calculated_metrics: metrics,
+    source,
     evaluated_at: new Date().toISOString(),
   };
 }

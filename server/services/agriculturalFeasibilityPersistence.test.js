@@ -16,7 +16,10 @@ const analysis = {
       declared_revenue: 1900000,
       retained_revenue: 1520000,
     },
-    external_signals: [{ type: 'risk', level: 'moderate', safety_score: 64 }],
+    external_signals: [
+      { type: 'yield', predicted_yield_kg_ha: 3200, level: 'coherent' },
+      { type: 'risk', level: 'moderate', safety_score: 64 },
+    ],
   },
 };
 
@@ -37,6 +40,37 @@ test('sérialise les champs hybrides auditables', () => {
     safety_score: 64, risk_level: 'moderate', fallback_reason: null,
     feasibility_version: 2, feasibility_analysis: JSON.stringify(analysis),
   });
+});
+
+test('refuse une valeur Teranga sans signal externe de rendement', () => {
+  const genericMetricOnly = {
+    ...analysis,
+    details: {
+      ...analysis.details,
+      external_signals: analysis.details.external_signals.filter(signal => signal.type !== 'yield'),
+    },
+  };
+  assert.equal(agriculturalFeasibilityRecord(genericMetricOnly).teranga_yield, null);
+  assert.equal(agriculturalFeasibilityRecord({
+    ...analysis,
+    details: {
+      ...analysis.details,
+      external_signals: [{ type: 'yield', predicted_yield_kg_ha: '3200' }],
+    },
+  }).teranga_yield, null);
+});
+
+test('conserve les champs agricoles absents à null dans la requête', () => {
+  const statement = agriculturalAssessmentStatement({
+    dossierId: 'd2', tenantId: 't1', project: {}, local: {}, analysis: {}, id: 'a2',
+  });
+  assert.equal(statement.args[7], null);
+  assert.equal(statement.args[9], null);
+  assert.equal(statement.args[20], null);
+  assert.equal(statement.args[21], null);
+  assert.equal(statement.args[22], null);
+  assert.equal(statement.args[23], null);
+  assert.equal(statement.args[24], null);
 });
 
 test('construit une instruction unique pour la persistance du projet', () => {

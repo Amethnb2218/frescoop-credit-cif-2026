@@ -2,22 +2,28 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
 import { buildLocalFeasibility } from '../agriculturalFeasibilityLocal';
-import { isOnline, saveDossierOffline, addToSyncQueue } from '../lib/offline';
+import {
+  addToSyncQueue,
+  deleteDossierDraft,
+  getDossierDraft,
+  isOnline,
+  saveDossierDraft,
+  saveDossierOffline,
+} from '../lib/offline';
+import { CROP_OPTIONS, OTHER_CROP_VALUE, resolveCrop } from '../lib/agriculturalProject';
+import { dossierDraftKey, restoreDraftEvidence, serializeDraftEvidence } from '../lib/dossierDraft';
 import { formatCFA } from '../lib/format';
+import { feasibilityReasonMessage } from '../../shared/agriculturalFeasibilityContract.js';
 import { Save, WifiOff, ArrowLeft, ArrowRight, MapPin, Plus, Trash2, Pencil } from 'lucide-react';
 
 const STEPS = [
-  { key: 'demande-identite', label: 'Demande & identité' },
-  { key: 'activite', label: 'Activité' },
+  { key: 'identification', label: 'Identification et demande de crédit' },
   { key: 'projet', label: 'Projet agricole' },
   { key: 'faisabilite', label: 'Faisabilité agronomique' },
-  { key: 'revenus', label: 'Revenus' },
-  { key: 'charges', label: 'Charges' },
+  { key: 'budget', label: 'Budget et revenus' },
+  { key: 'preuves-garanties', label: 'Preuves et garanties' },
   { key: 'dettes', label: 'Dettes / BIC' },
-  { key: 'garanties', label: 'Garanties' },
-  { key: 'preuves', label: 'Preuves' },
-  { key: 'analyse', label: 'Analyse' },
-  { key: 'soumission', label: 'Soumission' },
+  { key: 'resume', label: 'Résumé avant validation' },
 ];
 
 const LOCATIONS = [
@@ -40,8 +46,9 @@ const MONTHS = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet'
 function num(v) { return v === '' || v == null ? null : Number(v); }
 
 function buildProjectAssessment(form) {
+  const crop = resolveCrop(form.crop_selection, form.crop_other_label);
   return {
-    crop_label: form.crop_name, variety: form.crop_variety,
+    ...crop, variety: form.crop_variety,
     crop_experience_years: num(form.crop_experience_years), project_surface_ha: num(form.project_surface_ha),
     land_access: form.land_access, agro_zone: form.agro_zone, soil_type: form.soil_type,
     soil_source: form.soil_source, season: form.season, cultivation_mode: form.irrigation_mode,
@@ -77,7 +84,7 @@ export default function DossierNew() {
     amount_requested: '', credit_purpose: '', duration_months: '', desired_schedule: '',
     applicant_name: '', applicant_phone: '', applicant_id_number: '', applicant_location: '', applicant_activity: 'Agriculteur',
     sector: 'Agriculture', activity_type: '', years_experience: '', surface_ha: '', production_cycle_start: '', production_cycle_end: '', production_cycle: '',
-    crop_name: '', crop_variety: '', crop_experience_years: '', project_surface_ha: '', land_access: '', agro_zone: '', soil_type: '', soil_source: '', season: '', irrigation_mode: '', water_source: '', water_reliability: '', expected_yield: '', expected_price: '', loss_percent: '', own_contribution: '', other_funding: '', climate_risks: '', mitigations: '',
+    crop_selection: '', crop_other_label: '', crop_name: '', crop_variety: '', crop_experience_years: '', project_surface_ha: '', land_access: '', agro_zone: '', soil_type: '', soil_source: '', season: '', irrigation_mode: '', water_source: '', water_reliability: '', expected_yield: '', expected_price: '', loss_percent: '', own_contribution: '', other_funding: '', climate_risks: '', mitigations: '',
     revenue_commerce: '', commerce_revenue_frequency: 'mensuel', revenue_other: '', other_revenue_frequency: 'mensuel', main_buyer: '',
     expenses_agriculture: '', expenses_household: '',
     savings_amount: '', guarantee_type: '', group_guarantee: '', other_guarantees: '', third_party_commitment: false,
@@ -88,12 +95,64 @@ export default function DossierNew() {
   const [declaredDebts, setDeclaredDebts] = useState([]);
   const [initialEvidence, setInitialEvidence] = useState([]);
   const [feasibilityAnalysis, setFeasibilityAnalysis] = useState(null);
+  const [draftReady, setDraftReady] = useState(false);
   const dossierIdRef = useRef(crypto.randomUUID());
+  const draftSaveTimerRef = useRef(null);
+  const draftWriteRef = useRef(Promise.resolve());
+  const draftDeletedRef = useRef(false);
+  const draftKey = dossierDraftKey(user?.id);
   const feasibilityFingerprint = JSON.stringify({
     project: buildProjectAssessment(form),
     items: inputItems,
     city: form.applicant_location,
   });
+
+  useEffect(() => {
+    let active = true;
+    async function restoreDraft() {
+      try {
+        const draft = await getDossierDraft(draftKey);
+        if (!active || !draft) return;
+        if (draft.form) setForm(current => ({ ...current, ...draft.form }));
+        if (Array.isArray(draft.inputItems)) setInputItems(draft.inputItems);
+        if (Array.isArray(draft.declaredDebts)) setDeclaredDebts(draft.declaredDebts);
+        if (Array.isArray(draft.initialEvidence)) setInitialEvidence(restoreDraftEvidence(draft.initialEvidence));
+        if (Number.isInteger(draft.step)) setStep(Math.max(0, Math.min(draft.step, STEPS.length - 1)));
+        if (draft.dossierId) dossierIdRef.current = draft.dossierId;
+      } catch (draftError) {
+        console.error('Restauration du brouillon impossible', draftError);
+      } finally {
+        if (active) setDraftReady(true);
+      }
+    }
+    restoreDraft();
+    return () => { active = false; };
+  }, [draftKey]);
+
+  useEffect(() => {
+    if (!draftReady) return undefined;
+    const timer = setTimeout(() => {
+      if (draftDeletedRef.current) return;
+      const draft = {
+        id: draftKey,
+        form,
+        inputItems,
+        declaredDebts,
+        initialEvidence: serializeDraftEvidence(initialEvidence),
+        step,
+        dossierId: dossierIdRef.current,
+      };
+      draftWriteRef.current = draftWriteRef.current
+        .catch(() => undefined)
+        .then(() => draftDeletedRef.current ? undefined : saveDossierDraft(draft))
+        .catch(draftError => console.error('Autosauvegarde du brouillon impossible', draftError));
+    }, 400);
+    draftSaveTimerRef.current = timer;
+    return () => {
+      clearTimeout(timer);
+      if (draftSaveTimerRef.current === timer) draftSaveTimerRef.current = null;
+    };
+  }, [draftReady, draftKey, form, inputItems, declaredDebts, initialEvidence, step]);
 
   useEffect(() => {
     setFeasibilityAnalysis(current => (
@@ -114,8 +173,9 @@ export default function DossierNew() {
   function validateStep(index) {
     if (index === 0 && (!form.applicant_name.trim() || !form.applicant_id_number.trim())) return 'Le nom complet et le numéro de CNI sont obligatoires.';
     if (index === 0 && (!num(form.amount_requested) || !num(form.duration_months) || !form.credit_purpose.trim())) return 'Renseignez le montant, la durée et l’objet du crédit.';
-    if (index === 2 && (!form.crop_name || !num(form.project_surface_ha))) return 'Renseignez au minimum la culture et la surface du projet.';
-    if (index === 7 && form.third_party_commitment && (!form.guarantor_name.trim() || !form.guarantor_id_number.trim() || !form.guarantor_phone.trim() || !form.guarantor_consent)) return 'Renseignez le nom, la CNI, le téléphone et le consentement du garant tiers.';
+    if (index === 1 && (!form.crop_selection || !num(form.project_surface_ha))) return 'Renseignez au minimum la culture et la surface du projet.';
+    if (index === 1 && form.crop_selection === OTHER_CROP_VALUE && !form.crop_other_label.trim()) return 'Précisez la culture sélectionnée dans « Autre ».';
+    if (index === 4 && form.third_party_commitment && (!form.guarantor_name.trim() || !form.guarantor_id_number.trim() || !form.guarantor_phone.trim() || !form.guarantor_consent)) return 'Renseignez le nom, la CNI, le téléphone et le consentement du garant tiers.';
     return '';
   }
 
@@ -126,7 +186,19 @@ export default function DossierNew() {
     setStep(s => s + 1);
   }
 
+  async function deleteSavedDraft() {
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    draftDeletedRef.current = true;
+    await draftWriteRef.current.catch(() => undefined);
+    await deleteDossierDraft(draftKey);
+  }
+
   async function handleSave() {
+    const evidenceToReselect = initialEvidence.find(item => item.file_reselection_required && !item.file);
+    if (evidenceToReselect) {
+      setError(`Resélectionnez le fichier « ${evidenceToReselect.metadata?.file_name || evidenceToReselect.label} » avant de créer le dossier.`);
+      return;
+    }
     setSaving(true); setError('');
     try {
       const cycle = form.production_cycle_start !== '' && form.production_cycle_end !== ''
@@ -187,7 +259,7 @@ export default function DossierNew() {
         project_assessment: projectAssessment,
         input_items: inputItems,
         declared_debts: declaredDebts,
-        initial_evidence: initialEvidence.map(({ file, ...item }) => item),
+        initial_evidence: initialEvidence.map(({ file, file_reselection_required, ...item }) => item),
         financial_summary: financialSummary,
       };
       if (isOnline()) {
@@ -200,10 +272,11 @@ export default function DossierNew() {
             content_base64: await fileToBase64(item.file),
           });
         }
+        await deleteSavedDraft();
         navigate(`/dossiers/${res.id}`);
       } else {
         const id = data.id;
-        await saveDossierOffline({ id, ...data, initial_evidence: initialEvidence, status: 'draft', agent_id: user.id, created_offline: true });
+        await saveDossierOffline({ id, ...data, initial_evidence: initialEvidence.map(({ file_reselection_required, ...item }) => item), status: 'draft', agent_id: user.id, created_offline: true });
         await addToSyncQueue({ operation: 'create', entity_type: 'dossier', entity_id: id, payload: data });
         for (const item of initialEvidence) {
           if (!item.file) continue;
@@ -213,10 +286,19 @@ export default function DossierNew() {
               content_base64: await fileToBase64(item.file) },
           });
         }
+        await deleteSavedDraft();
         navigate('/dossiers');
       }
     } catch (err) { setError(err.message); }
     finally { setSaving(false); }
+  }
+
+  if (!draftReady) {
+    return (
+      <div className="surface" style={{ padding: 20 }}>
+        Restauration du brouillon en cours…
+      </div>
+    );
   }
 
   return (
@@ -244,10 +326,13 @@ export default function DossierNew() {
       {error && <div style={{ background: '#fef2f2', color: '#dc2626', padding: '10px 14px', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 'var(--fs-12)', border: '1px solid #fca5a5' }}>{error}</div>}
 
       <div className="surface">
-        {step === 0 && <StepDemandeIdentite form={form} update={update} />}
-        {step === 1 && <StepActivite form={form} update={update} />}
-        {step === 2 && <StepProjetAgricole form={form} update={update} items={inputItems} setItems={setInputItems} />}
-        {step === 3 && (
+        {step === 0 && <>
+          <StepDemandeIdentite form={form} update={update} />
+          <SectionDivider />
+          <StepActivite form={form} update={update} />
+        </>}
+        {step === 1 && <StepProjetAgricole form={form} update={update} />}
+        {step === 2 && (
           <StepFaisabiliteAgronomique
             form={form}
             items={inputItems}
@@ -255,13 +340,24 @@ export default function DossierNew() {
             setAnalysis={setFeasibilityAnalysis}
           />
         )}
-        {step === 4 && <StepRevenus form={form} update={update} />}
-        {step === 5 && <StepCharges form={form} update={update} />}
-        {step === 6 && <StepDettes debts={declaredDebts} setDebts={setDeclaredDebts} />}
-        {step === 7 && <StepGaranties form={form} update={update} />}
-        {step === 8 && <StepPreuves evidence={initialEvidence} setEvidence={setInitialEvidence} />}
-        {step === 9 && <StepAnalyse form={form} items={inputItems} debts={declaredDebts} />}
-        {step === 10 && <StepSoumission form={form} update={update} saving={saving} onSave={handleSave} setStep={setStep} items={inputItems} debts={declaredDebts} evidence={initialEvidence} />}
+        {step === 3 && <>
+          <StepBudgetIntrants form={form} items={inputItems} setItems={setInputItems} />
+          <SectionDivider />
+          <StepRevenus form={form} update={update} />
+          <SectionDivider />
+          <StepCharges form={form} update={update} />
+        </>}
+        {step === 4 && <>
+          <StepGaranties form={form} update={update} />
+          <SectionDivider />
+          <StepPreuves evidence={initialEvidence} setEvidence={setInitialEvidence} />
+        </>}
+        {step === 5 && <StepDettes debts={declaredDebts} setDebts={setDeclaredDebts} />}
+        {step === 6 && <>
+          <StepAnalyse form={form} items={inputItems} debts={declaredDebts} />
+          <SectionDivider />
+          <StepSoumission form={form} update={update} saving={saving} onSave={handleSave} setStep={setStep} />
+        </>}
 
         {step < STEPS.length - 1 && (
           <div className="flex justify-between items-center" style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--c-border)' }}>
@@ -272,6 +368,10 @@ export default function DossierNew() {
       </div>
     </div>
   );
+}
+
+function SectionDivider() {
+  return <div style={{ borderTop: '1px solid var(--c-border)', margin: '24px 0' }} />;
 }
 
 function AutocompleteInput({ value, onChange, suggestions, placeholder, hint }) {
@@ -475,21 +575,35 @@ function StepActivite({ form, update }) {
   );
 }
 
-function StepProjetAgricole({ form, update, items, setItems }) {
-  const [draft, setDraft] = useState({ category: 'Semences', label: '', quantity: '', unit: '', unit_cost: '', supplier: '' });
-  const budget = items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_cost || 0), 0);
-  const revenue = Number(form.project_surface_ha || 0) * Number(form.expected_yield || 0) * (1 - Number(form.loss_percent || 0) / 100) * Number(form.expected_price || 0);
-  function addItem() {
-    if (!Number(draft.quantity) || !Number(draft.unit_cost)) return;
-    setItems(list => [...list, { ...draft, label: draft.category, id: crypto.randomUUID() }]);
-    setDraft({ category: 'Semences', label: '', quantity: '', unit: '', unit_cost: '', supplier: '' });
-  }
+function StepProjetAgricole({ form, update }) {
+  const crop = resolveCrop(form.crop_selection, form.crop_other_label);
   return (
     <div>
-      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Projet agricole et besoin réel</h2>
-      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Décrivez la faisabilité technique, le budget et les estimations du projet.</p>
+      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Projet agricole</h2>
+      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Décrivez la faisabilité technique et les estimations du projet.</p>
       <div className="grid-2">
-        <div className="field"><label className="field-label">Culture *</label><input className="input" value={form.crop_name} onChange={e => update('crop_name', e.target.value)} placeholder="Ex : maïs, arachide, tomate" /></div>
+        <div className="field">
+          <label className="field-label">Culture *</label>
+          <select className="input" value={form.crop_selection} onChange={e => {
+            const selection = e.target.value;
+            const resolved = resolveCrop(selection, form.crop_other_label);
+            update('crop_selection', selection);
+            update('crop_name', resolved.crop_label || '');
+          }}>
+            <option value="">Sélectionner une culture</option>
+            {CROP_OPTIONS.map(item => <option key={item.code} value={item.code}>{item.label}</option>)}
+            <option value={OTHER_CROP_VALUE}>Autre</option>
+          </select>
+        </div>
+        {form.crop_selection === OTHER_CROP_VALUE && (
+          <div className="field">
+            <label className="field-label">Précisez la culture *</label>
+            <input className="input" value={form.crop_other_label} onChange={e => {
+              update('crop_other_label', e.target.value);
+              update('crop_name', e.target.value);
+            }} placeholder="Ex : Bissap rouge" />
+          </div>
+        )}
         <div className="field"><label className="field-label">Variété</label><input className="input" value={form.crop_variety} onChange={e => update('crop_variety', e.target.value)} /></div>
         <div className="field"><label className="field-label">Expérience sur cette culture (années)</label><input className="input" type="number" min="0" value={form.crop_experience_years} onChange={e => update('crop_experience_years', e.target.value)} /></div>
         <div className="field"><label className="field-label">Surface du projet (ha) *</label><input className="input" type="number" min="0" step="0.1" value={form.project_surface_ha} onChange={e => update('project_surface_ha', e.target.value)} /></div>
@@ -502,6 +616,7 @@ function StepProjetAgricole({ form, update, items, setItems }) {
         <div className="field"><label className="field-label">Source d'eau</label><input className="input" value={form.water_source} onChange={e => update('water_source', e.target.value)} /></div>
         <div className="field"><label className="field-label">Fiabilité de l'eau</label><select className="input" value={form.water_reliability} onChange={e => update('water_reliability', e.target.value)}><option value="">Sélectionner</option><option value="sécurisée">Sécurisée</option><option value="partielle">Partielle</option><option value="incertaine">Incertaine</option></select></div>
       </div>
+      <h3 style={{ fontSize: 'var(--fs-14)', margin: '20px 0 10px' }}>Estimations du projet</h3>
       <div className="grid-2" style={{ marginTop: 16 }}>
         <div className="field"><label className="field-label">Rendement (kg/ha)</label><input className="input" type="number" min="0" value={form.expected_yield} onChange={e => update('expected_yield', e.target.value)} /></div>
         <div className="field"><label className="field-label">Prix (FCFA/kg)</label><input className="input" type="number" min="0" value={form.expected_price} onChange={e => update('expected_price', e.target.value)} /></div>
@@ -511,7 +626,39 @@ function StepProjetAgricole({ form, update, items, setItems }) {
         <div className="field"><label className="field-label">Risques principaux</label><input className="input" value={form.climate_risks} onChange={e => update('climate_risks', e.target.value)} placeholder="Sécheresse, ravageurs, prix…" /></div>
         <div className="field" style={{ gridColumn: '1 / -1' }}><label className="field-label">Mesures d'atténuation</label><textarea className="input" rows={2} value={form.mitigations} onChange={e => update('mitigations', e.target.value)} /></div>
       </div>
-      <h3 style={{ fontSize: 'var(--fs-14)', margin: '20px 0 10px' }}>Intrants et charges du projet</h3>
+      {crop.crop_label && (
+        <div className="field-hint" style={{ marginTop: 10 }}>
+          Culture enregistrée : {crop.crop_label} ({crop.crop_code})
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StepBudgetIntrants({ form, items, setItems }) {
+  const [draft, setDraft] = useState({ category: 'Semences', label: '', quantity: '', unit: '', unit_cost: '', supplier: '' });
+  const budget = items.length > 0
+    ? items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unit_cost || 0), 0)
+    : null;
+  const surface = num(form.project_surface_ha);
+  const expectedYield = num(form.expected_yield);
+  const lossPercent = num(form.loss_percent);
+  const expectedPrice = num(form.expected_price);
+  const revenue = surface != null && surface > 0 && expectedYield != null && expectedYield > 0
+    && lossPercent != null && lossPercent >= 0 && lossPercent <= 100
+    && expectedPrice != null && expectedPrice >= 0
+    ? surface * expectedYield * (1 - lossPercent / 100) * expectedPrice
+    : null;
+  function addItem() {
+    if (!Number(draft.quantity) || !Number(draft.unit_cost)) return;
+    setItems(list => [...list, { ...draft, label: draft.category, id: crypto.randomUUID() }]);
+    setDraft({ category: 'Semences', label: '', quantity: '', unit: '', unit_cost: '', supplier: '' });
+  }
+  return (
+    <div>
+      <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Budget du projet</h2>
+      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Détaillez les intrants et leurs coûts pour établir le besoin réel de financement.</p>
+      <h3 style={{ fontSize: 'var(--fs-14)', margin: '0 0 10px' }}>Intrants et charges du projet</h3>
       <div className="grid-2">
         <div className="field"><label className="field-label">Catégorie</label><select className="input" value={draft.category} onChange={e => setDraft(d => ({ ...d, category: e.target.value }))}><option>Semences</option><option>Engrais</option><option>Produits phytosanitaires</option><option>Main-d'œuvre</option><option>Matériel</option><option>Transport</option><option>Autre</option></select></div>
         <div className="field"><label className="field-label">Quantité</label><input className="input" type="number" min="0" value={draft.quantity} onChange={e => setDraft(d => ({ ...d, quantity: e.target.value }))} /></div>
@@ -521,21 +668,23 @@ function StepProjetAgricole({ form, update, items, setItems }) {
       </div>
       <button type="button" className="btn btn-secondary btn-sm" onClick={addItem}><Plus size={14} /> Ajouter l'intrant</button>
       {items.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span>{item.category} · {item.quantity} {item.unit}</span><span><strong>{formatCFA(Number(item.quantity) * Number(item.unit_cost))}</strong> <button type="button" className="btn btn-ghost btn-sm" onClick={() => setItems(list => list.filter(x => x.id !== item.id))}><Trash2 size={13} /></button></span></div>)}
-      <div style={{ marginTop: 12, padding: 12, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)' }}><strong>Budget :</strong> {formatCFA(budget)} · <strong>Besoin net :</strong> {formatCFA(Math.max(0, budget - Number(form.own_contribution || 0) - Number(form.other_funding || 0)))} · <strong>Revenu estimé :</strong> {formatCFA(revenue)} · <strong>Marge :</strong> {formatCFA(revenue - budget)}</div>
+      <div style={{ marginTop: 12, padding: 12, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)', fontSize: 'var(--fs-12)' }}>
+        <strong>Budget :</strong> {budget == null ? 'Non calculé — ajoutez les intrants et leurs coûts' : formatCFA(budget)} ·{' '}
+        <strong>Besoin net :</strong> {budget == null ? 'Non calculé' : formatCFA(Math.max(0, budget - Number(form.own_contribution || 0) - Number(form.other_funding || 0)))} ·{' '}
+        <strong>Revenu estimé :</strong> {revenue == null ? 'Non calculé — renseignez surface, rendement, pertes et prix' : formatCFA(revenue)} ·{' '}
+        <strong>Marge :</strong> {revenue == null || budget == null ? 'Non calculée' : formatCFA(revenue - budget)}
+      </div>
     </div>
   );
 }
 
 function feasibilitySourceLabel(source = {}) {
-  if (source.mode === 'hybrid' || source.mode === 'hybrid_partial') {
-    return 'Moteur local FresCoop + Teranga AI';
-  }
-  if (source.mode === 'local_offline') {
-    return 'Moteur local FresCoop — hors connexion, Teranga AI sera consulté à la synchronisation';
-  }
-  if (source.mode === 'local_fallback' || source.fallback_used) {
-    return 'Moteur local FresCoop — repli sécurisé, sans pénalité liée à Teranga AI';
-  }
+  if (source.mode === 'hybrid') return 'Moteur local FresCoop enrichi par Teranga AI';
+  if (source.mode === 'hybrid_partial') return 'Moteur local FresCoop — données Teranga partielles';
+  if (source.mode === 'local_fallback') return `Moteur local FresCoop — ${feasibilityReasonMessage(source.fallback_reason)}`;
+  if (source.fallback_reason === 'offline') return 'Moteur local FresCoop — navigateur hors ligne';
+  if (source.fallback_reason === 'not_configured') return 'Moteur local FresCoop — Teranga non configuré';
+  if (source.fallback_reason === 'insufficient_context') return 'Moteur local FresCoop — contexte insuffisant pour Teranga';
   return 'Moteur local FresCoop';
 }
 
@@ -546,8 +695,20 @@ function firstMetric(metrics, keys) {
   return null;
 }
 
-function formatYield(value) {
-  return value == null ? 'Non disponible' : `${new Intl.NumberFormat('fr-FR').format(value)} kg/ha`;
+function formatYield(value, reason = '') {
+  return value == null
+    ? `Non calculé${reason ? ` — ${reason}` : ''}`
+    : `${new Intl.NumberFormat('fr-FR').format(value)} kg/ha`;
+}
+
+function missingLabels(missing = []) {
+  return missing.map(item => typeof item === 'string' ? item : item?.label).filter(Boolean);
+}
+
+function terangaYieldFromDetails(details = {}) {
+  const signal = details.external_signals?.find(item => item?.type === 'yield');
+  const value = signal?.predicted_yield_kg_ha;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function terangaRisk(details = {}) {
@@ -582,7 +743,7 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
           }, controller.signal);
         } catch (error) {
           if (error.name === 'AbortError') return;
-          result = buildLocalFeasibility(project, items, [], 'request_failed');
+          result = buildLocalFeasibility(project, items, [], 'unavailable');
         }
       }
       if (active) {
@@ -599,13 +760,18 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
   const details = current?.details || {};
   const metrics = details.metrics || {};
   const declaredYield = firstMetric(metrics, ['declared_yield', 'expected_yield']);
-  const terangaYield = firstMetric(metrics, ['teranga_yield', 'predicted_yield_kg_ha']);
-  const retainedYield = firstMetric(metrics, ['retained_yield']) ?? declaredYield;
+  const terangaYield = terangaYieldFromDetails(details);
+  const retainedYield = firstMetric(metrics, ['retained_yield']);
+  const expectedVolume = firstMetric(metrics, ['expected_volume', 'retained_production', 'saleable_production']);
   const declaredRevenue = firstMetric(metrics, ['declared_revenue', 'expected_revenue']);
-  const retainedRevenue = firstMetric(metrics, ['retained_revenue']) ?? declaredRevenue;
+  const retainedRevenue = firstMetric(metrics, ['retained_revenue']);
   const revenueAdjustment = firstMetric(metrics, ['revenue_adjustment'])
     ?? (declaredRevenue != null && retainedRevenue != null ? retainedRevenue - declaredRevenue : null);
   const risk = terangaRisk(details);
+  const terangaReason = terangaYield == null
+    ? feasibilityReasonMessage(current?.source?.fallback_reason)
+    : '';
+  const missing = missingLabels(details.missing_data);
   return (
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Faisabilité agronomique</h2>
@@ -618,18 +784,19 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
           <span className={`badge ${badgeClass}`} style={{ marginBottom: 10 }}>{current.label}</span>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>{current.summary}</div>
           <div className="text-sm text-muted">{feasibilitySourceLabel(current.source)}</div>
-          {current.source?.fallback_used && (
+          {current.source?.teranga?.attempted && !current.source?.teranga?.available && (
             <div style={{ marginTop: 10, padding: '8px 10px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius)', color: '#92400e', fontSize: 'var(--fs-11)' }}>
-              Teranga AI indisponible : le moteur local reste autoritaire et aucune réduction automatique n’est appliquée.
+              Tentative Teranga échouée : {feasibilityReasonMessage(current.source.fallback_reason)}. Le moteur local FresCoop reste autoritaire et aucune pénalité n’est appliquée.
             </div>
           )}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))', gap: 10, marginBottom: 14 }}>
-          <SummaryLine label="Rendement" value={formatYield(declaredYield)} />
-          <SummaryLine label="Rendement Teranga" value={formatYield(terangaYield)} color="#2563eb" />
-          <SummaryLine label="Rendement retenu" value={formatYield(retainedYield)} color="#1b6b52" />
-          <SummaryLine label="Revenu déclaré" value={declaredRevenue == null ? '—' : formatCFA(declaredRevenue)} />
-          <SummaryLine label="Revenu retenu" value={retainedRevenue == null ? '—' : formatCFA(retainedRevenue)} color="#1b6b52" />
+          <SummaryLine label="Rendement déclaré" value={formatYield(declaredYield, 'rendement attendu manquant')} />
+          <SummaryLine label="Rendement Teranga" value={formatYield(terangaYield, terangaReason)} color="#2563eb" />
+          <SummaryLine label="Rendement retenu" value={formatYield(retainedYield, 'rendement exploitable manquant')} color="#1b6b52" />
+          <SummaryLine label="Volume attendu" value={expectedVolume == null ? 'Non calculé — surface, rendement ou pertes manquants' : `${new Intl.NumberFormat('fr-FR').format(expectedVolume)} kg`} />
+          <SummaryLine label="Revenu déclaré" value={declaredRevenue == null ? 'Non calculé — surface, rendement, pertes ou prix manquants' : formatCFA(declaredRevenue)} />
+          <SummaryLine label="Revenu retenu" value={retainedRevenue == null ? 'Non calculé — données de revenu incomplètes' : formatCFA(retainedRevenue)} color="#1b6b52" />
           <SummaryLine label="Différence de revenu" value={revenueAdjustment == null ? '—' : formatCFA(revenueAdjustment)} color={revenueAdjustment < 0 ? '#d97706' : '#1b6b52'} />
         </div>
         {(risk.score != null || risk.level || risk.recommendation) && (
@@ -650,11 +817,12 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
         <details style={{ marginTop: 14, padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>
           <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Voir les constats et recommandations</summary>
           <div style={{ marginTop: 12, fontSize: 'var(--fs-12)' }}>
-            {details.missing_data?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Données manquantes :</strong> {details.missing_data.join(', ')}</div>}
+            {missing.length > 0 && <div style={{ marginBottom: 10 }}><strong>Données à compléter :</strong> {missing.join(', ')}</div>}
+            {current.report && <div style={{ marginBottom: 10 }}><strong>Rapport agronomique :</strong> <p style={{ marginTop: 5 }}>{current.report}</p></div>}
             {details.findings?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Constats :</strong><ul>{details.findings.map(item => <li key={item.code}>{item.explanation}</li>)}</ul></div>}
             {details.recommendations?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Recommandations :</strong><ul>{details.recommendations.map(item => <li key={item}>{item}</li>)}</ul></div>}
             {details.external_signals?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Informations agricoles complémentaires :</strong><ul>{details.external_signals.map((item, index) => <li key={`${item.type}-${index}`}>{item.explanation}</li>)}</ul></div>}
-            {current.source?.fallback_reason && <div className="text-muted">Certaines données externes ne sont pas disponibles ; le résultat repose sur l’analyse FresCoop.</div>}
+            {current.source?.fallback_reason && <div className="text-muted">Teranga : {feasibilityReasonMessage(current.source.fallback_reason)}. Le résultat repose sur l’analyse FresCoop.</div>}
           </div>
         </details>
       </>}
@@ -776,7 +944,15 @@ function StepPreuves({ evidence, setEvidence }) {
   function saveEvidence() {
     if (!draft.label.trim()) return;
     if (draft.file && (!['application/pdf', 'image/jpeg', 'image/png'].includes(draft.file.type) || draft.file.size > 2 * 1024 * 1024)) return;
-    const item = { ...draft, id: editingId || crypto.randomUUID(), metadata: draft.file ? { file_name: draft.file.name, file_type: draft.file.type, file_size: draft.file.size, upload_pending: true } : (draft.metadata || {}) };
+    const metadata = draft.file
+      ? { file_name: draft.file.name, file_type: draft.file.type, file_size: draft.file.size, upload_pending: true }
+      : (draft.metadata || {});
+    const item = {
+      ...draft,
+      id: editingId || crypto.randomUUID(),
+      metadata,
+      file_reselection_required: Boolean(metadata.file_name && !draft.file),
+    };
     setEvidence(list => editingId ? list.map(x => x.id === editingId ? item : x) : [...list, item]);
     setDraft({ category: 'projet', label: '', source: 'document', source_detail: '', verification_level: 'C', file: null });
     setEditingId(null);
@@ -797,7 +973,7 @@ function StepPreuves({ evidence, setEvidence }) {
         <div className="field"><label className="field-label">Fichier PDF, JPEG ou PNG</label><input className="input" type="file" accept="application/pdf,image/jpeg,image/png" onChange={e => { const file = e.target.files?.[0] || null; if (file && file.size > 2 * 1024 * 1024) { e.target.value = ''; return; } setDraft(d => ({ ...d, file, verification_level: file ? 'C' : d.verification_level })); }} /><div className="field-hint">2 Mo maximum par fichier, 10 Mo par dossier. Envoi authentifié et empreinte SHA-256.</div></div>
         <button type="button" className="btn btn-primary btn-sm" onClick={saveEvidence}>{editingId ? 'Enregistrer les modifications' : 'Ajouter la preuve'}</button>
       </div>
-      {evidence.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '10px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span><strong>{item.verification_level}</strong> · {item.label}{item.metadata?.file_name ? ` · ${item.metadata.file_name}` : ''}</span><span><button type="button" className="btn btn-ghost btn-sm" onClick={() => editEvidence(item)}><Pencil size={13} /></button><button type="button" className="btn btn-ghost btn-sm" onClick={() => setEvidence(list => list.filter(x => x.id !== item.id))}><Trash2 size={13} /></button></span></div>)}
+      {evidence.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '10px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span><strong>{item.verification_level}</strong> · {item.label}{item.metadata?.file_name ? ` · ${item.metadata.file_name}` : ''}{item.file_reselection_required && !item.file ? <span style={{ color: 'var(--c-warning)' }}> · fichier à resélectionner</span> : ''}</span><span><button type="button" className="btn btn-ghost btn-sm" onClick={() => editEvidence(item)}><Pencil size={13} /></button><button type="button" className="btn btn-ghost btn-sm" onClick={() => setEvidence(list => list.filter(x => x.id !== item.id))}><Trash2 size={13} /></button></span></div>)}
     </div>
   );
 }
@@ -831,7 +1007,7 @@ function StepAnalyse({ form, items = [], debts = [] }) {
   const amount = Number(form.amount_requested) || 0;
   const duration = Number(form.duration_months) || 1;
   const echeance = amount > 0 ? Math.ceil(amount / duration) : 0;
-  const calculable = Boolean(form.crop_name && Number(form.project_surface_ha) > 0 && Number(form.expected_yield) > 0 && Number(form.expected_price) > 0 && projectBudget > 0);
+  const calculable = Boolean(resolveCrop(form.crop_selection, form.crop_other_label).crop_label && Number(form.project_surface_ha) > 0 && Number(form.expected_yield) > 0 && Number(form.expected_price) > 0 && projectBudget > 0);
 
   return (
     <div>
@@ -884,7 +1060,8 @@ function SummaryLine({ label, value, color }) {
 }
 
 function StepSoumission({ form, update, saving, onSave, setStep }) {
-  const canSubmit = form.applicant_name && form.applicant_id_number && form.amount_requested && form.credit_purpose && (!form.third_party_commitment || (form.guarantor_name && form.guarantor_id_number && form.guarantor_phone && form.guarantor_consent));
+  const hasCrop = Boolean(resolveCrop(form.crop_selection, form.crop_other_label).crop_label);
+  const canSubmit = form.applicant_name && form.applicant_id_number && form.amount_requested && form.credit_purpose && hasCrop && form.project_surface_ha && (!form.third_party_commitment || (form.guarantor_name && form.guarantor_id_number && form.guarantor_phone && form.guarantor_consent));
 
   return (
     <div>
@@ -907,7 +1084,7 @@ function StepSoumission({ form, update, saving, onSave, setStep }) {
       </div>
 
       <div className="flex justify-between items-center" style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--c-border)' }}>
-        <button className="btn btn-secondary" onClick={() => setStep(9)}>
+        <button className="btn btn-secondary" onClick={() => setStep(5)}>
           <ArrowLeft size={14} /> Revenir en arrière
         </button>
         <button className="btn btn-primary btn-lg" onClick={onSave} disabled={saving || !canSubmit}>

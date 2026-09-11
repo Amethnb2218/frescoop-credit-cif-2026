@@ -14,6 +14,7 @@ import {
   determinePrequalification,
   evaluatePrequalification,
   evaluateRule,
+  listMissingPrequalificationData,
 } from './prequalification.js';
 
 const dossier = {
@@ -174,6 +175,89 @@ test('un dossier incomplet ne reçoit aucun score numérique', () => {
   assert.equal(result.score, null);
   assert.equal(result.repaymentCapacity, 'UNKNOWN');
   assert.equal(result.details.message, 'Non calculé — données insuffisantes');
+  assert.equal(result.details.capacity_ratio, null);
+  assert.equal(result.details.retained_capacity_ratio, null);
+  assert.equal(result.details.stressed_capacity_ratio, null);
+  assert.deepEqual(result.details.missing_data.map(item => item.code), [
+    'APPLICANT_ID_REQUIRED',
+    'CASHFLOW_REQUIRED',
+    'AGRICULTURAL_PROJECT_REQUIRED',
+    'AGRICULTURAL_INPUT_REQUIRED',
+  ]);
+});
+
+test('énumère les prérequis manquants dans un ordre stable', () => {
+  const emptyDossier = {
+    applicant_name: null,
+    applicant_id_number: null,
+    sector: 'Commerce',
+    activity_type: null,
+    amount_requested: 0,
+    duration_months: 0,
+  };
+  const context = buildEvaluationContext(emptyDossier, [], [], []);
+  const missing = listMissingPrequalificationData(emptyDossier, context);
+  assert.deepEqual(missing, [
+    { code: 'APPLICANT_NAME_REQUIRED', field: 'applicant_name', label: 'Nom du demandeur' },
+    { code: 'APPLICANT_ID_REQUIRED', field: 'applicant_id_number', label: 'Numéro d’identité' },
+    { code: 'AGRICULTURE_SECTOR_REQUIRED', field: 'sector', label: 'Secteur Agriculture' },
+    { code: 'ACTIVITY_TYPE_REQUIRED', field: 'activity_type', label: 'Type d’activité' },
+    { code: 'POSITIVE_AMOUNT_REQUIRED', field: 'amount_requested', label: 'Montant demandé positif' },
+    { code: 'POSITIVE_DURATION_REQUIRED', field: 'duration_months', label: 'Durée du crédit positive' },
+    { code: 'CASHFLOW_REQUIRED', field: 'cashflow_entries', label: 'Flux de trésorerie' },
+    { code: 'AGRICULTURAL_PROJECT_REQUIRED', field: 'agricultural_project', label: 'Évaluation du projet agricole' },
+    { code: 'AGRICULTURAL_INPUT_REQUIRED', field: 'agricultural_input_items', label: 'Au moins un intrant agricole' },
+  ]);
+});
+
+test('distingue un cash-flow sans revenu d’un cash-flow absent', () => {
+  const noCashflow = evaluatePrequalification(dossier, [], [], [], rules, agriculturalProject, agriculturalInputs);
+  const noRevenue = evaluatePrequalification(
+    dossier,
+    [{ revenue: 0, expenses: 100, debt_payments: 0 }],
+    [],
+    [],
+    rules,
+    agriculturalProject,
+    agriculturalInputs,
+  );
+  assert.deepEqual(noCashflow.details.missing_data.map(item => item.code), ['CASHFLOW_REQUIRED']);
+  assert.deepEqual(noRevenue.details.missing_data.map(item => item.code), ['POSITIVE_REVENUE_MONTH_REQUIRED']);
+});
+
+test('distingue un projet agricole absent d’un projet partiel', () => {
+  const absent = evaluatePrequalification(dossier, cashflow(1690), [], [], rules, null, agriculturalInputs);
+  const partial = evaluatePrequalification(
+    dossier,
+    cashflow(1690),
+    [],
+    [],
+    rules,
+    { crop_code: null, crop_label: null, project_surface_ha: 0, expected_yield: 0, expected_price: 0 },
+    agriculturalInputs,
+  );
+  assert.deepEqual(absent.details.missing_data.map(item => item.code), ['AGRICULTURAL_PROJECT_REQUIRED']);
+  assert.deepEqual(partial.details.missing_data.map(item => item.code), [
+    'CROP_REQUIRED',
+    'POSITIVE_PROJECT_SURFACE_REQUIRED',
+    'POSITIVE_EXPECTED_YIELD_REQUIRED',
+    'POSITIVE_EXPECTED_PRICE_REQUIRED',
+  ]);
+});
+
+test('distingue les intrants absents des intrants sans coût positif', () => {
+  const absent = evaluatePrequalification(dossier, cashflow(1690), [], [], rules, agriculturalProject, []);
+  const noCost = evaluatePrequalification(
+    dossier,
+    cashflow(1690),
+    [],
+    [],
+    rules,
+    agriculturalProject,
+    [{ total_cost: 0 }, { total_cost: null }],
+  );
+  assert.deepEqual(absent.details.missing_data.map(item => item.code), ['AGRICULTURAL_INPUT_REQUIRED']);
+  assert.deepEqual(noCost.details.missing_data.map(item => item.code), ['POSITIVE_INPUT_COST_REQUIRED']);
 });
 
 test('la complétion puis le recalcul produit un score numérique', () => {
@@ -181,6 +265,18 @@ test('la complétion puis le recalcul produit un score numérique', () => {
   const complete = evaluateComplete(dossier, cashflow(1690), evidence(['A']));
   assert.equal(incomplete.score, null);
   assert.equal(typeof complete.score, 'number');
+});
+
+test('conserve un score numérique égal à zéro', () => {
+  const context = buildEvaluationContext(dossier, cashflow(1), [], []);
+  const result = computePrequalificationScore(
+    { ...context, hasIdentity: false },
+    [{ triggered: true, rule_code: 'RULE-ZERO', severity: 'critical' }],
+    'NON_ELIGIBLE',
+    0,
+  );
+  assert.equal(result.score, 0);
+  assert.equal(result.details.raw_score, 0);
 });
 
 test('les pénalités se cumulent sans rendre le risque négatif', () => {

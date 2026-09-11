@@ -95,3 +95,36 @@ export function parseScoreDetails(value) {
   if (typeof value === 'object') return value;
   try { return JSON.parse(value); } catch { return null; }
 }
+
+export function isScoreAvailable(value) {
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value === 'string' && value.trim() !== '') return Number.isFinite(Number(value));
+  return false;
+}
+
+export function normalizeMissingData(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  return value.flatMap((item) => {
+    const normalized = typeof item === 'string'
+      ? { code: null, field: null, label: item.trim() }
+      : item && typeof item === 'object'
+        ? {
+            code: typeof item.code === 'string' ? item.code.trim() || null : null,
+            field: typeof item.field === 'string' ? item.field.trim() || null : null,
+            label: typeof item.label === 'string' ? item.label.trim() || null : null,
+          }
+        : null;
+    if (!normalized) return [];
+    const label = normalized.label || normalized.field || normalized.code;
+    if (!label) return [];
+    const key = normalized.code || label.toLocaleLowerCase('fr');
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{ ...normalized, label }];
+  });
+}
+
+export function getMissingScoreData(scoreDetails) {
+  return normalizeMissingData(parseScoreDetails(scoreDetails)?.missing_data);
+}

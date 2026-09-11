@@ -1,6 +1,10 @@
 import { assessAgriculturalProject, AGRICULTURAL_RULES_VERSION } from './agriculturalAssessment.js';
+import {
+  buildFeasibilityMetrics,
+  buildFeasibilityReport,
+} from '../../shared/agriculturalFeasibilityContract.js';
 
-export const AGRICULTURAL_FEASIBILITY_VERSION = 2;
+export const AGRICULTURAL_FEASIBILITY_VERSION = 3;
 const DEFAULT_TIMEOUT_MS = 2500;
 
 function finiteNumber(value) {
@@ -15,44 +19,6 @@ function strictResponseNumber(value) {
 
 function safeText(value) {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function calculateRevenue(project, yieldKgHa) {
-  const surface = finiteNumber(project.project_surface_ha);
-  const losses = finiteNumber(project.loss_percent);
-  const price = finiteNumber(project.expected_price);
-  if (surface == null || surface <= 0 || yieldKgHa == null || yieldKgHa <= 0
-    || losses == null || losses < 0 || losses > 100 || price == null || price < 0) return null;
-  return Math.round(surface * yieldKgHa * (1 - losses / 100) * price);
-}
-
-function buildContractMetrics(local, project, externalSignals, source) {
-  const declaredYield = finiteNumber(project.expected_yield);
-  const yieldSignal = externalSignals.find(signal => signal.type === 'yield');
-  const terangaYield = yieldSignal?.predicted_yield_kg_ha ?? null;
-  const externalAdjustmentAllowed = source.mode === 'hybrid' && terangaYield != null;
-  const retainedYield = externalAdjustmentAllowed
-    ? (declaredYield != null && declaredYield > 0 ? Math.min(declaredYield, terangaYield) : terangaYield)
-    : declaredYield;
-  const declaredRevenue = calculateRevenue(project, declaredYield);
-  const retainedRevenue = calculateRevenue(project, retainedYield);
-  return {
-    ...local.metrics,
-    project_surface_ha: finiteNumber(project.project_surface_ha),
-    surface_ha: finiteNumber(project.project_surface_ha),
-    expected_price: finiteNumber(project.expected_price),
-    price: finiteNumber(project.expected_price),
-    loss_percent: finiteNumber(project.loss_percent),
-    declared_yield: declaredYield,
-    teranga_yield: terangaYield,
-    predicted_yield_kg_ha: terangaYield,
-    retained_yield: retainedYield,
-    declared_revenue: declaredRevenue,
-    retained_revenue: retainedRevenue,
-    revenue_adjustment: declaredRevenue == null || retainedRevenue == null
-      ? null : retainedRevenue - declaredRevenue,
-    external_adjustment_applied: externalAdjustmentAllowed && retainedYield !== declaredYield,
-  };
 }
 
 function localStatus(local) {
@@ -84,12 +50,14 @@ export function summarizeAgriculturalFeasibility(local, externalSignals = [], so
   else if (status === 'FEASIBLE' && externalSignals.some(signal => ['high', 'moderate'].includes(signal.level))) status = 'ADJUST';
   const text = statusText(status);
   const recommendations = local.findings.map(item => item.action).filter(Boolean);
-  const metrics = buildContractMetrics(local, project, externalSignals, source);
+  const metrics = buildFeasibilityMetrics(local.metrics, project, externalSignals, source);
   const risk = externalSignals.find(signal => signal.type === 'risk');
+  const report = buildFeasibilityReport({ status, project, local, metrics, source });
 
   return {
     status,
     ...text,
+    report,
     details: {
       missing_data: local.missing_data,
       findings: local.findings,
@@ -107,7 +75,7 @@ export function summarizeAgriculturalFeasibility(local, externalSignals = [], so
     },
     calculated_metrics: metrics,
     source: {
-      mode: source.mode || 'local_offline',
+      mode: source.mode || 'local',
       contract_version: AGRICULTURAL_FEASIBILITY_VERSION,
       engine: 'frescoop-agronomic-feasibility',
       engine_version: AGRICULTURAL_FEASIBILITY_VERSION,
@@ -181,7 +149,13 @@ async function fetchJson(url, fetchImpl, timeoutMs) {
   try {
     const response = await fetchImpl(url, { signal: controller.signal, headers: { Accept: 'application/json' } });
     if (!response.ok) throw new Error(`http_${response.status}`);
-    return await response.json();
+    try {
+      return await response.json();
+    } catch {
+      const error = new Error('invalid_response');
+      error.code = 'INVALID_RESPONSE';
+      throw error;
+    }
   } finally {
     clearTimeout(timeout);
   }
@@ -202,7 +176,7 @@ export async function assessAgriculturalFeasibility(input = {}, options = {}) {
   if (!baseUrl || !fetchImpl || !city || !crop || month == null || month < 1 || month > 12) {
     const reason = !baseUrl ? 'not_configured' : 'insufficient_context';
     return summarizeAgriculturalFeasibility(local, [], {
-      mode: 'local_offline', fallback_used: true, fallback_reason: reason,
+      mode: 'local', fallback_used: false, fallback_reason: reason,
       teranga: { attempted: false, available: false },
     }, project);
   }
@@ -223,7 +197,8 @@ export async function assessAgriculturalFeasibility(input = {}, options = {}) {
   const successful = signals.length;
   if (successful === 0) {
     const aborted = results.some(result => result.reason?.name === 'AbortError');
-    const invalid = results.some(result => result.status === 'fulfilled');
+    const invalid = results.some(result => result.status === 'fulfilled'
+      || result.reason?.code === 'INVALID_RESPONSE');
     return summarizeAgriculturalFeasibility(local, [], {
       mode: 'local_fallback', fallback_used: true,
       fallback_reason: aborted ? 'timeout' : invalid ? 'invalid_response' : 'unavailable',
