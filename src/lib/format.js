@@ -128,3 +128,8 @@ export function normalizeMissingData(value) {
 export function getMissingScoreData(scoreDetails) {
   return normalizeMissingData(parseScoreDetails(scoreDetails)?.missing_data);
 }
+
+export function isProvisionalScore(scoreDetails) {
+  const details = parseScoreDetails(scoreDetails);
+  return details?.provisional === true || details?.status === 'INSUFFICIENT_DATA';
+}

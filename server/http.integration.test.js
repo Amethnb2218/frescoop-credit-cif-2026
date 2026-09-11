@@ -325,7 +325,7 @@ test('recalcule et persiste la chaîne Teranga en ligne puis après synchronisat
         retained_revenue: 1520000,
         revenue_adjustment: -380000,
       });
-      assert.equal(online.body.dossier.prequalification_score_version, 4);
+      assert.equal(online.body.dossier.prequalification_score_version, 5);
       assert.notEqual(online.body.dossier.prequalification, null);
       const scoreDetails = JSON.parse(online.body.dossier.prequalification_score_details);
       assert.equal(scoreDetails.agronomic_impact.declared_revenue, 1900000);
@@ -354,7 +354,7 @@ test('recalcule et persiste la chaîne Teranga en ligne puis après synchronisat
       assert.equal(offline.body.project_assessment.retained_revenue, 1520000);
       assert.equal(JSON.parse(offline.body.project_assessment.feasibility_analysis).source.mode, 'hybrid');
       assert.equal(offline.body.cashflow.find(entry => Number(entry.month) === 10).revenue, 1520000);
-      assert.equal(offline.body.dossier.prequalification_score_version, 4);
+      assert.equal(offline.body.dossier.prequalification_score_version, 5);
 
       const updated = await request(baseUrl, '/api/dossiers/teranga-online', owner, {
         method: 'PUT',
@@ -376,7 +376,7 @@ test('recalcule et persiste la chaîne Teranga en ligne puis après synchronisat
       assert.equal(afterUpdate.body.declared_debts[0].id, 'debt-teranga-online');
       assert.equal(afterUpdate.body.cashflow.find(entry => Number(entry.month) === 1).debt_payments, 25000);
       assert.equal(afterUpdate.body.cashflow.find(entry => Number(entry.month) === 10).revenue, 1824000);
-      assert.equal(afterUpdate.body.dossier.prequalification_score_version, 4);
+      assert.equal(afterUpdate.body.dossier.prequalification_score_version, 5);
     });
   } finally {
     globalThis.fetch = originalFetch;

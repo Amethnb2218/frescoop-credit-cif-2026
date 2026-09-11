@@ -49,8 +49,7 @@ export async function migrateAuditLogSchema(client = getDb()) {
   return addedColumns;
 }
 
-export async function initDb() {
-  const client = getDb();
+export async function initDb(client = getDb()) {
 
   await client.executeMultiple(`
     -- Tenants (IMFs)

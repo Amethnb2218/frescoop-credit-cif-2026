@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 import { getDb, initDb } from './db.js';
 import { assertAuthConfiguration } from './auth.js';
-import { recalculateOutdatedScores } from './services/prequalification.js';
+import { recalculateOutdatedScores, SCORE_VERSION } from './services/prequalification.js';
 
 import authRoutes from './routes/auth.js';
 import dossierRoutes from './routes/dossiers.js';
@@ -67,9 +67,15 @@ export async function start() {
   await seedIfEmpty();
   await ensureAdminAccounts();
 
+  const { seedDemoDossiers } = await import('./demoSeed.js');
+  const demoSeed = await seedDemoDossiers();
+  if (demoSeed.created > 0) {
+    console.log(`[FresCoop] ${demoSeed.created} dossiers démo calculés créés`);
+  }
+
   const scoreMigration = await recalculateOutdatedScores(getDb());
   if (scoreMigration.found > 0) {
-    console.log(`[FresCoop] Scores v3: ${scoreMigration.updated}/${scoreMigration.found} recalculés`);
+    console.log(`[FresCoop] Scores v${SCORE_VERSION}: ${scoreMigration.updated}/${scoreMigration.found} recalculés`);
   }
   if (scoreMigration.errors.length > 0) {
     console.error('[FresCoop] Échecs de recalcul des scores:', scoreMigration.errors);

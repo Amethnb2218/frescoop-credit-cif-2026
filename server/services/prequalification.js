@@ -1,7 +1,12 @@
 import { randomUUID } from 'crypto';
 import { hasBicConsent } from './dossierAccess.js';
+import {
+  buildDetailedRepaymentSchedule,
+  calculateLoanTerms,
+  normalizeScheduleType,
+} from '../../shared/creditCalculations.js';
 
-export const SCORE_VERSION = 4;
+export const SCORE_VERSION = 5;
 
 const EVIDENCE_WEIGHTS = { A: 1, B: 0.75, C: 0.4, D: 0.1 };
 const RISK_PENALTIES = { low: 3, medium: 5, high: 8, critical: 20 };
@@ -91,20 +96,19 @@ export function buildEvaluationContext(dossier, cashflow = [], evidence = [], bi
   const averageMonthlyNet = cashflowMonths > 0 ? netFlow / cashflowMonths : 0;
   const stressedNetFlow = totalRevenue * 0.8 - totalExpenses - totalDebt;
   const stressedAverageMonthlyNet = cashflowMonths > 0 ? stressedNetFlow / cashflowMonths : 0;
-  const amountRequested = Number(dossier.amount_requested || 0);
-  const durationMonths = Number(dossier.duration_months || 0);
-  const monthlyPayment = amountRequested > 0 && durationMonths > 0
-    ? Math.ceil(amountRequested / durationMonths)
+  const loanTerms = calculateLoanTerms(dossier);
+  const amountRequested = loanTerms.principal;
+  const durationMonths = loanTerms.duration_months;
+  const totalRepayable = loanTerms.total_repayable;
+  const monthlyPayment = totalRepayable > 0 && durationMonths > 0
+    ? Math.ceil(totalRepayable / durationMonths)
     : 0;
-  const normalizedSchedule = String(dossier.desired_schedule || '').toLowerCase();
-  const scheduleType = normalizedSchedule.includes('saisonnier')
-    ? 'SEASONAL'
-    : normalizedSchedule.includes('in fine')
-      ? 'BULLET'
-      : normalizedSchedule.includes('trimestriel')
-        ? 'QUARTERLY'
-        : 'MONTHLY';
-  const repaymentSchedule = buildRepaymentSchedule(scheduleType, amountRequested, durationMonths, cashflow);
+  const scheduleType = normalizeScheduleType(dossier.desired_schedule);
+  const detailedRepaymentSchedule = buildDetailedRepaymentSchedule({
+    ...dossier,
+    schedule_type: scheduleType,
+  }, cashflow);
+  const repaymentSchedule = detailedRepaymentSchedule.installments.map(item => item.payment);
   const stressedCashflow = cashflow.map(entry => ({
     ...entry,
     revenue: Number(entry.revenue || 0) * 0.8,
@@ -142,7 +146,12 @@ export function buildEvaluationContext(dossier, cashflow = [], evidence = [], bi
     stressedNetFlow,
     stressedAverageMonthlyNet,
     monthlyPayment,
+    interestRate: loanTerms.interest_rate,
+    interestAmount: loanTerms.interest_amount,
+    totalRepayable,
+    loanTerms,
     scheduleType,
+    detailedRepaymentSchedule: detailedRepaymentSchedule.installments,
     repaymentSchedule,
     seasonalCoverage,
     stressedSeasonalCoverage,
@@ -229,38 +238,13 @@ export function listMissingPrequalificationData(
   return missing;
 }
 
-export function buildRepaymentSchedule(scheduleType, amountRequested, durationMonths, cashflow = []) {
-  if (amountRequested <= 0 || durationMonths <= 0) return [];
-  const months = Math.min(durationMonths, Math.max(cashflow.length, durationMonths));
-  if (scheduleType === 'BULLET') {
-    return Array.from({ length: months }, (_, index) => index === months - 1 ? amountRequested : 0);
-  }
-  if (scheduleType === 'SEASONAL') {
-    const revenueMonths = cashflow
-      .map((entry, index) => ({ index, revenue: Number(entry.revenue || 0) }))
-      .filter(entry => entry.revenue > 0)
-      .sort((a, b) => b.revenue - a.revenue);
-    const paymentMonths = revenueMonths.slice(0, Math.min(3, revenueMonths.length)).map(entry => entry.index);
-    if (!paymentMonths.length) return Array.from({ length: months }, () => 0);
-    const payment = Math.ceil(amountRequested / paymentMonths.length);
-    let allocated = 0;
-    return Array.from({ length: months }, (_, index) => {
-      if (!paymentMonths.includes(index)) return 0;
-      const value = Math.min(payment, amountRequested - allocated);
-      allocated += value;
-      return value;
-    });
-  }
-  const interval = scheduleType === 'QUARTERLY' ? 3 : 1;
-  const paymentCount = Math.ceil(months / interval);
-  const payment = Math.ceil(amountRequested / paymentCount);
-  let allocated = 0;
-  return Array.from({ length: months }, (_, index) => {
-    if ((index + 1) % interval !== 0 && index !== months - 1) return 0;
-    const value = Math.min(payment, amountRequested - allocated);
-    allocated += value;
-    return value;
-  });
+export function buildRepaymentSchedule(scheduleType, amountRequested, durationMonths, cashflow = [], credit = {}) {
+  return buildDetailedRepaymentSchedule({
+    ...credit,
+    amount_requested: amountRequested,
+    duration_months: durationMonths,
+    schedule_type: scheduleType,
+  }, cashflow).installments.map(item => item.payment);
 }
 
 export function calculateScheduleCoverage(cashflow = [], repaymentSchedule = []) {
@@ -512,18 +496,22 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
     agriculturalInputs,
   );
   const isComplete = missingData.length === 0;
+  const computedScoring = computePrequalificationScore(
+    context,
+    evaluations,
+    decision.prequalification,
+    capacityRatio,
+  );
   const scoring = isComplete
-    ? computePrequalificationScore(context, evaluations, decision.prequalification, capacityRatio)
+    ? computedScoring
     : {
-        score: null,
+        ...computedScoring,
         details: {
-          version: SCORE_VERSION,
+          ...computedScoring.details,
           status: 'INSUFFICIENT_DATA',
-          raw_score: null,
-          capacity_ratio: null,
-          stressed_capacity_ratio: null,
+          provisional: true,
           missing_data: missingData,
-          message: 'Non calculé — données insuffisantes',
+          message: 'Score provisoire calculé sur les données disponibles — complétez les éléments indiqués pour obtenir le score définitif.',
         },
       };
   const agronomicRuleCodes = evaluations
@@ -542,16 +530,16 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
     declared_revenue: context.agronomic.declaredRevenue,
     retained_revenue: context.agronomic.retainedRevenue,
     revenue_adjustment: context.agronomic.revenueDelta,
-    declared_capacity_ratio: isComplete && declaredCapacityRatio != null
+    declared_capacity_ratio: declaredCapacityRatio != null
       ? Number(declaredCapacityRatio.toFixed(4))
       : null,
-    retained_capacity_ratio: isComplete && capacityRatio != null
+    retained_capacity_ratio: capacityRatio != null
       ? Number(capacityRatio.toFixed(4))
       : null,
-    declared_stressed_capacity_ratio: isComplete && declaredStressedCapacityRatio != null
+    declared_stressed_capacity_ratio: declaredStressedCapacityRatio != null
       ? Number(declaredStressedCapacityRatio.toFixed(4))
       : null,
-    retained_stressed_capacity_ratio: isComplete && stressedCapacityRatio != null
+    retained_stressed_capacity_ratio: stressedCapacityRatio != null
       ? Number(stressedCapacityRatio.toFixed(4))
       : null,
     teranga_adjusted: context.agronomic.terangaAdjusted,
@@ -567,29 +555,33 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
   };
   const details = {
     ...scoring.details,
-    declared_capacity_ratio: isComplete && declaredCapacityRatio != null
+    declared_capacity_ratio: declaredCapacityRatio != null
       ? Number(declaredCapacityRatio.toFixed(4))
       : null,
-    retained_capacity_ratio: isComplete && capacityRatio != null ? Number(capacityRatio.toFixed(4)) : null,
-    stressed_capacity_ratio: isComplete && stressedCapacityRatio != null
+    retained_capacity_ratio: capacityRatio != null ? Number(capacityRatio.toFixed(4)) : null,
+    stressed_capacity_ratio: stressedCapacityRatio != null
       ? Number(stressedCapacityRatio.toFixed(4))
       : null,
-    declared_stressed_capacity_ratio: isComplete && declaredStressedCapacityRatio != null
+    declared_stressed_capacity_ratio: declaredStressedCapacityRatio != null
       ? Number(declaredStressedCapacityRatio.toFixed(4))
       : null,
-    retained_stressed_capacity_ratio: isComplete && stressedCapacityRatio != null
+    retained_stressed_capacity_ratio: stressedCapacityRatio != null
       ? Number(stressedCapacityRatio.toFixed(4))
       : null,
     agronomic_impact: agronomicImpact,
     average_monthly_net: context.hasCashflow ? Math.round(context.averageMonthlyNet) : null,
     stressed_average_monthly_net: context.hasCashflow ? Math.round(context.stressedAverageMonthlyNet) : null,
     proposed_monthly_payment: context.monthlyPayment || null,
+    interest_rate: context.interestRate,
+    interest_amount: context.interestAmount,
+    total_repayable: context.totalRepayable,
     monthly_margin_after_payment: context.hasCashflow && context.monthlyPayment > 0
       ? Math.round(context.averageMonthlyNet - context.monthlyPayment)
       : null,
     revenue_months: context.monthsWithRevenue,
     schedule_type: context.scheduleType,
     repayment_schedule: context.repaymentSchedule,
+    repayment_schedule_details: context.detailedRepaymentSchedule,
     payment_months: context.seasonalCoverage?.payment_months || [],
     schedule_minimum_margin: context.seasonalCoverage?.minimum_margin ?? null,
     stressed_schedule_minimum_margin: context.stressedSeasonalCoverage?.minimum_margin ?? null,
@@ -606,7 +598,7 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
   };
 }
 
-export async function evaluateDossier(db, tenantId, dossierId) {
+export async function evaluateDossier(db, tenantId, dossierId, options = {}) {
   const [dossierResult, cashflowResult, evidenceResult, rulesResult, projectResult, inputsResult] = await Promise.all([
     db.execute({ sql: 'SELECT * FROM dossiers WHERE id = ? AND tenant_id = ?', args: [dossierId, tenantId] }),
     db.execute({ sql: 'SELECT * FROM cashflow_entries WHERE dossier_id = ? AND tenant_id = ? ORDER BY year, month', args: [dossierId, tenantId] }),
@@ -634,28 +626,32 @@ export async function evaluateDossier(db, tenantId, dossierId) {
     inputsResult.rows,
   );
 
+  const targetDb = options.writeDb || db;
+  const idFactory = options.idFactory || randomUUID;
+  const updatedAt = options.updatedAt || null;
   const statements = [
     { sql: 'DELETE FROM rule_evaluations WHERE dossier_id = ? AND tenant_id = ?', args: [dossierId, tenantId] },
     ...result.evaluations.map(evaluation => ({
       sql: `INSERT INTO rule_evaluations (id, dossier_id, rule_id, tenant_id, triggered, result, explanation, data_used)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
-        randomUUID(), dossierId, evaluation.rule_id, tenantId, evaluation.triggered ? 1 : 0,
+        idFactory(evaluation), dossierId, evaluation.rule_id, tenantId, evaluation.triggered ? 1 : 0,
         evaluation.result, evaluation.explanation, JSON.stringify(result.context),
       ],
     })),
     {
       sql: `UPDATE dossiers SET evidence_confidence = ?, repayment_capacity = ?, prequalification = ?,
             prequalification_reasons = ?, prequalification_score = ?, prequalification_score_details = ?,
-            prequalification_score_version = ?, updated_at = datetime('now') WHERE id = ? AND tenant_id = ?`,
+            prequalification_score_version = ?, updated_at = COALESCE(?, datetime('now'))
+            WHERE id = ? AND tenant_id = ?`,
       args: [
         result.evidenceConfidence, result.repaymentCapacity, result.prequalification,
         JSON.stringify(result.reasons), result.score, JSON.stringify(result.details),
-        SCORE_VERSION, dossierId, tenantId,
+        SCORE_VERSION, updatedAt, dossierId, tenantId,
       ],
     },
   ];
-  await db.batch(statements, 'write');
+  await targetDb.batch(statements, 'write');
   return result;
 }
 

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   getMissingScoreData,
+  isProvisionalScore,
   isScoreAvailable,
   normalizeMissingData,
   parseScoreDetails,
@@ -33,6 +34,13 @@ test('lit missing_data et utilise un repli vide pour les anciens dossiers', () =
   ]);
   assert.deepEqual(getMissingScoreData(null), []);
   assert.deepEqual(getMissingScoreData('{invalide'), []);
+});
+
+test('reconnaît le statut explicite ou implicite d’un score provisoire', () => {
+  assert.equal(isProvisionalScore({ provisional: true }), true);
+  assert.equal(isProvisionalScore('{"status":"INSUFFICIENT_DATA"}'), true);
+  assert.equal(isProvisionalScore({ provisional: false, status: 'COMPLETE' }), false);
+  assert.equal(isProvisionalScore('{invalide'), false);
 });
 
 test('distingue un score zéro d’un score absent ou invalide', () => {

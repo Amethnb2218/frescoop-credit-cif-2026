@@ -1,3 +1,5 @@
+import { calculateLoanTerms } from './creditCalculations.js';
+
 const REASON_MESSAGES = {
   offline: 'navigateur hors ligne',
   not_configured: 'service Teranga non configuré',
@@ -36,7 +38,7 @@ function revenue(project, saleableProduction) {
     : Math.round(saleableProduction * price);
 }
 
-export function buildFeasibilityMetrics(localMetrics = {}, project = {}, externalSignals = [], source = {}) {
+export function buildFeasibilityMetrics(localMetrics = {}, project = {}, externalSignals = [], source = {}, financial = {}) {
   const declaredYield = agriculturalNumber(project.expected_yield, { positive: true });
   const yieldSignal = externalSignals.find(signal => signal?.type === 'yield');
   const terangaYield = yieldSignal && typeof yieldSignal.predicted_yield_kg_ha === 'number'
@@ -51,6 +53,26 @@ export function buildFeasibilityMetrics(localMetrics = {}, project = {}, externa
   const retainedProduction = production(project, retainedYield);
   const declaredRevenue = revenue(project, declaredProduction.saleable);
   const retainedRevenue = revenue(project, retainedProduction.saleable);
+  const budgetTotal = agriculturalNumber(localMetrics.budget_total);
+  const financingNeed = agriculturalNumber(localMetrics.financing_gap);
+  const credit = {
+    ...financial.credit,
+    amount_requested: financial.credit?.amount_requested ?? project.amount_requested,
+  };
+  const loanTerms = calculateLoanTerms(credit);
+  const requestedAmount = loanTerms.principal;
+  const recommendedAmount = financingNeed == null ? null : Math.min(requestedAmount, financingNeed);
+  const financingDifference = financingNeed == null ? null : requestedAmount - financingNeed;
+  const projectMargin = retainedRevenue == null || budgetTotal == null ? null : retainedRevenue - budgetTotal;
+  const marginAfterDebt = projectMargin == null || loanTerms.total_repayable <= 0
+    ? null : projectMargin - loanTerms.total_repayable;
+  const stressedRevenue = retainedRevenue == null ? null : Math.round(retainedRevenue * 0.8);
+  const stressedMarginAfterDebt = stressedRevenue == null || budgetTotal == null || loanTerms.total_repayable <= 0
+    ? null : stressedRevenue - budgetTotal - loanTerms.total_repayable;
+  const debtCoverageRatio = projectMargin == null || loanTerms.total_repayable <= 0
+    ? null : projectMargin / loanTerms.total_repayable;
+  const stressedDebtCoverageRatio = stressedRevenue == null || budgetTotal == null || loanTerms.total_repayable <= 0
+    ? null : (stressedRevenue - budgetTotal) / loanTerms.total_repayable;
   return {
     ...localMetrics,
     project_surface_ha: agriculturalNumber(project.project_surface_ha, { positive: true }),
@@ -70,6 +92,21 @@ export function buildFeasibilityMetrics(localMetrics = {}, project = {}, externa
     revenue_adjustment: declaredRevenue == null || retainedRevenue == null
       ? null : retainedRevenue - declaredRevenue,
     external_adjustment_applied: adjustmentAllowed && retainedYield !== declaredYield,
+    project_cost: budgetTotal,
+    financing_need: financingNeed,
+    amount_requested: requestedAmount || null,
+    recommended_amount: recommendedAmount,
+    financing_difference: financingDifference,
+    interest_rate: loanTerms.interest_rate,
+    interest_amount: loanTerms.interest_amount,
+    total_repayable: loanTerms.total_repayable || null,
+    project_margin: projectMargin,
+    margin_after_debt: marginAfterDebt,
+    stressed_revenue: stressedRevenue,
+    stressed_margin_after_debt: stressedMarginAfterDebt,
+    debt_coverage_ratio: debtCoverageRatio == null ? null : Number(debtCoverageRatio.toFixed(4)),
+    stressed_debt_coverage_ratio: stressedDebtCoverageRatio == null ? null : Number(stressedDebtCoverageRatio.toFixed(4)),
+    repayment_possible: marginAfterDebt == null ? null : marginAfterDebt >= 0,
   };
 }
 

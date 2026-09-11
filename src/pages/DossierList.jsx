@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
-import { formatCFA, formatDate, STATUS_LABELS, prequalLabel, prequalColor, scoreStyle, getMissingScoreData, isScoreAvailable } from '../lib/format';
+import { formatCFA, formatDate, STATUS_LABELS, prequalLabel, prequalColor, scoreStyle, getMissingScoreData, isProvisionalScore, isScoreAvailable } from '../lib/format';
 import { Plus, Search, Filter } from 'lucide-react';
 
 export default function DossierList() {
@@ -95,9 +95,7 @@ export default function DossierList() {
                     </td>
                     <td style={{ fontWeight: 600 }}>{formatCFA(d.amount_requested)}</td>
                     <td>
-                      {isScoreAvailable(d.prequalification_score) ? (
-                        <ScoreBadge score={d.prequalification_score} prequalification={d.prequalification} />
-                      ) : <MissingScoreSummary scoreDetails={d.prequalification_score_details} />}
+                      <ScoreSummary dossier={d} />
                     </td>
                     <td>
                       <span className={`badge badge-${d.status === 'draft' ? 'neutral' : ['decided','exported','disbursed','closed'].includes(d.status) ? 'success' : 'warning'}`}>
@@ -124,6 +122,34 @@ export default function DossierList() {
   );
 }
 
+function ScoreSummary({ dossier }) {
+  const hasScore = isScoreAvailable(dossier.prequalification_score);
+  const provisional = isProvisionalScore(dossier.prequalification_score_details);
+  const missing = getMissingScoreData(dossier.prequalification_score_details);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 180 }}>
+      {hasScore && (
+        <ScoreBadge
+          score={dossier.prequalification_score}
+          prequalification={dossier.prequalification}
+          provisional={provisional}
+        />
+      )}
+      <div>
+        {hasScore && provisional && (
+          <div className="text-xs" style={{ fontWeight: 700, color: 'var(--c-warning)' }}>Score provisoire</div>
+        )}
+        {hasScore && !provisional && (
+          <div className="text-xs" style={{ fontWeight: 700 }}>Score définitif</div>
+        )}
+        {(!hasScore || missing.length > 0) && (
+          <MissingScoreSummary scoreDetails={dossier.prequalification_score_details} />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MissingScoreSummary({ scoreDetails }) {
   const missing = getMissingScoreData(scoreDetails);
   if (missing.length === 0) {
@@ -141,9 +167,10 @@ function MissingScoreSummary({ scoreDetails }) {
   );
 }
 
-function ScoreBadge({ score, prequalification }) {
+function ScoreBadge({ score, prequalification, provisional = false }) {
   const style = scoreStyle(score);
-  const description = `${style.label}, score technique ${score} sur 100${prequalification ? `, ${prequalLabel(prequalification)}` : ''}`;
+  const scoreLabel = provisional ? 'score provisoire' : 'score définitif';
+  const description = `${style.label}, ${scoreLabel} ${score} sur 100${prequalification ? `, ${prequalLabel(prequalification)}` : ''}`;
   return (
     <span
       aria-label={description}

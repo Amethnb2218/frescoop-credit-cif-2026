@@ -304,9 +304,23 @@ export default function DossierNew() {
   return (
     <div>
       <div className="page-header">
-        <button className="btn btn-ghost btn-sm" onClick={() => navigate('/dossiers')} style={{ marginBottom: 8 }}>
-          <ArrowLeft size={14} /> Retour
-        </button>
+        <div className="flex items-center" style={{ justifyContent: 'space-between', width: '100%', marginBottom: 8 }}>
+          <div className="flex items-center" style={{ gap: 8 }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => navigate('/dossiers')}>
+              <ArrowLeft size={14} /> Retour
+            </button>
+            {step > 0 && (
+              <button className="btn btn-secondary" onClick={() => setStep(s => s - 1)}>
+                <ArrowLeft size={14} /> Précédent
+              </button>
+            )}
+          </div>
+          {step < STEPS.length - 1 && (
+            <button className="btn btn-primary" onClick={nextStep}>
+              Suivant <ArrowRight size={14} />
+            </button>
+          )}
+        </div>
         <h1 className="page-title">Nouvelle demande de crédit</h1>
         {!isOnline() && (
           <p className="page-subtitle" style={{ color: 'var(--c-warning)' }}>
@@ -359,12 +373,6 @@ export default function DossierNew() {
           <StepSoumission form={form} update={update} saving={saving} onSave={handleSave} setStep={setStep} />
         </>}
 
-        {step < STEPS.length - 1 && (
-          <div className="flex justify-between items-center" style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--c-border)' }}>
-            {step > 0 ? <button className="btn btn-secondary" onClick={() => setStep(s => s - 1)}><ArrowLeft size={14} /> Précédent</button> : <div />}
-            <button className="btn btn-primary" onClick={nextStep}>Suivant <ArrowRight size={14} /></button>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -580,7 +588,7 @@ function StepProjetAgricole({ form, update }) {
   return (
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Projet agricole</h2>
-      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Décrivez la faisabilité technique et les estimations du projet.</p>
+      <p className="text-sm text-muted" style={{ marginBottom: 16 }}>Renseignez les données observées et les hypothèses déclarées par le demandeur. Le moteur FresCoop les contrôlera dans la faisabilité agronomique.</p>
       <div className="grid-2">
         <div className="field">
           <label className="field-label">Culture *</label>
@@ -616,7 +624,8 @@ function StepProjetAgricole({ form, update }) {
         <div className="field"><label className="field-label">Source d'eau</label><input className="input" value={form.water_source} onChange={e => update('water_source', e.target.value)} /></div>
         <div className="field"><label className="field-label">Fiabilité de l'eau</label><select className="input" value={form.water_reliability} onChange={e => update('water_reliability', e.target.value)}><option value="">Sélectionner</option><option value="sécurisée">Sécurisée</option><option value="partielle">Partielle</option><option value="incertaine">Incertaine</option></select></div>
       </div>
-      <h3 style={{ fontSize: 'var(--fs-14)', margin: '20px 0 10px' }}>Estimations du projet</h3>
+      <h3 style={{ fontSize: 'var(--fs-14)', margin: '20px 0 4px' }}>Hypothèses déclarées du projet</h3>
+      <p className="text-xs text-muted">À renseigner par l’agent d’après le demandeur et les justificatifs disponibles. Ces valeurs seront comparées aux résultats retenus dans l’étape Faisabilité agronomique.</p>
       <div className="grid-2" style={{ marginTop: 16 }}>
         <div className="field"><label className="field-label">Rendement (kg/ha)</label><input className="input" type="number" min="0" value={form.expected_yield} onChange={e => update('expected_yield', e.target.value)} /></div>
         <div className="field"><label className="field-label">Prix (FCFA/kg)</label><input className="input" type="number" min="0" value={form.expected_price} onChange={e => update('expected_price', e.target.value)} /></div>

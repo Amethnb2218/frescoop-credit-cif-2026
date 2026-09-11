@@ -164,7 +164,7 @@ test('deux dossiers non éligibles gardent des scores différents', () => {
   assert.notEqual(capaciteLimitee.score, tresFaible.score);
 });
 
-test('un dossier incomplet ne reçoit aucun score numérique', () => {
+test('un dossier incomplet reçoit un score provisoire explicable', () => {
   const result = evaluatePrequalification(
     { ...dossier, applicant_id_number: null },
     [],
@@ -172,9 +172,20 @@ test('un dossier incomplet ne reçoit aucun score numérique', () => {
     [],
     rules,
   );
-  assert.equal(result.score, null);
+  assert.equal(typeof result.score, 'number');
+  assert.ok(result.score >= 0 && result.score <= 100);
+  assert.equal(result.score, 30);
   assert.equal(result.repaymentCapacity, 'UNKNOWN');
-  assert.equal(result.details.message, 'Non calculé — données insuffisantes');
+  assert.equal(result.details.status, 'INSUFFICIENT_DATA');
+  assert.equal(result.details.provisional, true);
+  assert.match(result.details.message, /Score provisoire calculé sur les données disponibles/);
+  assert.equal(result.details.raw_score, 30);
+  assert.deepEqual(result.details.components, {
+    identity: { points: 15, maximum: 15 },
+    capacity: { points: 0, maximum: 35 },
+    evidence: { points: 0, maximum: 30, coverage: 0, quality: 0 },
+    risk: { points: 15, maximum: 20 },
+  });
   assert.equal(result.details.capacity_ratio, null);
   assert.equal(result.details.retained_capacity_ratio, null);
   assert.equal(result.details.stressed_capacity_ratio, null);
@@ -260,11 +271,15 @@ test('distingue les intrants absents des intrants sans coût positif', () => {
   assert.deepEqual(noCost.details.missing_data.map(item => item.code), ['POSITIVE_INPUT_COST_REQUIRED']);
 });
 
-test('la complétion puis le recalcul produit un score numérique', () => {
+test('la complétion fait passer le score de provisoire à définitif', () => {
   const incomplete = evaluateComplete({ ...dossier, activity_type: null }, cashflow(1690), evidence(['A']));
   const complete = evaluateComplete(dossier, cashflow(1690), evidence(['A']));
-  assert.equal(incomplete.score, null);
+  assert.equal(typeof incomplete.score, 'number');
+  assert.equal(incomplete.details.provisional, true);
+  assert.equal(incomplete.details.status, 'INSUFFICIENT_DATA');
   assert.equal(typeof complete.score, 'number');
+  assert.equal(complete.details.provisional, undefined);
+  assert.equal(complete.details.status, undefined);
 });
 
 test('conserve un score numérique égal à zéro', () => {
