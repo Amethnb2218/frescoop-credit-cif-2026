@@ -3,6 +3,7 @@ import { getDb } from '../db.js';
 import { authMiddleware, tenantGuard } from '../auth.js';
 import { logAudit } from './audit.js';
 import { findAccessibleDossier, hasBicConsent } from '../services/dossierAccess.js';
+import { resolveFinancingNeed, resolveLoanFinancials } from '../services/loanFinancials.js';
 
 const router = Router();
 
@@ -42,6 +43,9 @@ router.get('/memo/:dossierId/csv', authMiddleware, tenantGuard, async (req, res)
       `Identité,N° ID,${esc(memo.identity.id_number)}`,
       `Identité,Localisation,${esc(memo.identity.location)}`,
       `Demande,Montant demandé,${memo.request.amount || ''}`,
+      `Demande,Taux d'intérêt (%),${memo.request.interest_rate ?? ''}`,
+      `Demande,Intérêts,${memo.request.interest_amount}`,
+      `Demande,Total dû,${memo.request.total_repayable}`,
       `Demande,Objet,${esc(memo.request.purpose)}`,
       `Demande,Durée (mois),${memo.request.duration_months || ''}`,
       `Demande,Calendrier,${esc(memo.request.schedule)}`,
@@ -65,6 +69,12 @@ router.get('/memo/:dossierId/csv', authMiddleware, tenantGuard, async (req, res)
       `Garanties,Épargne,${memo.guarantees.savings || ''}`,
       `Garanties,Type,${esc(memo.guarantees.type)}`,
     ];
+
+    if (memo.request.financing) {
+      lines.push(`Demande,Besoin réel,${memo.request.financing.actual_need}`);
+      lines.push(`Demande,Surfinancement,${memo.request.financing.overfinancing}`);
+      lines.push(`Demande,Montant conseillé,${memo.request.financing.recommended_amount}`);
+    }
 
     if (memo.decision) {
       lines.push(`Décision,Résultat,${esc(memo.decision.result)}`);
@@ -104,6 +114,9 @@ async function buildMemo(db, dossierId, tenantId) {
   const stressResult = await db.execute({ sql: 'SELECT * FROM stress_tests WHERE dossier_id = ? AND tenant_id = ? ORDER BY computed_at DESC LIMIT 5', args: [dossierId, tenantId] });
   const flagsResult = await db.execute({ sql: 'SELECT * FROM risk_flags WHERE dossier_id = ? AND tenant_id = ?', args: [dossierId, tenantId] });
 
+  const projectResult = await db.execute({ sql: 'SELECT calculated_metrics FROM agricultural_project_assessments WHERE dossier_id = ? AND tenant_id = ?', args: [dossierId, tenantId] });
+  const loanFinancials = resolveLoanFinancials(dossier);
+  const financing = resolveFinancingNeed(dossier, projectResult.rows[0]);
   const evidence = evidenceResult.rows;
   const cashflow = cashflowResult.rows;
   const bicRecords = bicResult.rows;
@@ -111,13 +124,22 @@ async function buildMemo(db, dossierId, tenantId) {
   const totalRevenue = cashflow.reduce((s, e) => s + (e.revenue || 0), 0);
   const totalExpenses = cashflow.reduce((s, e) => s + (e.expenses || 0), 0);
   const totalDebt = cashflow.reduce((s, e) => s + (e.debt_payments || 0), 0);
-  const monthlyPayment = dossier.amount_requested && dossier.duration_months ? Math.ceil(dossier.amount_requested / dossier.duration_months) : 0;
+  const monthlyPayment = loanFinancials.monthly_payment;
 
   return {
     generated_at: new Date().toISOString(),
     is_demo: true,
     identity: { name: dossier.applicant_name, phone: dossier.applicant_phone, id_number: dossier.applicant_id_number, location: dossier.applicant_location },
-    request: { amount: dossier.amount_requested, purpose: dossier.credit_purpose, duration_months: dossier.duration_months, schedule: dossier.desired_schedule },
+    request: {
+      amount: dossier.amount_requested,
+      purpose: dossier.credit_purpose,
+      duration_months: dossier.duration_months,
+      schedule: dossier.desired_schedule,
+      interest_rate: loanFinancials.interest_rate,
+      interest_amount: loanFinancials.interest_amount,
+      total_repayable: loanFinancials.total_repayable,
+      financing,
+    },
     activity: { sector: dossier.sector, type: dossier.activity_type, experience_years: dossier.years_experience, surface_ha: dossier.surface_ha },
     cashflow_summary: { total_revenue: totalRevenue, total_expenses: totalExpenses, total_debt: totalDebt, net_flow: totalRevenue - totalExpenses - totalDebt, monthly_payment: monthlyPayment },
     evidence_summary: { total: evidence.length, by_level: { A: evidence.filter(e => e.verification_level === 'A').length, B: evidence.filter(e => e.verification_level === 'B').length, C: evidence.filter(e => e.verification_level === 'C').length, D: evidence.filter(e => e.verification_level === 'D').length } },

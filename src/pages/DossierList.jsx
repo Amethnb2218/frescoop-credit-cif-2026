@@ -87,7 +87,7 @@ export default function DossierList() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(d => (
+              {filtered.map(d => (
                   <tr key={d.id}>
                     <td>
                       <div className="table-cell-primary">{d.applicant_name || 'Non renseigné'}</div>
@@ -99,7 +99,7 @@ export default function DossierList() {
                     </td>
                     <td>
                       <span className={`badge badge-${d.status === 'draft' ? 'neutral' : ['decided','exported','disbursed','closed'].includes(d.status) ? 'success' : 'warning'}`}>
-                        {STATUS_LABELS[d.status]}
+                        {STATUS_LABELS[d.status] || d.status}
                       </span>
                     </td>
                     <td>
@@ -110,7 +110,12 @@ export default function DossierList() {
                       ) : <span className="text-xs text-muted">Non évalué</span>}
                     </td>
                     <td><span className="text-xs text-muted">{formatDate(d.updated_at || d.created_at)}</span></td>
-                    <td><Link to={`/dossiers/${d.id}`} className="btn btn-secondary btn-sm">Ouvrir</Link></td>
+                    <td>
+                      <div className="flex gap-2">
+                        {user?.role === 'AGENT' && ['draft', 'incomplete'].includes(d.status) && <Link to={`/dossiers/${d.id}/edit`} className="btn btn-primary btn-sm">Modifier</Link>}
+                        <Link to={`/dossiers/${d.id}`} className="btn btn-secondary btn-sm">Ouvrir</Link>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -126,58 +131,45 @@ function ScoreSummary({ dossier }) {
   const hasScore = isScoreAvailable(dossier.prequalification_score);
   const provisional = isProvisionalScore(dossier.prequalification_score_details);
   const missing = getMissingScoreData(dossier.prequalification_score_details);
+  const fullDescription = missing.length > 0
+    ? `Données à compléter : ${missing.map(item => item.label).join(', ')}`
+    : '';
+
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 180 }}>
-      {hasScore && (
-        <ScoreBadge
-          score={dossier.prequalification_score}
-          prequalification={dossier.prequalification}
-          provisional={provisional}
-        />
-      )}
+      {hasScore && <ScoreBadge score={dossier.prequalification_score} prequalification={dossier.prequalification} provisional={provisional} />}
       <div>
-        {hasScore && provisional && (
-          <div className="text-xs" style={{ fontWeight: 700, color: 'var(--c-warning)' }}>Score provisoire</div>
+        {hasScore && (
+          <div className="text-xs" style={{ fontWeight: 700, color: provisional ? '#92400e' : 'var(--c-text)' }}>
+            {provisional ? 'Score provisoire' : 'Score définitif'}
+          </div>
         )}
-        {hasScore && !provisional && (
-          <div className="text-xs" style={{ fontWeight: 700 }}>Score définitif</div>
-        )}
-        {(!hasScore || missing.length > 0) && (
-          <MissingScoreSummary scoreDetails={dossier.prequalification_score_details} />
+        {!hasScore && missing.length === 0 && <span className="text-xs text-muted">Non calculé — données insuffisantes</span>}
+        {missing.length > 0 && (
+          <span className="text-xs text-muted" title={fullDescription} aria-label={fullDescription}>
+            <strong style={{ color: 'var(--c-text)' }}>À compléter :</strong>{' '}
+            {missing.slice(0, 2).map(item => item.label).join(', ')}
+            {missing.length > 2 ? ` +${missing.length - 2}` : ''}
+          </span>
         )}
       </div>
     </div>
   );
 }
 
-function MissingScoreSummary({ scoreDetails }) {
-  const missing = getMissingScoreData(scoreDetails);
-  if (missing.length === 0) {
-    return <span className="text-xs text-muted">Non calculé — données insuffisantes</span>;
-  }
-
-  const visible = missing.slice(0, 2).map(item => item.label);
-  const remaining = missing.length - visible.length;
-  const fullDescription = `Données à compléter : ${missing.map(item => item.label).join(', ')}`;
-  return (
-    <span className="text-xs text-muted" title={fullDescription} aria-label={fullDescription}>
-      <strong style={{ color: 'var(--c-text)' }}>À compléter :</strong> {visible.join(', ')}
-      {remaining > 0 ? ` +${remaining}` : ''}
-    </span>
-  );
-}
-
 function ScoreBadge({ score, prequalification, provisional = false }) {
-  const style = scoreStyle(score);
+  if (!isScoreAvailable(score)) return null;
+  const numericScore = Number(score);
+  const style = scoreStyle(numericScore);
   const scoreLabel = provisional ? 'score provisoire' : 'score définitif';
-  const description = `${style.label}, ${scoreLabel} ${score} sur 100${prequalification ? `, ${prequalLabel(prequalification)}` : ''}`;
+  const description = `${style.label}, ${scoreLabel} ${numericScore} sur 100${prequalification ? `, ${prequalLabel(prequalification)}` : ''}`;
   return (
     <span
       aria-label={description}
       title={description}
       style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', background: style.background, border: `2px solid ${style.border}`, fontSize: 11, fontWeight: 700, color: style.color }}
     >
-      {score}
+      {numericScore}
     </span>
   );
 }

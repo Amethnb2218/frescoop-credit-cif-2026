@@ -4,8 +4,14 @@ import {
   canTransitionDossierStatus,
   normalizeGuarantors,
   validateDossierFields,
+  validateFinancialFields,
   validateGuarantors,
 } from './dossiers.js';
+import {
+  canExerciseDecisionAuthority,
+  isDecisionStatusAllowed,
+  resolveDecisionAuthority,
+} from '../services/dossierAccess.js';
 
 const validDossier = {
   applicant_id_number: ' sn-2024-78432 ',
@@ -21,6 +27,22 @@ test('valide une CNI synthétique et le périmètre agricole', () => {
   assert.match(validateDossierFields({ ...validDossier, activity_type: 'Riziculture' }), /invalide/);
 });
 
+test('valide les montants, intérêts, durées et calendriers financiers', () => {
+  const valid = {
+    amount_requested: 500000,
+    duration_months: 12,
+    desired_schedule: 'DECLINING',
+    interest_rate: 12,
+    interest_amount: 39000,
+    total_repayable: 539000,
+  };
+  assert.equal(validateFinancialFields(valid), null);
+  assert.match(validateFinancialFields({ ...valid, amount_requested: -1 }), /positif/);
+  assert.match(validateFinancialFields({ ...valid, duration_months: 1.5 }), /entier/);
+  assert.match(validateFinancialFields({ ...valid, interest_rate: 101 }), /valide/);
+  assert.match(validateFinancialFields({ ...valid, desired_schedule: 'chaotique' }), /Calendrier/);
+  assert.match(validateFinancialFields({ ...valid, total_repayable: 500000 }), /principal/);
+});
 test('préserve les champs historiques non modifiés lors d’une mise à jour', () => {
   assert.equal(validateDossierFields({ applicant_phone: '+221770000000' }, true), null);
 });
@@ -40,6 +62,25 @@ test('exige un garant structuré pour tout engagement de tiers', () => {
   assert.equal(guarantors[0].commitment_amount, 300000);
   assert.match(validateGuarantors(data, []), /garant/i);
   assert.match(validateGuarantors(data, [{ ...guarantors[0], consent_given: false }]), /consentement/i);
+});
+
+test('applique la matrice de décision aux bornes et aux administrateurs', () => {
+  const cases = [
+    [999999, 'SUPERVISEUR'],
+    [1000000, 'SUPERVISEUR'],
+    [1000001, 'COMITE'],
+  ];
+  for (const [amountRequested, authority] of cases) {
+    assert.equal(resolveDecisionAuthority(amountRequested), authority);
+  }
+  assert.equal(canExerciseDecisionAuthority('SUPERVISEUR', resolveDecisionAuthority(1000000)), true);
+  assert.equal(canExerciseDecisionAuthority('SUPERVISEUR', resolveDecisionAuthority(1000001)), false);
+  assert.equal(canExerciseDecisionAuthority('COMITE', resolveDecisionAuthority(1000001)), true);
+  assert.equal(canExerciseDecisionAuthority('ADMIN', resolveDecisionAuthority(1000001)), true);
+  assert.equal(canExerciseDecisionAuthority('SUPERADMIN', resolveDecisionAuthority(1000000)), true);
+  assert.equal(isDecisionStatusAllowed('review', resolveDecisionAuthority(1000000)), true);
+  assert.equal(isDecisionStatusAllowed('review', resolveDecisionAuthority(1000001)), false);
+  assert.equal(isDecisionStatusAllowed('committee_ready', resolveDecisionAuthority(1000001)), true);
 });
 
 test('limite les transitions de statut des agents à leurs propres brouillons', () => {

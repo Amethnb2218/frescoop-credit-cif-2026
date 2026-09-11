@@ -10,7 +10,16 @@ import {
 } from '../services/agriculturalFeasibilityPersistence.js';
 import { buildFinancialCashflow } from '../services/financialCashflow.js';
 import { evaluateDossier } from '../services/prequalification.js';
-import { findAccessibleDossier, isEditableDraft, scoreInvalidationStatement } from '../services/dossierAccess.js';
+import { resolveLoanFinancials } from '../services/loanFinancials.js';
+import {
+  activeDecisionResetStatement,
+  canExerciseDecisionAuthority,
+  findAccessibleDossier,
+  isDecisionStatusAllowed,
+  isEditableDraft,
+  resolveDecisionAuthority,
+  scoreInvalidationStatement,
+} from '../services/dossierAccess.js';
 
 const router = Router();
 const ALLOWED_ACTIVITY_TYPES = new Set([
@@ -129,6 +138,59 @@ function amount(value) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
+function parseNonNegative(value, field, { integer = false, maximum = Infinity } = {}) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > maximum || (integer && !Number.isInteger(parsed))) {
+    return `${field} doit être un nombre ${integer ? 'entier ' : ''}positif valide.`;
+  }
+  return null;
+}
+
+export function validateFinancialFields(data, partial = false) {
+  const required = partial ? [] : ['amount_requested', 'duration_months'];
+  for (const field of required) {
+    if (data[field] === undefined || data[field] === null || data[field] === '') {
+      return `${field} est obligatoire.`;
+    }
+  }
+  const validations = [
+    ['amount_requested', { integer: true }],
+    ['duration_months', { integer: true, maximum: 600 }],
+    ['interest_rate', { maximum: 100 }],
+    ['interest_amount', { integer: true }],
+    ['total_repayable', { integer: true }],
+  ];
+  for (const [field, options] of validations) {
+    if (data[field] === undefined) continue;
+    const error = parseNonNegative(data[field], field, options);
+    if (error) return error;
+  }
+  if (data.amount_requested !== undefined && Number(data.amount_requested) <= 0) {
+    return 'amount_requested doit être strictement positif.';
+  }
+  if (data.duration_months !== undefined && Number(data.duration_months) <= 0) {
+    return 'duration_months doit être strictement positif.';
+  }
+  if (data.desired_schedule !== undefined && data.desired_schedule !== null && data.desired_schedule !== '') {
+    const raw = String(data.desired_schedule).trim().toUpperCase();
+    const accepted = new Set([
+      'MONTHLY', 'MENSUEL', 'MENSUEL CLASSIQUE', 'QUARTERLY', 'TRIMESTRIEL',
+      'SEMIANNUAL', 'SEMI-ANNUAL', 'SEMESTRIEL', 'ANNUAL', 'ANNUEL',
+      'BULLET', 'IN FINE', 'IN FINE (CAPITAL À ÉCHÉANCE)', 'DECLINING', 'DÉGRESSIF',
+      'DEGRESSIF', 'SEASONAL', 'SAISONNIER', 'SAISONNIER (POST-RÉCOLTE)',
+    ]);
+    if (!accepted.has(raw)) return 'Calendrier de remboursement invalide.';
+  }
+  if (data.total_repayable !== undefined) {
+    const computed = resolveLoanFinancials(data);
+    if (Math.round(Number(data.total_repayable)) !== computed.total_repayable) {
+      return 'total_repayable doit être égal au principal augmenté des intérêts.';
+    }
+  }
+  return null;
+}
+
 function json(value, fallback) {
   return JSON.stringify(value ?? fallback);
 }
@@ -223,9 +285,10 @@ router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR'
     const db = getDb();
     const id = req.body.id || uuid();
     const data = req.body;
-    const validationError = validateDossierFields(data);
+    const validationError = validateDossierFields(data) || validateFinancialFields(data);
     if (validationError) return res.status(400).json({ error: validationError });
     data.applicant_id_number = normalizeIdNumber(data.applicant_id_number);
+    const loan = resolveLoanFinancials(data);
 
     const guarantors = normalizeGuarantors(data);
     const guarantorError = validateGuarantors(data, guarantors);
@@ -262,9 +325,10 @@ router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR'
             applicant_name, applicant_phone, applicant_id_number, applicant_location, applicant_activity,
             sector, activity_type, years_experience, surface_ha, production_cycle,
             amount_requested, credit_purpose, duration_months, desired_schedule,
+            interest_rate, interest_amount, total_repayable,
             savings_amount, guarantee_type, group_guarantee, other_guarantees,
             agent_note, created_offline)
-            VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         id, req.tenantId, data.local_id || null, req.user.id,
         data.applicant_name || null, data.applicant_phone || null, data.applicant_id_number || null,
@@ -273,6 +337,7 @@ router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR'
         data.surface_ha || null, data.production_cycle || null,
         data.amount_requested || null, data.credit_purpose || null,
         data.duration_months || null, data.desired_schedule || null,
+        loan.interest_rate, loan.interest_amount, loan.total_repayable,
         data.savings_amount || null, data.guarantee_type || null,
         data.group_guarantee || null, data.other_guarantees || null,
         data.agent_note || null, data.created_offline ? 1 : 0,
@@ -412,7 +477,7 @@ router.put('/:id', authMiddleware, tenantGuard,
     }
 
     const data = req.body;
-    const validationError = validateDossierFields(data, true);
+    const validationError = validateDossierFields(data, true) || validateFinancialFields(data, true);
     if (validationError) return res.status(400).json({ error: validationError });
     if (data.applicant_id_number !== undefined) data.applicant_id_number = normalizeIdNumber(data.applicant_id_number);
     const projectProvided = data.project_assessment !== undefined;
@@ -448,6 +513,13 @@ router.put('/:id', authMiddleware, tenantGuard,
         updates.push(`${f} = ?`);
         args.push(req.body[f]);
       }
+    }
+    const loanInputsChanged = ['amount_requested', 'duration_months', 'desired_schedule', 'interest_rate', 'interest_amount']
+      .some(field => req.body[field] !== undefined);
+    if (loanInputsChanged) {
+      const loan = resolveLoanFinancials(data, dossier);
+      updates.push('interest_rate = ?', 'interest_amount = ?', 'total_repayable = ?');
+      args.push(loan.interest_rate, loan.interest_amount, loan.total_repayable);
     }
 
     if (updates.length === 0 && !guarantorsProvided && !projectProvided
@@ -662,7 +734,8 @@ router.put('/:id/status', authMiddleware, tenantGuard, async (req, res) => {
   }
 });
 
-router.post('/:id/decide', authMiddleware, tenantGuard, requireRole('COMITE', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
+router.post('/:id/decide', authMiddleware, tenantGuard,
+  requireRole('SUPERVISEUR', 'COMITE', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
   try {
     const db = getDb();
     const { id } = req.params;
@@ -682,8 +755,22 @@ router.post('/:id/decide', authMiddleware, tenantGuard, requireRole('COMITE', 'A
     if (!existing.rows[0]) return res.status(404).json({ error: 'Dossier introuvable' });
 
     const dossier = existing.rows[0];
-    if (!['committee_ready', 'committee'].includes(dossier.status)) {
-      return res.status(409).json({ error: 'Le dossier doit être transmis au comité avant la décision finale' });
+    const decisionAuthority = resolveDecisionAuthority(dossier.amount_requested)
+      || (['committee_ready', 'committee'].includes(dossier.status) ? 'COMITE' : null);
+    if (!decisionAuthority) {
+      return res.status(409).json({ error: 'Le montant demandé ne permet pas de déterminer l’autorité de décision' });
+    }
+    if (!canExerciseDecisionAuthority(req.user.role, decisionAuthority)) {
+      return res.status(403).json({
+        error: `Décision réservée à l’autorité ${decisionAuthority} pour ce montant`,
+        decision_authority: decisionAuthority,
+      });
+    }
+    if (!isDecisionStatusAllowed(dossier.status, decisionAuthority)) {
+      const error = decisionAuthority === 'COMITE'
+        ? 'Le dossier doit être transmis au comité avant la décision finale'
+        : 'Le dossier doit atteindre le stade de revue métier avant la décision finale';
+      return res.status(409).json({ error, decision_authority: decisionAuthority });
     }
     const isOverride = dossier.prequalification &&
       ((decision === 'approved' && dossier.prequalification === 'NON_ELIGIBLE') ||
@@ -691,28 +778,111 @@ router.post('/:id/decide', authMiddleware, tenantGuard, requireRole('COMITE', 'A
        (amount && amount !== dossier.amount_requested));
 
     const nextStatus = decision === 'complement' ? 'incomplete' : 'decided';
-    await db.execute({
-      sql: `UPDATE dossiers SET
-            decision = ?, decision_amount = ?, decision_duration = ?,
-            decision_schedule = ?, decision_motif = ?,
-            decided_by = ?, decided_at = datetime('now'),
-            status = ?, updated_at = datetime('now')
-            WHERE id = ? AND tenant_id = ?`,
-      args: [decision, amount || null, duration || null, schedule || null, motif,
-        req.user.id, nextStatus, id, req.tenantId],
-    });
+    const decisionId = uuid();
+    await db.batch([
+      {
+        sql: `INSERT INTO dossier_decision_history
+              (id, dossier_id, tenant_id, decision, amount, duration, schedule, motif,
+               decided_by, is_override) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [decisionId, id, req.tenantId, decision, amount || null, duration || null,
+          schedule || null, motif, req.user.id, isOverride ? 1 : 0],
+      },
+      {
+        sql: `UPDATE dossiers SET
+              decision = ?, decision_amount = ?, decision_duration = ?,
+              decision_schedule = ?, decision_motif = ?,
+              decided_by = ?, decided_at = datetime('now'),
+              status = ?, updated_at = datetime('now')
+              WHERE id = ? AND tenant_id = ?`,
+        args: [decision, amount || null, duration || null, schedule || null, motif,
+          req.user.id, nextStatus, id, req.tenantId],
+      },
+    ], 'write');
 
     const auditAction = isOverride ? 'DECISION_OVERRIDE' : 'DECISION_MADE';
     await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, auditAction, 'dossier', id, {
       decision, amount, duration, motif,
+      decision_authority: decisionAuthority,
+      actor_role: req.user.role,
       prequalification: dossier.prequalification,
       override: isOverride,
+      decision_history_id: decisionId,
     }, req);
 
-    res.json({ ok: true, id, decision, status: nextStatus, override: isOverride });
+    res.json({
+      ok: true,
+      id,
+      decision,
+      status: nextStatus,
+      override: isOverride,
+      decision_authority: decisionAuthority,
+    });
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
+
+router.post('/:id/resubmit', authMiddleware, tenantGuard,
+  requireRole('AGENT', 'SUPERVISEUR', 'ADMIN', 'SUPERADMIN'), async (req, res) => {
+    try {
+      const db = getDb();
+      const { id } = req.params;
+      const dossier = await findAccessibleDossier(db, id, req);
+      if (!dossier) return res.status(404).json({ error: 'Dossier introuvable ou non autorisé' });
+      if (dossier.status !== 'incomplete') {
+        return res.status(409).json({ error: 'Seul un dossier incomplet peut être soumis à nouveau.' });
+      }
+      const suppliedFields = Array.isArray(req.body?.supplied_fields)
+        ? [...new Set(req.body.supplied_fields.map(value => String(value).trim()).filter(Boolean))]
+        : [];
+      const note = String(req.body?.note || '').trim();
+      if (!note && suppliedFields.length === 0) {
+        return res.status(400).json({ error: 'Décrivez le complément ou fournissez les champs complétés.' });
+      }
+      const previousDecision = await db.execute({
+        sql: `SELECT id FROM dossier_decision_history WHERE dossier_id = ? AND tenant_id = ?
+              ORDER BY created_at DESC, id DESC LIMIT 1`,
+        args: [id, req.tenantId],
+      });
+      const evaluation = await evaluateDossier(db, req.tenantId, id);
+      if (!evaluation) return res.status(404).json({ error: 'Dossier introuvable' });
+      const complementId = uuid();
+      await db.batch([
+        {
+          sql: `INSERT INTO dossier_complement_history
+                (id, dossier_id, tenant_id, submitted_by, note, supplied_fields,
+                 previous_decision_id, score_before, score_after, score_details)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [complementId, id, req.tenantId, req.user.id, note || null,
+            json(suppliedFields, []), previousDecision.rows[0]?.id || null,
+            dossier.prequalification_score, evaluation.score, json(evaluation.details, {})],
+        },
+        activeDecisionResetStatement(id, req.tenantId),
+        {
+          sql: "UPDATE dossiers SET status = 'submitted', updated_at = datetime('now') WHERE id = ? AND tenant_id = ? AND status = 'incomplete'",
+          args: [id, req.tenantId],
+        },
+      ], 'write');
+      await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role,
+        'DOSSIER_RESUBMITTED', 'dossier', id, {
+          complement_history_id: complementId,
+          supplied_fields: suppliedFields,
+          note: note || null,
+          score_before: dossier.prequalification_score,
+          score_after: evaluation.score,
+        }, req);
+      res.json({
+        ok: true,
+        id,
+        status: 'submitted',
+        score: evaluation.score,
+        prequalification: evaluation.prequalification,
+        score_details: evaluation.details,
+        complement_history_id: complementId,
+      });
+    } catch (error) {
+      res.status(500).json({ error: 'Erreur serveur', detail: error.message });
+    }
+  });
 
 export default router;

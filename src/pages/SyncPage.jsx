@@ -61,7 +61,19 @@ export default function SyncPage() {
     <div>
       <div className="page-header">
         <h1 className="page-title">Synchronisation</h1>
-        <p className="page-subtitle">État de la synchronisation entre cet appareil et le serveur</p>
+        <p className="page-subtitle">Continuité de saisie entre cet appareil et le serveur, y compris en faible connectivité</p>
+      </div>
+
+      <div className="surface mb-6">
+        <div className="surface-title">Ce qui se passe avec ou sans réseau</div>
+        <ol className="text-sm text-muted" style={{ margin: '0 0 14px 20px', lineHeight: 1.7 }}>
+          <li>Le brouillon est enregistré localement sur l'appareil pendant la saisie hors ligne.</li>
+          <li>Les opérations en attente sont envoyées au serveur au retour de la connexion, sans créer de doublon.</li>
+          <li>Le serveur recalcule l'analyse et le score avec les données synchronisées.</li>
+        </ol>
+        <div style={{ padding: '10px 12px', background: 'var(--c-bg)', border: '1px solid var(--c-border-light)', borderRadius: 'var(--radius)', fontSize: 'var(--fs-12)', lineHeight: 1.6 }}>
+          Les appels Teranga sont effectués côté serveur : aucun modèle d'IA n'est installé sur le téléphone. Si Teranga est indisponible, le moteur local FresCoop continue sans pénalité automatique ; la décision finale reste humaine.
+        </div>
       </div>
 
       <div className="surface mb-6">

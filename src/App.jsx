@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate, useLocation, useNavigate, Link } from 'react-router-dom';
-import { useState, useEffect } from 'react';
+import { Suspense, lazy, useState, useEffect } from 'react';
 import { isLoggedIn, getUser, logout, api } from './lib/api';
 import { isOnline, onConnectivityChange } from './lib/offline';
 import { ROLE_LABELS } from './lib/format';
@@ -11,12 +11,17 @@ import Dashboard from './pages/Dashboard';
 import DossierList from './pages/DossierList';
 import DossierNew from './pages/DossierNew';
 import DossierDetail from './pages/DossierDetail';
-import AuditLog from './pages/AuditLog';
-import RulesPage from './pages/RulesPage';
-import StatsPage from './pages/StatsPage';
-import ProductsPage from './pages/ProductsPage';
-import SyncPage from './pages/SyncPage';
-import AdminPage from './pages/AdminPage';
+
+const AuditLog = lazy(() => import('./pages/AuditLog'));
+const RulesPage = lazy(() => import('./pages/RulesPage'));
+const StatsPage = lazy(() => import('./pages/StatsPage'));
+const ProductsPage = lazy(() => import('./pages/ProductsPage'));
+const SyncPage = lazy(() => import('./pages/SyncPage'));
+const AdminPage = lazy(() => import('./pages/AdminPage'));
+
+function PageLoader() {
+  return <div className="loading-state">Chargement de la page...</div>;
+}
 
 const NAV_ITEMS = {
   dashboard: { to: '/', icon: Home, label: 'Tableau de bord' },
@@ -48,7 +53,7 @@ function Navigation({ mobileOpen, setMobileOpen }) {
         const dossiers = res.dossiers || [];
         const role = user?.role;
         let count = 0;
-        if (role === 'AGENT') count = dossiers.filter(d => d.status === 'draft').length;
+        if (role === 'AGENT') count = dossiers.filter(d => ['draft', 'incomplete'].includes(d.status)).length;
         else if (role === 'SUPERVISEUR') count = dossiers.filter(d => ['submitted', 'verification', 'review'].includes(d.status)).length;
         else if (role === 'COMITE') count = dossiers.filter(d => d.status === 'committee').length;
         else count = dossiers.filter(d => ['submitted', 'verification', 'review', 'committee'].includes(d.status)).length;
@@ -122,19 +127,22 @@ export default function App() {
             <OfflineBanner online={online} />
             <div className="page-content">
               <div className="page-inner">
-                <Routes>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/dossiers" element={<DossierList />} />
-                  <Route path="/dossiers/new" element={<DossierNew />} />
-                  <Route path="/dossiers/:id" element={<DossierDetail />} />
-                  <Route path="/rules" element={<RulesPage />} />
-                  <Route path="/audit" element={<AuditLog />} />
-                  <Route path="/stats" element={<StatsPage />} />
-                  <Route path="/products" element={<ProductsPage />} />
-                  <Route path="/sync" element={<SyncPage />} />
-                  <Route path="/admin" element={<AdminPage />} />
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
+                <Suspense fallback={<PageLoader />}>
+                  <Routes>
+                    <Route path="/" element={<Dashboard />} />
+                    <Route path="/dossiers" element={<DossierList />} />
+                    <Route path="/dossiers/new" element={<DossierNew />} />
+                    <Route path="/dossiers/:id/edit" element={<DossierNew />} />
+                    <Route path="/dossiers/:id" element={<DossierDetail />} />
+                    <Route path="/rules" element={<RulesPage />} />
+                    <Route path="/audit" element={<AuditLog />} />
+                    <Route path="/stats" element={<StatsPage />} />
+                    <Route path="/products" element={<ProductsPage />} />
+                    <Route path="/sync" element={<SyncPage />} />
+                    <Route path="/admin" element={<AdminPage />} />
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Routes>
+                </Suspense>
               </div>
             </div>
           </div>

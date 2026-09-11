@@ -3,7 +3,12 @@ import { createHash } from 'crypto';
 import { getDb, uuid } from '../db.js';
 import { authMiddleware, tenantGuard, requireRole } from '../auth.js';
 import { logAudit } from './audit.js';
-import { normalizeGuarantors, validateDossierFields, validateGuarantors } from './dossiers.js';
+import {
+  normalizeGuarantors,
+  validateDossierFields,
+  validateFinancialFields,
+  validateGuarantors,
+} from './dossiers.js';
 import { assessAgriculturalProject } from '../services/agriculturalAssessment.js';
 import { assessAgriculturalFeasibility } from '../services/agriculturalFeasibility.js';
 import {
@@ -12,6 +17,8 @@ import {
 } from '../services/agriculturalFeasibilityPersistence.js';
 import { buildFinancialCashflow } from '../services/financialCashflow.js';
 import { evaluateDossier } from '../services/prequalification.js';
+import { resolveLoanFinancials } from '../services/loanFinancials.js';
+import { isSyncEditableDossier } from '../services/dossierAccess.js';
 
 const router = Router();
 const VALID_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
@@ -139,8 +146,9 @@ router.get('/status', authMiddleware, tenantGuard, async (req, res) => {
 
 async function processDossierOp(db, operation, entityId, payload, req) {
   if (operation === 'create') {
-    const validationError = validateDossierFields(payload);
+    const validationError = validateDossierFields(payload) || validateFinancialFields(payload);
     if (validationError) throw new Error(validationError);
+    const loan = resolveLoanFinancials(payload);
     const guarantors = normalizeGuarantors(payload);
     const guarantorError = validateGuarantors(payload, guarantors);
     if (guarantorError) throw new Error(guarantorError);
@@ -159,15 +167,18 @@ async function processDossierOp(db, operation, entityId, payload, req) {
             applicant_name, applicant_phone, applicant_id_number, applicant_location, applicant_activity,
             sector, activity_type, years_experience, surface_ha, production_cycle,
             amount_requested, credit_purpose, duration_months, desired_schedule,
+            interest_rate, interest_calculation_mode, interest_amount, total_repayable,
             savings_amount, guarantee_type, group_guarantee, other_guarantees, agent_note, created_offline)
-            VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+            VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
       args: [entityId, req.tenantId, payload.local_id || null, req.user.id,
         payload.applicant_name || null, payload.applicant_phone || null,
         String(payload.applicant_id_number || '').trim().toUpperCase(), payload.applicant_location || null,
         payload.applicant_activity || null, payload.sector, payload.activity_type || null,
         payload.years_experience || null, payload.surface_ha || null, payload.production_cycle || null,
         payload.amount_requested || null, payload.credit_purpose || null, payload.duration_months || null,
-        payload.desired_schedule || null, payload.savings_amount || null, payload.guarantee_type || null,
+        payload.desired_schedule || null, loan.interest_rate, loan.interest_calculation_mode,
+        loan.interest_amount, loan.total_repayable,
+        payload.savings_amount || null, payload.guarantee_type || null,
         payload.group_guarantee || null, payload.other_guarantees || null, payload.agent_note || null],
     });
     try {
@@ -182,7 +193,10 @@ async function processDossierOp(db, operation, entityId, payload, req) {
   if (operation === 'update') {
     const dossier = await ownedDossier(db, entityId, req);
     if (!dossier) throw new Error('Dossier introuvable ou non autorisé');
-    const validationError = validateDossierFields(payload, true);
+    if (!isSyncEditableDossier(dossier)) {
+      throw new Error('La synchronisation ne peut modifier qu’un dossier draft ou incomplete');
+    }
+    const validationError = validateDossierFields(payload, true) || validateFinancialFields(payload, true);
     if (validationError) throw new Error(validationError);
     const fields = [
       'applicant_name', 'applicant_phone', 'applicant_location', 'applicant_activity',
@@ -197,6 +211,22 @@ async function processDossierOp(db, operation, entityId, payload, req) {
         updates.push(`${field} = ?`);
         args.push(payload[field]);
       }
+    }
+    if (['amount_requested', 'duration_months', 'desired_schedule', 'interest_rate',
+      'interest_calculation_mode', 'interest_amount'].some(field => payload[field] !== undefined)) {
+      const loan = resolveLoanFinancials(payload, dossier);
+      updates.push(
+        'interest_rate = ?',
+        'interest_calculation_mode = ?',
+        'interest_amount = ?',
+        'total_repayable = ?',
+      );
+      args.push(
+        loan.interest_rate,
+        loan.interest_calculation_mode,
+        loan.interest_amount,
+        loan.total_repayable,
+      );
     }
     if (updates.length) {
       args.push(entityId, req.tenantId);

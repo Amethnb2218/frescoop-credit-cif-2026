@@ -288,6 +288,9 @@ test('recalcule et persiste la chaîne Teranga en ligne puis après synchronisat
       if (String(url).includes('predict-yield')) {
         return { ok: true, status: 200, json: async () => ({ predicted_yield_kg_ha: 3200 }) };
       }
+      if (String(url).includes('/api/chat')) {
+        return { ok: true, status: 200, json: async () => ({ message: 'Analyse Teranga synthétique.' }) };
+      }
       return {
         ok: true,
         status: 200,
@@ -386,6 +389,100 @@ test('recalcule et persiste la chaîne Teranga en ligne puis après synchronisat
 });
 
 
+test('persiste un score provisoire et calcule le total dû avec priorité au montant intérêt', async () => {
+  await withServer(async baseUrl => {
+    const created = await request(baseUrl, '/api/dossiers', owner, {
+      method: 'POST',
+      body: {
+        ...agriculturalPayload('financial-core'),
+        project_assessment: undefined,
+        input_items: [],
+        initial_evidence: [],
+        interest_rate: 99,
+        interest_amount: 24000,
+        desired_schedule: 'MONTHLY',
+      },
+    });
+    assert.equal(created.response.status, 200, JSON.stringify(created.body));
+    assert.equal(typeof created.body.score, 'number');
+    const fetched = await request(baseUrl, '/api/dossiers/financial-core', owner);
+    assert.equal(fetched.body.dossier.interest_rate, 99);
+    assert.equal(fetched.body.dossier.interest_amount, 24000);
+    assert.equal(fetched.body.dossier.total_repayable, 224000);
+    const details = JSON.parse(fetched.body.dossier.prequalification_score_details);
+    assert.equal(details.provisional, true);
+    assert.equal(details.status, 'INSUFFICIENT_DATA');
+    assert.ok(details.missing_fields.includes('agricultural_project'));
+  });
+});
+
+test('refuse une mise à jour sync hors draft ou incomplete', async () => {
+  await db.execute({
+    sql: "UPDATE dossiers SET status = 'submitted' WHERE id = 'dossier-owned' AND tenant_id = ?",
+    args: [tenantA],
+  });
+  await withServer(async baseUrl => {
+    const synced = await request(baseUrl, '/api/sync/push', owner, {
+      method: 'POST',
+      body: { operations: [{
+        operation: 'update', entity_type: 'dossier', entity_id: 'dossier-owned',
+        payload: { applicant_name: 'Modification interdite' },
+        local_timestamp: '2026-09-11T12:00:00.000Z',
+      }] },
+    });
+    assert.equal(synced.response.status, 200);
+    assert.equal(synced.body.results[0].status, 'failed');
+    assert.match(synced.body.results[0].error, /draft ou incomplete/);
+  });
+});
+
+test('archive la décision et le complément lors de la resoumission', async () => {
+  await db.execute({
+    sql: `UPDATE dossiers SET status = 'committee', prequalification_score = 42,
+          prequalification_score_version = 5 WHERE id = 'dossier-owned' AND tenant_id = ?`,
+    args: [tenantA],
+  });
+  await withServer(async baseUrl => {
+    const complement = await request(baseUrl, '/api/dossiers/dossier-owned/decide', committee, {
+      method: 'POST', body: { decision: 'complement', motif: 'Ajouter les justificatifs de revenus' },
+    });
+    assert.equal(complement.response.status, 200, JSON.stringify(complement.body));
+    assert.equal(complement.body.status, 'incomplete');
+
+    const resubmitted = await request(baseUrl, '/api/dossiers/dossier-owned/resubmit', owner, {
+      method: 'POST',
+      body: { note: 'Justificatifs ajoutés', supplied_fields: ['cashflow', 'evidence'] },
+    });
+    assert.equal(resubmitted.response.status, 200, JSON.stringify(resubmitted.body));
+    assert.equal(resubmitted.body.status, 'submitted');
+    assert.equal(typeof resubmitted.body.score, 'number');
+
+    const stored = await db.execute({
+      sql: 'SELECT status, decision, prequalification_score FROM dossiers WHERE id = ? AND tenant_id = ?',
+      args: ['dossier-owned', tenantA],
+    });
+    assert.equal(stored.rows[0].status, 'submitted');
+    assert.equal(stored.rows[0].decision, null);
+    assert.equal(typeof stored.rows[0].prequalification_score, 'number');
+    const decisions = await db.execute({
+      sql: 'SELECT * FROM dossier_decision_history WHERE dossier_id = ? AND tenant_id = ?',
+      args: ['dossier-owned', tenantA],
+    });
+    const complements = await db.execute({
+      sql: 'SELECT * FROM dossier_complement_history WHERE dossier_id = ? AND tenant_id = ?',
+      args: ['dossier-owned', tenantA],
+    });
+    assert.equal(decisions.rows.length >= 1, true);
+    assert.equal(decisions.rows.at(-1).decision, 'complement');
+    assert.equal(complements.rows.length, 1);
+    assert.deepEqual(JSON.parse(complements.rows[0].supplied_fields), ['cashflow', 'evidence']);
+    const audit = await db.execute({
+      sql: "SELECT action FROM audit_log WHERE entity_id = ? AND tenant_id = ? AND action = 'DOSSIER_RESUBMITTED'",
+      args: ['dossier-owned', tenantA],
+    });
+    assert.equal(audit.rows.length, 1);
+  });
+});
 test('gère les preuves et pièces jointes sans accès inter-Agent', async () => {
   await db.execute({
     sql: "UPDATE dossiers SET status = 'draft' WHERE id = 'dossier-owned' AND tenant_id = ?",

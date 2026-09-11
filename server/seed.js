@@ -1,6 +1,58 @@
 import { getDb, uuid } from './db.js';
 import { hashPassword } from './auth.js';
 
+const DEMO_LOAN_RATE = 12;
+
+export const DEMO_ACCOUNTS = [
+  { name: 'FresCoop SuperAdmin', email: 'superadmin@frescoop.demo', role: 'SUPERADMIN', phone: '+221770000001', agency: 'Global', passwordEnv: 'DEMO_PWD' },
+  { name: 'Moussa Diallo', email: 'agent@frescoop.demo', role: 'AGENT', phone: '+221771234567', agency: 'Agence Thiès', passwordEnv: 'DEMO_PWD' },
+  { name: 'Fatou Ndiaye', email: 'superviseur@frescoop.demo', role: 'SUPERVISEUR', phone: '+221772345678', agency: 'Agence Thiès', passwordEnv: 'DEMO_PWD' },
+  { name: 'Ibrahima Sow', email: 'comite@frescoop.demo', role: 'COMITE', phone: '+221773456789', agency: 'Siège Dakar', passwordEnv: 'DEMO_PWD' },
+  { name: 'Aminata Ba', email: 'risk@frescoop.demo', role: 'RISK_MANAGER', phone: '+221774567890', agency: 'Siège Dakar', passwordEnv: 'DEMO_PWD' },
+  { name: 'Admin FresCoop', email: 'admin@frescoop.demo', role: 'ADMIN', phone: '+221770000000', agency: 'Siège Dakar', passwordEnv: 'DEMO_PWD' },
+  { name: 'Oumar Sy', email: 'auditeur@frescoop.demo', role: 'AUDITEUR', phone: '+221775678901', agency: 'Siège Dakar', passwordEnv: 'DEMO_PWD' },
+  { name: 'Seydina Limamou Laye', email: 'seydinalimamoulaye@gmail.com', role: 'ADMIN', phone: '+221770000010', agency: 'Siège Dakar', passwordEnv: 'ADMIN_DEFAULT_PWD' },
+  { name: 'Cherif Hane', email: 'cherifhane@gmail.com', role: 'ADMIN', phone: '+221770000011', agency: 'Siège Dakar', passwordEnv: 'ADMIN_DEFAULT_PWD' },
+  { name: 'Ameth Sall', email: 'amethsl2218@gmail.com', role: 'ADMIN', phone: '+221770000012', agency: 'Siège Dakar', passwordEnv: 'ADMIN_DEFAULT_PWD' },
+];
+
+export const DEMO_DOSSIERS = [
+  { key: 'A', applicant_name: 'Awa Faye', amount_requested: 1500000, duration_months: 10, interest_rate: DEMO_LOAN_RATE },
+  { key: 'B', applicant_name: 'Mamadou Cissé', amount_requested: 500000, duration_months: 8, interest_rate: DEMO_LOAN_RATE },
+  { key: 'C', applicant_name: 'Abdoulaye Diop', amount_requested: 3000000, duration_months: 12, interest_rate: DEMO_LOAN_RATE },
+  { key: 'D', applicant_name: 'Ousmane Ndiaye', amount_requested: 2000000, duration_months: 10, interest_rate: DEMO_LOAN_RATE },
+].map(dossier => ({
+  ...dossier,
+  interest_amount: Math.round(dossier.amount_requested * dossier.interest_rate / 100),
+  total_repayable: dossier.amount_requested + Math.round(dossier.amount_requested * dossier.interest_rate / 100),
+}));
+
+function passwordForAccount(account) {
+  if (account.passwordEnv === 'ADMIN_DEFAULT_PWD') return process.env.ADMIN_DEFAULT_PWD || 'changeme2026';
+  return process.env.DEMO_PWD || 'demo2026';
+}
+
+function isMissingFinancialColumn(error) {
+  return /no column named (interest_rate|interest_amount|total_repayable)/i.test(error?.message || '');
+}
+
+async function insertSeedDossier(db, columns, values, financials) {
+  const extendedColumns = [...columns, 'interest_rate', 'interest_amount', 'total_repayable'];
+  const extendedValues = [...values, financials.interest_rate, financials.interest_amount, financials.total_repayable];
+  try {
+    await db.execute({
+      sql: `INSERT INTO dossiers (${extendedColumns.join(', ')}) VALUES (${extendedValues.map(() => '?').join(', ')})`,
+      args: extendedValues,
+    });
+  } catch (error) {
+    if (!isMissingFinancialColumn(error)) throw error;
+    await db.execute({
+      sql: `INSERT INTO dossiers (${columns.join(', ')}) VALUES (${values.map(() => '?').join(', ')})`,
+      args: values,
+    });
+  }
+}
+
 const AGRONOMIC_RULES = [
   {
     code: 'RULE-AGRO-001',
@@ -48,12 +100,11 @@ export async function ensureAdminAccounts() {
   if (tenantRes.rows.length === 0) return;
   const tenantId = tenantRes.rows[0].id;
 
-  const defaultPwd = process.env.ADMIN_DEFAULT_PWD || 'changeme2026';
   const juryPwd = process.env.JURY_PWD || 'jury2026';
   const admins = [
-    { name: 'Seydina Limamou Laye', email: 'seydinalimamoulaye@gmail.com', role: 'ADMIN', phone: '+221770000010', agency: 'Siège Dakar', pwd: defaultPwd },
-    { name: 'Cherif Hane', email: 'cherifhane@gmail.com', role: 'ADMIN', phone: '+221770000011', agency: 'Siège Dakar', pwd: defaultPwd },
-    { name: 'Ameth Sall', email: 'amethsl2218@gmail.com', role: 'ADMIN', phone: '+221770000012', agency: 'Siège Dakar', pwd: defaultPwd },
+    ...DEMO_ACCOUNTS
+      .filter(account => account.passwordEnv === 'ADMIN_DEFAULT_PWD')
+      .map(account => ({ ...account, pwd: passwordForAccount(account) })),
     { name: 'Membre du Jury CIF', email: 'jury@frescoop.demo', role: 'JURY', phone: '', agency: 'CIF', pwd: juryPwd },
     { name: 'Évaluateur CIF', email: 'evaluateur@frescoop.demo', role: 'JURY', phone: '', agency: 'CIF', pwd: juryPwd },
   ];
@@ -88,20 +139,11 @@ export async function seedIfEmpty() {
     })],
   });
 
-  const demoPwd = process.env.DEMO_PWD || 'demo2026';
-  const adminPwd = process.env.ADMIN_DEFAULT_PWD || 'changeme2026';
-  const users = [
-    { id: uuid(), name: 'FresCoop SuperAdmin', email: 'superadmin@frescoop.demo', role: 'SUPERADMIN', phone: '+221770000001', agency: 'Global', pwd: demoPwd },
-    { id: uuid(), name: 'Moussa Diallo', email: 'agent@frescoop.demo', role: 'AGENT', phone: '+221771234567', agency: 'Agence Thiès', pwd: demoPwd },
-    { id: uuid(), name: 'Fatou Ndiaye', email: 'superviseur@frescoop.demo', role: 'SUPERVISEUR', phone: '+221772345678', agency: 'Agence Thiès', pwd: demoPwd },
-    { id: uuid(), name: 'Ibrahima Sow', email: 'comite@frescoop.demo', role: 'COMITE', phone: '+221773456789', agency: 'Siège Dakar', pwd: demoPwd },
-    { id: uuid(), name: 'Aminata Ba', email: 'risk@frescoop.demo', role: 'RISK_MANAGER', phone: '+221774567890', agency: 'Siège Dakar', pwd: demoPwd },
-    { id: uuid(), name: 'Admin FresCoop', email: 'admin@frescoop.demo', role: 'ADMIN', phone: '+221770000000', agency: 'Siège Dakar', pwd: demoPwd },
-    { id: uuid(), name: 'Oumar Sy', email: 'auditeur@frescoop.demo', role: 'AUDITEUR', phone: '+221775678901', agency: 'Siège Dakar', pwd: demoPwd },
-    { id: uuid(), name: 'Seydina Limamou Laye', email: 'seydinalimamoulaye@gmail.com', role: 'ADMIN', phone: '+221770000010', agency: 'Siège Dakar', pwd: adminPwd },
-    { id: uuid(), name: 'Cherif Hane', email: 'cherifhane@gmail.com', role: 'ADMIN', phone: '+221770000011', agency: 'Siège Dakar', pwd: adminPwd },
-    { id: uuid(), name: 'Ameth Sall', email: 'amethsl2218@gmail.com', role: 'ADMIN', phone: '+221770000012', agency: 'Siège Dakar', pwd: adminPwd },
-  ];
+  const users = DEMO_ACCOUNTS.map(account => ({
+    ...account,
+    id: uuid(),
+    pwd: passwordForAccount(account),
+  }));
 
   for (const u of users) {
     await db.execute({
@@ -138,11 +180,19 @@ export async function seedIfEmpty() {
 
   // === CAS A: Bon dossier ===
   const dossierA = uuid();
-  await db.execute({
-    sql: `INSERT INTO dossiers (id, tenant_id, agent_id, status, applicant_name, applicant_phone, applicant_id_number, applicant_location, applicant_activity, sector, activity_type, years_experience, surface_ha, production_cycle, amount_requested, credit_purpose, duration_months, desired_schedule, savings_amount, guarantee_type, agent_note)
-          VALUES (?, ?, ?, 'review', 'Awa Faye', '+221776543210', 'SN-2024-78432', 'Notto Diobass, Thiès', 'Maraîchage tomates', 'Agriculture', 'Maraîchage', 8, 2.5, 'Oct-Mars (6 mois)', 1500000, 'Achat intrants et semences améliorées', 10, 'Saisonnier (échéances mars-juin)', 200000, 'Caution solidaire groupe', 'Productrice expérimentée, bonne relation coopérative')`,
-    args: [dossierA, tenantId, agentId],
-  });
+  const dossierAFinancials = DEMO_DOSSIERS.find(dossier => dossier.key === 'A');
+  await insertSeedDossier(db, [
+    'id', 'tenant_id', 'agent_id', 'status', 'applicant_name', 'applicant_phone', 'applicant_id_number',
+    'applicant_location', 'applicant_activity', 'sector', 'activity_type', 'years_experience', 'surface_ha',
+    'production_cycle', 'amount_requested', 'credit_purpose', 'duration_months', 'desired_schedule',
+    'savings_amount', 'guarantee_type', 'agent_note',
+  ], [
+    dossierA, tenantId, agentId, 'review', 'Awa Faye', '+221776543210', 'SN-2024-78432',
+    'Notto Diobass, Thiès', 'Maraîchage tomates', 'Agriculture', 'Maraîchage', 8, 2.5,
+    'Oct-Mars (6 mois)', dossierAFinancials.amount_requested, 'Achat intrants et semences améliorées',
+    dossierAFinancials.duration_months, 'Saisonnier (échéances mars-juin)', 200000,
+    'Caution solidaire groupe', 'Productrice expérimentée, bonne relation coopérative',
+  ], dossierAFinancials);
 
   const evidenceA = [
     { cat: 'VENTE', label: 'Vente tomates Coopérative Notto', amount: 1800000, source: 'Coopérative Notto', level: 'B', date: '2026-03-15' },
@@ -184,11 +234,19 @@ export async function seedIfEmpty() {
 
   // === CAS B: Thin file ===
   const dossierB = uuid();
-  await db.execute({
-    sql: `INSERT INTO dossiers (id, tenant_id, agent_id, status, applicant_name, applicant_phone, applicant_id_number, applicant_location, applicant_activity, sector, activity_type, years_experience, surface_ha, production_cycle, amount_requested, credit_purpose, duration_months, desired_schedule, savings_amount, guarantee_type, agent_note)
-          VALUES (?, ?, ?, 'verification', 'Mamadou Cissé', '+221778901234', 'SN-2024-91205', 'Keur Moussa, Thiès', 'Culture arachide', 'Agriculture', 'Cultures pluviales', 3, 1.0, 'Juin-Nov (5 mois)', 500000, 'Semences et engrais campagne hivernage', 8, 'Mensuel classique', 50000, 'Caution solidaire', 'Premier crédit, peu d historique numérique mais activité confirmée par visite terrain')`,
-    args: [dossierB, tenantId, agentId],
-  });
+  const dossierBFinancials = DEMO_DOSSIERS.find(dossier => dossier.key === 'B');
+  await insertSeedDossier(db, [
+    'id', 'tenant_id', 'agent_id', 'status', 'applicant_name', 'applicant_phone', 'applicant_id_number',
+    'applicant_location', 'applicant_activity', 'sector', 'activity_type', 'years_experience', 'surface_ha',
+    'production_cycle', 'amount_requested', 'credit_purpose', 'duration_months', 'desired_schedule',
+    'savings_amount', 'guarantee_type', 'agent_note',
+  ], [
+    dossierB, tenantId, agentId, 'verification', 'Mamadou Cissé', '+221778901234', 'SN-2024-91205',
+    'Keur Moussa, Thiès', 'Culture arachide', 'Agriculture', 'Cultures pluviales', 3, 1,
+    'Juin-Nov (5 mois)', dossierBFinancials.amount_requested, 'Semences et engrais campagne hivernage',
+    dossierBFinancials.duration_months, 'Mensuel classique', 50000, 'Caution solidaire',
+    'Premier crédit, peu d historique numérique mais activité confirmée par visite terrain',
+  ], dossierBFinancials);
 
   const evidenceB = [
     { cat: 'VISITE_TERRAIN', label: 'Visite parcelle confirmée - 1ha arachide', amount: null, source: 'Agent de crédit', level: 'B', date: '2026-07-20' },
@@ -226,11 +284,19 @@ export async function seedIfEmpty() {
 
   // === CAS C: Risque ===
   const dossierC = uuid();
-  await db.execute({
-    sql: `INSERT INTO dossiers (id, tenant_id, agent_id, status, applicant_name, applicant_phone, applicant_id_number, applicant_location, applicant_activity, sector, activity_type, years_experience, surface_ha, production_cycle, amount_requested, credit_purpose, duration_months, desired_schedule, savings_amount, guarantee_type, agent_note)
-          VALUES (?, ?, ?, 'review', 'Abdoulaye Diop', '+221779012345', 'SN-2023-45678', 'Mbour, Thiès', 'Pêche artisanale + maraîchage', 'Agriculture', 'Mixte', 5, 0.5, 'Continu', 3000000, 'Achat moteur pirogue + intrants maraîchage', 12, 'Mensuel', 100000, 'Nantissement pirogue', 'Attention: dette existante + incohérence revenus déclarés')`,
-    args: [dossierC, tenantId, agentId],
-  });
+  const dossierCFinancials = DEMO_DOSSIERS.find(dossier => dossier.key === 'C');
+  await insertSeedDossier(db, [
+    'id', 'tenant_id', 'agent_id', 'status', 'applicant_name', 'applicant_phone', 'applicant_id_number',
+    'applicant_location', 'applicant_activity', 'sector', 'activity_type', 'years_experience', 'surface_ha',
+    'production_cycle', 'amount_requested', 'credit_purpose', 'duration_months', 'desired_schedule',
+    'savings_amount', 'guarantee_type', 'agent_note',
+  ], [
+    dossierC, tenantId, agentId, 'review', 'Abdoulaye Diop', '+221779012345', 'SN-2023-45678',
+    'Mbour, Thiès', 'Pêche artisanale + maraîchage', 'Agriculture', 'Mixte', 5, 0.5, 'Continu',
+    dossierCFinancials.amount_requested, 'Achat moteur pirogue + intrants maraîchage',
+    dossierCFinancials.duration_months, 'Mensuel', 100000, 'Nantissement pirogue',
+    'Attention: dette existante + incohérence revenus déclarés',
+  ], dossierCFinancials);
 
   await db.execute({
     sql: `INSERT INTO bic_records (id, tenant_id, applicant_id_number, institution, credit_type, amount, outstanding, monthly_payment, status, start_date, days_late)
@@ -263,11 +329,20 @@ export async function seedIfEmpty() {
 
   // === CAS D: Saisonnalité ===
   const dossierD = uuid();
-  await db.execute({
-    sql: `INSERT INTO dossiers (id, tenant_id, agent_id, status, applicant_name, applicant_phone, applicant_id_number, applicant_location, applicant_activity, sector, activity_type, years_experience, surface_ha, production_cycle, amount_requested, credit_purpose, duration_months, desired_schedule, savings_amount, guarantee_type, agent_note)
-          VALUES (?, ?, ?, 'draft', 'Ousmane Ndiaye', '+221770123456', 'SN-2024-33210', 'Ross Béthio, Saint-Louis', 'Riziculture', 'Agriculture', 'Riziculture irriguée', 12, 5.0, 'Juil-Déc (6 mois)', 2000000, 'Intrants campagne rizicole', 10, 'Saisonnier post-récolte', 300000, 'Caution solidaire + nantissement récolte', 'Producteur expérimenté, revenus très saisonniers concentrés déc-fév')`,
-    args: [dossierD, tenantId, agentId],
-  });
+  const dossierDFinancials = DEMO_DOSSIERS.find(dossier => dossier.key === 'D');
+  await insertSeedDossier(db, [
+    'id', 'tenant_id', 'agent_id', 'status', 'applicant_name', 'applicant_phone', 'applicant_id_number',
+    'applicant_location', 'applicant_activity', 'sector', 'activity_type', 'years_experience', 'surface_ha',
+    'production_cycle', 'amount_requested', 'credit_purpose', 'duration_months', 'desired_schedule',
+    'savings_amount', 'guarantee_type', 'agent_note',
+  ], [
+    dossierD, tenantId, agentId, 'draft', 'Ousmane Ndiaye', '+221770123456', 'SN-2024-33210',
+    'Ross Béthio, Saint-Louis', 'Riziculture', 'Agriculture', 'Riziculture irriguée', 12, 5,
+    'Juil-Déc (6 mois)', dossierDFinancials.amount_requested, 'Intrants campagne rizicole',
+    dossierDFinancials.duration_months, 'Saisonnier post-récolte', 300000,
+    'Caution solidaire + nantissement récolte',
+    'Producteur expérimenté, revenus très saisonniers concentrés déc-fév',
+  ], dossierDFinancials);
 
   const evidenceD = [
     { cat: 'LIVRAISON', label: 'Livraison 8T riz paddy à SAED', amount: 2400000, source: 'SAED (Société nationale)', level: 'A', date: '2026-01-20', unit: '8000 kg' },
@@ -333,6 +408,6 @@ export async function seedIfEmpty() {
     args: [uuid(), dossierA, tenantId, agentId],
   });
 
-  console.log('[FresCoop] Seed terminé: 1 IMF, 7 utilisateurs, 4 dossiers démo, 10 règles, 2 produits crédit');
-  console.log('[FresCoop] Connexion: agent@frescoop.demo / demo2026');
+  console.log(`[FresCoop] Seed terminé: 1 IMF, ${users.length} utilisateurs, ${DEMO_DOSSIERS.length} dossiers démo, ${rules.length} règles, 2 produits crédit`);
+  console.log('[FresCoop] Comptes de démonstration créés; mots de passe lus depuis les variables d’environnement.');
 }
