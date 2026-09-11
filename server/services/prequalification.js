@@ -511,7 +511,7 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
           status: 'INSUFFICIENT_DATA',
           provisional: true,
           missing_data: missingData,
-          missing_fields: missingData,
+          missing_fields: missingData.map(item => item.field),
           message: 'Score provisoire calculé sur les données disponibles — complétez les éléments indiqués pour obtenir le score définitif.',
         },
       };
