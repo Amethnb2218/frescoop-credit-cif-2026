@@ -27,6 +27,19 @@ function safeText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function missingDataLabel(item) {
+  if (typeof item === 'string') return item;
+  if (!item || typeof item !== 'object') return String(item ?? '');
+  return item.label || item.message || item.field || item.code || 'donnée à compléter';
+}
+
+function terangaCropName(value) {
+  const primaryCrop = safeText(value).split(/[,;/]/, 1)[0].trim();
+  return primaryCrop.normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
+}
+
 function calculateRevenue(project, yieldKgHa) {
   const surface = finiteNumber(project.project_surface_ha);
   const losses = finiteNumber(project.loss_percent);
@@ -194,7 +207,7 @@ function pickFirst(object, paths) {
 
 export function normalizeYieldResponse(payload, expectedYield) {
   const predicted = findResponseNumber(payload, [
-    'predicted_yield_kg_ha', 'predicted_yield_kg',
+    'predicted_yield_kg_ha', 'predicted_yield_kg', 'prediction.ensemble_kg',
     'ensemble.predicted_yield_kg_ha', 'ensemble.predicted_yield_kg',
     'result.predicted_yield_kg_ha', 'result.predicted_yield_kg',
     'data.predicted_yield_kg_ha', 'data.predicted_yield_kg',
@@ -231,7 +244,7 @@ export function normalizeRiskResponse(payload) {
   ]));
   let level = rawLevel;
   if (!level && safetyScore != null) {
-    level = safetyScore >= 70 ? 'information' : safetyScore >= 40 ? 'moderate' : 'high';
+    level = safetyScore >= 75 ? 'information' : safetyScore >= 50 ? 'moderate' : 'high';
   }
   if (safetyScore == null || safetyScore < 0 || safetyScore > 100
     || !['high', 'moderate', 'information'].includes(level) || !recommendation) return null;
@@ -270,7 +283,7 @@ function buildChatMessages(project, inputItems, local) {
         `Projet : culture ${safeText(project.crop_label) || 'non renseignée'}, zone ${safeText(project.agro_zone) || 'non renseignée'}, surface ${finiteNumber(project.project_surface_ha) ?? 'non renseignée'} ha.`,
         `Budget : coût ${Math.round(budget)} FCFA, apport ${finiteNumber(project.own_contribution) ?? 'non renseigné'} FCFA, autres financements ${finiteNumber(project.other_funding) ?? 'non renseignés'} FCFA.`,
         `Crédit : montant demandé ${finiteNumber(project.amount_requested) ?? 'non renseigné'} FCFA, taux ${finiteNumber(project.interest_rate_percent ?? project.interest_rate) ?? 'non renseigné'} %, total dû ${finiteNumber(project.total_due ?? project.credit_total_due) ?? 'non renseigné'} FCFA.`,
-        `Données manquantes locales : ${(local.missing_data || []).join(', ') || 'aucune signalée'}.`,
+        `Données manquantes locales : ${(local.missing_data || []).map(missingDataLabel).filter(Boolean).join(', ') || 'aucune signalée'}.`,
       ].join('\n'),
     },
   ];
@@ -328,7 +341,7 @@ export async function assessAgriculturalFeasibility(input = {}, options = {}) {
   const timeoutMs = finiteNumber(options.timeoutMs ?? process.env.TERANGA_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
   const city = safeText(input.context?.city || input.context?.location || project.agro_zone).replace(/\s*\([^)]*\)\s*$/, '');
   const month = finiteNumber(project.sowing_month);
-  const crop = safeText(project.crop_label);
+  const crop = terangaCropName(project.crop_label);
   if (!baseUrl || !fetchImpl || !city || !crop || month == null || month < 1 || month > 12) {
     const reason = !baseUrl ? 'not_configured' : 'insufficient_context';
     const notice = fallbackNotice(reason);

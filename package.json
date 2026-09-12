@@ -11,6 +11,9 @@
     "start": "node server/index.js",
     "seed": "node server/seed.js"
   },
+  "overrides": {
+    "qs": "6.16.0"
+  },
   "dependencies": {
     "@libsql/client": "^0.14.0",
     "@vitejs/plugin-react": "^5.0.0",

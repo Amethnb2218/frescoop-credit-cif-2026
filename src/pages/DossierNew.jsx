@@ -759,6 +759,26 @@ function feasibilitySourceLabel(source = {}) {
   return 'Moteur local FresCoop';
 }
 
+function terangaFallbackMessage(source = {}) {
+  if (!source.fallback_used) return '';
+  if (source.teranga?.available) {
+    return 'Teranga AI a fourni une analyse partielle ; le moteur local complète les données manquantes sans appliquer de pénalité.';
+  }
+  if (source.fallback_reason === 'insufficient_context') {
+    return 'Analyse Teranga AI en attente : renseignez la culture, la localité et le mois de semis.';
+  }
+  if (source.mode === 'local_offline' || source.fallback_reason === 'offline') {
+    return 'Hors connexion : le moteur local reste disponible et Teranga AI sera consulté au retour du réseau.';
+  }
+  return 'Teranga AI est temporairement indisponible : le moteur local reste autoritaire et aucune réduction automatique n’est appliquée.';
+}
+
+function missingDataLabel(item) {
+  if (typeof item === 'string') return item;
+  if (!item || typeof item !== 'object') return String(item ?? '');
+  return item.label || item.message || item.field || item.code || 'donnée à compléter';
+}
+
 function firstMetric(metrics, keys) {
   for (const key of keys) {
     if (metrics?.[key] != null && Number.isFinite(Number(metrics[key]))) return Number(metrics[key]);
@@ -896,7 +916,7 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
           <div className="text-sm text-muted">{feasibilitySourceLabel(current.source)}</div>
           {current.source?.fallback_used && (
             <div style={{ marginTop: 10, padding: '8px 10px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius)', color: '#92400e', fontSize: 'var(--fs-11)' }}>
-              Teranga AI indisponible : le moteur local reste autoritaire et aucune réduction automatique n’est appliquée.
+              {terangaFallbackMessage(current.source)}
             </div>
           )}
         </div>
@@ -926,7 +946,7 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
         <details style={{ marginTop: 14, padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>
           <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Voir les constats et recommandations</summary>
           <div style={{ marginTop: 12, fontSize: 'var(--fs-12)' }}>
-            {details.missing_data?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Données manquantes :</strong> {details.missing_data.join(', ')}</div>}
+            {details.missing_data?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Données manquantes :</strong> {details.missing_data.map(missingDataLabel).filter(Boolean).join(', ')}</div>}
             {details.findings?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Constats :</strong><ul>{details.findings.map(item => <li key={item.code}>{item.explanation}</li>)}</ul></div>}
             {details.recommendations?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Recommandations :</strong><ul>{details.recommendations.map(item => <li key={item}>{item}</li>)}</ul></div>}
             {details.external_signals?.length > 0 && <div style={{ marginBottom: 10 }}><strong>Informations agricoles complémentaires :</strong><ul>{details.external_signals.map((item, index) => <li key={`${item.type}-${index}`}>{item.explanation}</li>)}</ul></div>}

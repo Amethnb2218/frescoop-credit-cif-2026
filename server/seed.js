@@ -316,8 +316,12 @@ export async function seedIfEmpty() {
     });
   }
 
-  const cashflowC = Array.from({ length: 12 }, (_, i) => ({
-    month: i + 1, revenue: 200000 + Math.floor(Math.random() * 100000), expenses: 250000, debt: 125000,
+  const cashflowCRevenues = [
+    225000, 240000, 210000, 275000, 230000, 260000,
+    205000, 290000, 235000, 250000, 220000, 280000,
+  ];
+  const cashflowC = cashflowCRevenues.map((revenue, index) => ({
+    month: index + 1, revenue, expenses: 250000, debt: 125000,
   }));
   for (const c of cashflowC) {
     await db.execute({

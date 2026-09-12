@@ -15,3 +15,7 @@ services:
         value: "10000"
       - key: FRESCOOP_HOST
         value: "0.0.0.0"
+      - key: TERANGA_BASE_URL
+        value: https://teranga-ai.onrender.com
+      - key: TERANGA_TIMEOUT_MS
+        value: "30000"

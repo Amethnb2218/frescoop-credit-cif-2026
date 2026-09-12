@@ -37,6 +37,7 @@ test('la synthèse locale distingue faisable, ajustement et revue humaine', () =
 test('le rendement Teranga exige une valeur numérique native sans lire le texte', () => {
   assert.equal(normalizeYieldResponse({ predicted_yield_kg_ha: 3900 }, 4000).predicted_yield_kg_ha, 3900);
   assert.equal(normalizeYieldResponse({ ensemble: { predicted_yield_kg: 3700 } }, 4000).predicted_yield_kg_ha, 3700);
+  assert.equal(normalizeYieldResponse({ prediction: { ensemble_kg: 3650 } }, 4000).predicted_yield_kg_ha, 3650);
   assert.equal(normalizeYieldResponse({ predicted_yield_kg_ha: null, ensemble: { predicted_yield_kg: 3596 } }, 4000).predicted_yield_kg_ha, 3596);
   assert.equal(normalizeYieldResponse({ predicted_yield_kg_ha: 1800 }, 4000).level, 'conflict');
   assert.equal(normalizeYieldResponse({ ensemble: { predicted_yield_kg: '3700' } }, 4000), null);
@@ -59,6 +60,10 @@ test('le risque Teranga exige strictement ses trois champs', () => {
     explanation: 'Risque acceptable — procéder au semis',
   });
   assert.equal(normalizeRiskResponse({ safety_score: 60, recommandation: 'Sans niveau' })?.level, 'moderate');
+  assert.equal(normalizeRiskResponse({ safety_score: 49, recommandation: 'Risque élevé' })?.level, 'high');
+  assert.equal(normalizeRiskResponse({ safety_score: 50, recommandation: 'Risque modéré' })?.level, 'moderate');
+  assert.equal(normalizeRiskResponse({ safety_score: 74, recommandation: 'Risque modéré' })?.level, 'moderate');
+  assert.equal(normalizeRiskResponse({ safety_score: 75, recommandation: 'Information' })?.level, 'information');
 });
 
 test('le chat valide uniquement un texte et sépare ses métadonnées', () => {
@@ -142,6 +147,25 @@ test('appelle rendement, risque et POST /api/chat avec des messages français st
   assert.match(chatBody.messages[1].content, /Projet :/);
   assert.match(chatBody.messages[1].content, /Budget :/);
   assert.match(chatBody.messages[1].content, /Crédit :/);
+  assert.doesNotMatch(chatBody.messages[1].content, /\[object Object\]/);
+});
+
+test('normalise la culture principale selon le contrat Teranga', async () => {
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(url);
+    if (url.endsWith('/api/chat')) return response({ message: 'Rapport Teranga.' });
+    if (url.includes('/predict-yield/mais/')) return response({ ensemble: { predicted_yield_kg: 3200 } });
+    if (url.includes('/risk/mais/')) return response({ safetyScore: 84, recommendation: 'Risque acceptable' });
+    return response({}, false, 404);
+  };
+  const result = await assessAgriculturalFeasibility({
+    project: { ...project, crop_label: 'Maïs, Tomate' }, input_items: inputItems,
+  }, { baseUrl: 'https://teranga.example', fetchImpl });
+  assert.equal(result.source.mode, 'hybrid');
+  assert.equal(result.details.metrics.predicted_yield_kg_ha, 3200);
+  assert.ok(calls.some(url => url.includes('/predict-yield/mais/')));
+  assert.ok(calls.some(url => url.includes('/risk/mais/')));
 });
 
 test('une réponse chat invalide conserve les signaux structurés en hybride partiel', async () => {
