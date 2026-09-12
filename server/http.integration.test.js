@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { app } from './index.js';
 import { generateToken, hashPassword } from './auth.js';
+import { SCORE_VERSION } from './services/prequalification.js';
 
 const tenantA = 'tenant-http-a';
 const tenantB = 'tenant-http-b';
@@ -83,6 +84,22 @@ async function request(baseUrl, path, user, options = {}) {
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
   return { response, body: await response.json() };
+}
+
+async function scoreSnapshot(dossierId = 'dossier-owned', tenantId = tenantA) {
+  const result = await db.execute({
+    sql: `SELECT evidence_confidence, prequalification_score,
+                 prequalification_score_details, prequalification_score_version
+          FROM dossiers WHERE id = ? AND tenant_id = ?`,
+    args: [dossierId, tenantId],
+  });
+  const row = result.rows[0];
+  return {
+    confidence: row.evidence_confidence,
+    score: Number(row.prequalification_score),
+    details: JSON.parse(row.prequalification_score_details || '{}'),
+    version: Number(row.prequalification_score_version),
+  };
 }
 
 async function insertFixtures(db) {
@@ -483,6 +500,141 @@ test('archive la décision et le complément lors de la resoumission', async () 
     assert.equal(audit.rows.length, 1);
   });
 });
+test('recalcule immédiatement le score après chaque mutation de preuve en ligne', async () => {
+  await withServer(async baseUrl => {
+    const dossierId = 'score-evidence-online';
+    const createdDossier = await request(baseUrl, '/api/dossiers', owner, {
+      method: 'POST', body: { ...agriculturalPayload(dossierId), initial_evidence: [] },
+    });
+    assert.equal(createdDossier.response.status, 200, JSON.stringify(createdDossier.body));
+    const baseline = await scoreSnapshot(dossierId);
+    assert.equal(baseline.version, SCORE_VERSION);
+    assert.deepEqual(baseline.details.evidence_counts, { A: 0, B: 0, C: 0, D: 0 });
+
+    const evidenceId = 'evidence-score-online';
+    const created = await request(baseUrl, '/api/evidence', owner, {
+      method: 'POST',
+      body: { id: evidenceId, dossier_id: dossierId, category: 'PROJET',
+        label: 'Facture intrants', source: 'document', verification_level: 'C' },
+    });
+    assert.equal(created.response.status, 200, JSON.stringify(created.body));
+    assert.equal(created.body.evaluation.details.evidence_counts.C, 1);
+    const afterCreate = await scoreSnapshot(dossierId);
+    assert.equal(afterCreate.version, SCORE_VERSION);
+    assert.deepEqual(afterCreate.details.evidence_counts, { A: 0, B: 0, C: 1, D: 0 });
+    assert.ok(afterCreate.score > baseline.score);
+
+    const disputed = await request(baseUrl, `/api/evidence/${evidenceId}`, owner, {
+      method: 'PUT', body: { status: 'disputed', label: 'Facture contestée' },
+    });
+    assert.equal(disputed.response.status, 200, JSON.stringify(disputed.body));
+    assert.deepEqual(disputed.body.evaluation.details.evidence_counts, { A: 0, B: 0, C: 0, D: 0 });
+    const afterDispute = await scoreSnapshot(dossierId);
+    assert.equal(afterDispute.score, baseline.score);
+
+    const restored = await request(baseUrl, `/api/evidence/${evidenceId}`, owner, {
+      method: 'PUT', body: { status: 'active' },
+    });
+    assert.equal(restored.response.status, 200, JSON.stringify(restored.body));
+    assert.equal(restored.body.evaluation.details.evidence_counts.C, 1);
+
+    const verified = await request(baseUrl, `/api/evidence/${evidenceId}/verify`, supervisor, {
+      method: 'PUT', body: { verification_level: 'A', note: 'Document authentifié' },
+    });
+    assert.equal(verified.response.status, 200, JSON.stringify(verified.body));
+    assert.equal(verified.body.evaluation.details.evidence_counts.A, 1);
+    const afterVerify = await scoreSnapshot(dossierId);
+    assert.ok(afterVerify.score > afterCreate.score);
+
+    const deleted = await request(baseUrl, `/api/evidence/${evidenceId}`, owner, { method: 'DELETE' });
+    assert.equal(deleted.response.status, 200, JSON.stringify(deleted.body));
+    assert.deepEqual(deleted.body.evaluation.details.evidence_counts, { A: 0, B: 0, C: 0, D: 0 });
+    const afterDelete = await scoreSnapshot(dossierId);
+    assert.equal(afterDelete.score, baseline.score);
+    assert.equal(afterDelete.version, SCORE_VERSION);
+  });
+});
+
+test('recalcule preuves et cash-flow hors ligne sans accès inter-Agent ou inter-tenant', async () => {
+  await withServer(async baseUrl => {
+    const dossierId = 'score-offline';
+    const createdDossier = await request(baseUrl, '/api/dossiers', owner, {
+      method: 'POST', body: { ...agriculturalPayload(dossierId), initial_evidence: [] },
+    });
+    assert.equal(createdDossier.response.status, 200, JSON.stringify(createdDossier.body));
+
+    const deniedOperation = {
+      operation: 'create', entity_type: 'evidence', entity_id: 'evidence-offline-denied',
+      payload: { dossier_id: dossierId, category: 'PROJET', label: 'Preuve refusée',
+        source: 'document', verification_level: 'C' },
+      local_timestamp: '2026-09-12T08:00:00.000Z',
+    };
+    for (const actor of [otherAgent, tenantBAgent]) {
+      const denied = await request(baseUrl, '/api/sync/push', actor, {
+        method: 'POST', body: { operations: [deniedOperation] },
+      });
+      assert.equal(denied.response.status, 200);
+      assert.equal(denied.body.results[0].status, 'failed');
+      assert.match(denied.body.results[0].error, /introuvable ou non autorisé/);
+    }
+
+    const evidenceId = 'evidence-score-offline';
+    const syncedEvidence = await request(baseUrl, '/api/sync/push', owner, {
+      method: 'POST', body: { operations: [{
+        ...deniedOperation, entity_id: evidenceId,
+        payload: { ...deniedOperation.payload, label: 'Preuve synchronisée' },
+        local_timestamp: '2026-09-12T08:01:00.000Z',
+      }] },
+    });
+    assert.equal(syncedEvidence.body.results[0].status, 'synced');
+    const afterEvidence = await scoreSnapshot(dossierId);
+    assert.deepEqual(afterEvidence.details.evidence_counts, { A: 0, B: 0, C: 1, D: 0 });
+    assert.equal(afterEvidence.version, SCORE_VERSION);
+
+    const syncedStatus = await request(baseUrl, '/api/sync/push', owner, {
+      method: 'POST', body: { operations: [{
+        operation: 'update', entity_type: 'evidence', entity_id: evidenceId,
+        payload: { status: 'disputed' }, local_timestamp: '2026-09-12T08:02:00.000Z',
+      }] },
+    });
+    assert.equal(syncedStatus.body.results[0].status, 'synced');
+    const afterStatus = await scoreSnapshot(dossierId);
+    assert.deepEqual(afterStatus.details.evidence_counts, { A: 0, B: 0, C: 0, D: 0 });
+
+    const syncedCashflow = await request(baseUrl, '/api/sync/push', owner, {
+      method: 'POST', body: { operations: [{
+        operation: 'update', entity_type: 'cashflow', entity_id: dossierId,
+        payload: { entries: [{ month: 1, year: 2026, revenue: 500000, expenses: 50000 }] },
+        local_timestamp: '2026-09-12T08:03:00.000Z',
+      }] },
+    });
+    assert.equal(syncedCashflow.body.results[0].status, 'synced');
+    const afterCashflow = await scoreSnapshot(dossierId);
+    assert.equal(afterCashflow.details.average_monthly_net, 450000);
+    assert.equal(afterCashflow.version, SCORE_VERSION);
+
+    const persistedCashflow = await db.execute({
+      sql: `SELECT month, year, revenue, expenses FROM cashflow_entries
+            WHERE dossier_id = ? AND tenant_id = ? ORDER BY year, month`,
+      args: [dossierId, tenantA],
+    });
+    assert.deepEqual(persistedCashflow.rows.map(row => ({
+      month: Number(row.month), year: Number(row.year),
+      revenue: Number(row.revenue), expenses: Number(row.expenses),
+    })), [{ month: 1, year: 2026, revenue: 500000, expenses: 50000 }]);
+
+    const syncedDelete = await request(baseUrl, '/api/sync/push', owner, {
+      method: 'POST', body: { operations: [{
+        operation: 'delete', entity_type: 'evidence', entity_id: evidenceId, payload: {},
+        local_timestamp: '2026-09-12T08:04:00.000Z',
+      }] },
+    });
+    assert.equal(syncedDelete.body.results[0].status, 'synced');
+    const afterDelete = await scoreSnapshot(dossierId);
+    assert.deepEqual(afterDelete.details.evidence_counts, { A: 0, B: 0, C: 0, D: 0 });
+  });
+});
+
 test('gère les preuves et pièces jointes sans accès inter-Agent', async () => {
   await db.execute({
     sql: "UPDATE dossiers SET status = 'draft' WHERE id = 'dossier-owned' AND tenant_id = ?",

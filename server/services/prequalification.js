@@ -131,8 +131,9 @@ export function buildEvaluationContext(dossier, cashflow = [], evidence = [], bi
     : 0;
   const declaredSeasonalCoverage = calculateScheduleCoverage(agronomic.declaredCashflow, repaymentSchedule);
   const declaredStressedSeasonalCoverage = calculateScheduleCoverage(declaredStressedCashflow, repaymentSchedule);
+  const activeEvidence = evidence.filter(item => !item.status || item.status === 'active');
   const evidenceCounts = { A: 0, B: 0, C: 0, D: 0 };
-  evidence.forEach(item => {
+  activeEvidence.forEach(item => {
     if (item.verification_level in evidenceCounts) evidenceCounts[item.verification_level] += 1;
   });
 
@@ -168,7 +169,7 @@ export function buildEvaluationContext(dossier, cashflow = [], evidence = [], bi
     evidenceBCount: evidenceCounts.B,
     evidenceCCount: evidenceCounts.C,
     evidenceDCount: evidenceCounts.D,
-    totalEvidence: evidence.length,
+    totalEvidence: activeEvidence.length,
     existingDebt: bicRecords.reduce((sum, record) => sum + Number(record.outstanding || 0), 0),
     hasLatePayments: bicRecords.some(record => Number(record.days_late) > 30),
     hasIdentity: Boolean(dossier.applicant_name),
@@ -556,6 +557,7 @@ export function evaluatePrequalification(dossier, cashflow, evidence, bicRecords
   };
   const details = {
     ...scoring.details,
+    evidence_counts: context.evidenceCounts,
     declared_capacity_ratio: declaredCapacityRatio != null
       ? Number(declaredCapacityRatio.toFixed(4))
       : null,

@@ -4,6 +4,7 @@ import { getDb, uuid } from '../db.js';
 import { authMiddleware, tenantGuard, requireRole } from '../auth.js';
 import { logAudit } from './audit.js';
 import { scoreInvalidationStatement } from '../services/dossierAccess.js';
+import { evaluateDossier } from '../services/prequalification.js';
 
 const router = Router();
 const VALID_LEVELS = ['A', 'B', 'C', 'D'];
@@ -177,20 +178,24 @@ router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR'
       return res.status(403).json({ error: 'Un agent ne peut enregistrer qu’une preuve de niveau C ou D.' });
     }
 
-    await db.execute({
-      sql: `INSERT INTO evidence (id, dossier_id, tenant_id, category, label, value, amount, unit,
-            source, source_detail, verification_level, verified_by, verified_at, status,
-            evidence_date, expires_at, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [
-        id, data.dossier_id, req.tenantId, data.category, data.label,
-        data.value || null, data.amount || null, data.unit || null,
-        data.source, data.source_detail || null, data.verification_level,
-        data.verified_by || null, data.verified_at || null,
-        data.status || 'active', data.evidence_date || null,
-        data.expires_at || null, JSON.stringify(data.metadata || {}),
-      ],
-    });
+    await db.batch([
+      {
+        sql: `INSERT INTO evidence (id, dossier_id, tenant_id, category, label, value, amount, unit,
+              source, source_detail, verification_level, verified_by, verified_at, status,
+              evidence_date, expires_at, metadata)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          id, data.dossier_id, req.tenantId, data.category, data.label,
+          data.value || null, data.amount || null, data.unit || null,
+          data.source, data.source_detail || null, data.verification_level,
+          data.verified_by || null, data.verified_at || null,
+          data.status || 'active', data.evidence_date || null,
+          data.expires_at || null, JSON.stringify(data.metadata || {}),
+        ],
+      },
+      scoreInvalidationStatement(data.dossier_id, req.tenantId),
+    ], 'write');
+    const evaluation = await evaluateDossier(db, req.tenantId, data.dossier_id);
 
     await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, 'EVIDENCE_ADDED', 'evidence', id, {
       dossier_id: data.dossier_id,
@@ -199,7 +204,7 @@ router.post('/', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEUR'
       level: data.verification_level,
     }, req);
 
-    res.json({ ok: true, id });
+    res.json({ ok: true, id, evaluation });
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -233,9 +238,13 @@ router.put('/:id', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVISEU
     }
     if (!updates.length) return res.json({ ok: true, id: req.params.id });
     args.push(req.params.id, req.tenantId);
-    await db.execute({ sql: `UPDATE evidence SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`, args });
+    await db.batch([
+      { sql: `UPDATE evidence SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`, args },
+      scoreInvalidationStatement(evidence.dossier_id, req.tenantId),
+    ], 'write');
+    const evaluation = await evaluateDossier(db, req.tenantId, evidence.dossier_id);
     await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, 'EVIDENCE_UPDATED', 'evidence', req.params.id, { fields: Object.keys(req.body) }, req);
-    res.json({ ok: true, id: req.params.id });
+    res.json({ ok: true, id: req.params.id, evaluation });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur', detail: err.message });
   }
@@ -260,9 +269,11 @@ router.delete('/:id', authMiddleware, tenantGuard, requireRole('AGENT', 'SUPERVI
     await db.batch([
       { sql: 'DELETE FROM evidence_attachments WHERE evidence_id = ? AND tenant_id = ?', args: [req.params.id, req.tenantId] },
       { sql: 'DELETE FROM evidence WHERE id = ? AND tenant_id = ?', args: [req.params.id, req.tenantId] },
+      scoreInvalidationStatement(evidence.dossier_id, req.tenantId),
     ], 'write');
+    const evaluation = await evaluateDossier(db, req.tenantId, evidence.dossier_id);
     await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, 'EVIDENCE_DELETED', 'evidence', req.params.id, { dossier_id: evidence.dossier_id }, req);
-    res.json({ ok: true });
+    res.json({ ok: true, evaluation });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur', detail: err.message });
   }
@@ -277,22 +288,29 @@ router.put('/:id/verify', authMiddleware, tenantGuard, requireRole('SUPERVISEUR'
     }
 
     const existing = await db.execute({
-      sql: 'SELECT id FROM evidence WHERE id = ? AND tenant_id = ?',
+      sql: `SELECT e.id, e.dossier_id, d.agent_id FROM evidence e
+            JOIN dossiers d ON d.id = e.dossier_id AND d.tenant_id = e.tenant_id
+            WHERE e.id = ? AND e.tenant_id = ?`,
       args: [req.params.id, req.tenantId],
     });
-    if (!existing.rows[0]) return res.status(404).json({ error: 'Preuve introuvable' });
+    const evidence = existing.rows[0];
+    if (!evidence) return res.status(404).json({ error: 'Preuve introuvable' });
 
-    await db.execute({
-      sql: `UPDATE evidence SET verification_level = ?, verified_by = ?, verified_at = datetime('now')
-            WHERE id = ? AND tenant_id = ?`,
-      args: [verification_level, req.user.id, req.params.id, req.tenantId],
-    });
+    await db.batch([
+      {
+        sql: `UPDATE evidence SET verification_level = ?, verified_by = ?, verified_at = datetime('now')
+              WHERE id = ? AND tenant_id = ?`,
+        args: [verification_level, req.user.id, req.params.id, req.tenantId],
+      },
+      scoreInvalidationStatement(evidence.dossier_id, req.tenantId),
+    ], 'write');
+    const evaluation = await evaluateDossier(db, req.tenantId, evidence.dossier_id);
 
     await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, 'EVIDENCE_VERIFIED', 'evidence', req.params.id, {
       new_level: verification_level, note,
     }, req);
 
-    res.json({ ok: true });
+    res.json({ ok: true, evaluation });
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });
   }

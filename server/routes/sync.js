@@ -18,7 +18,7 @@ import {
 import { buildFinancialCashflow } from '../services/financialCashflow.js';
 import { evaluateDossier } from '../services/prequalification.js';
 import { resolveLoanFinancials } from '../services/loanFinancials.js';
-import { isSyncEditableDossier } from '../services/dossierAccess.js';
+import { isSyncEditableDossier, scoreInvalidationStatement } from '../services/dossierAccess.js';
 
 const router = Router();
 const VALID_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
@@ -439,8 +439,12 @@ async function insertDebt(db, dossierId, debt, tenantId) {
 }
 
 async function insertEvidence(db, dossierId, item, tenantId) {
+  await db.execute(evidenceInsertStatement(dossierId, item, tenantId));
+}
+
+function evidenceInsertStatement(dossierId, item, tenantId) {
   const level = ['C', 'D'].includes(item.verification_level) ? item.verification_level : 'C';
-  await db.execute({
+  return {
     sql: `INSERT INTO evidence (id, dossier_id, tenant_id, category, label, value, amount, unit,
           source, source_detail, verification_level, status, evidence_date, metadata)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -448,7 +452,7 @@ async function insertEvidence(db, dossierId, item, tenantId) {
       item.value || null, item.amount || null, item.unit || null, item.source || 'document',
       item.source_detail || null, level, item.status || 'active', item.evidence_date || null,
       JSON.stringify(item.metadata || {})],
-  });
+  };
 }
 
 function number(value) {
@@ -467,7 +471,13 @@ async function processEvidenceOp(db, operation, entityId, payload, req) {
       sql: 'SELECT id FROM evidence WHERE id = ? AND tenant_id = ?',
       args: [entityId, req.tenantId],
     });
-    if (!existing.rows[0]) await insertEvidence(db, payload.dossier_id, { ...payload, id: entityId }, req.tenantId);
+    if (!existing.rows[0]) {
+      await db.batch([
+        evidenceInsertStatement(payload.dossier_id, { ...payload, id: entityId }, req.tenantId),
+        scoreInvalidationStatement(payload.dossier_id, req.tenantId),
+      ], 'write');
+      await evaluateDossier(db, req.tenantId, payload.dossier_id);
+    }
     return;
   }
   if (operation === 'update') {
@@ -482,7 +492,11 @@ async function processEvidenceOp(db, operation, entityId, payload, req) {
     }
     if (updates.length) {
       args.push(entityId, req.tenantId);
-      await db.execute({ sql: `UPDATE evidence SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`, args });
+      await db.batch([
+        { sql: `UPDATE evidence SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`, args },
+        scoreInvalidationStatement(current.dossier_id, req.tenantId),
+      ], 'write');
+      await evaluateDossier(db, req.tenantId, current.dossier_id);
     }
     return;
   }
@@ -493,7 +507,9 @@ async function processEvidenceOp(db, operation, entityId, payload, req) {
     await db.batch([
       { sql: 'DELETE FROM evidence_attachments WHERE evidence_id = ? AND tenant_id = ?', args: [entityId, req.tenantId] },
       { sql: 'DELETE FROM evidence WHERE id = ? AND tenant_id = ?', args: [entityId, req.tenantId] },
+      scoreInvalidationStatement(current.dossier_id, req.tenantId),
     ], 'write');
+    await evaluateDossier(db, req.tenantId, current.dossier_id);
     return;
   }
   if (operation === 'attachment') {
@@ -505,7 +521,7 @@ async function processEvidenceOp(db, operation, entityId, payload, req) {
 
 async function ownedEvidence(db, evidenceId, req) {
   const result = await db.execute({
-    sql: `SELECT e.id, d.agent_id, d.status FROM evidence e
+    sql: `SELECT e.id, e.dossier_id, d.agent_id, d.status FROM evidence e
           JOIN dossiers d ON d.id = e.dossier_id AND d.tenant_id = e.tenant_id
           WHERE e.id = ? AND e.tenant_id = ? ${req.user.role === 'AGENT' ? 'AND d.agent_id = ?' : ''}`,
     args: req.user.role === 'AGENT'
@@ -594,21 +610,29 @@ async function processCashflowOp(db, operation, entityId, payload, req) {
   if (!['draft', 'incomplete'].includes(dossier.status)) {
     throw new Error('Le cash-flow ne peut être modifié que sur un brouillon');
   }
-  await replaceCashflow(db, entityId, payload.entries || [], req.tenantId);
+  await db.batch([
+    ...cashflowStatements(entityId, payload.entries || [], req.tenantId),
+    scoreInvalidationStatement(entityId, req.tenantId),
+  ], 'write');
+  await evaluateDossier(db, req.tenantId, entityId);
 }
 
-async function replaceCashflow(db, dossierId, entries, tenantId) {
-  await db.execute({ sql: 'DELETE FROM cashflow_entries WHERE dossier_id = ? AND tenant_id = ?', args: [dossierId, tenantId] });
-  for (const entry of entries) {
-    await db.execute({
+function cashflowStatements(dossierId, entries, tenantId) {
+  return [
+    { sql: 'DELETE FROM cashflow_entries WHERE dossier_id = ? AND tenant_id = ?', args: [dossierId, tenantId] },
+    ...entries.map(entry => ({
       sql: `INSERT INTO cashflow_entries
             (id, dossier_id, tenant_id, month, year, revenue, revenue_detail, expenses, expenses_detail, debt_payments)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [uuid(), dossierId, tenantId, entry.month, entry.year || 2026, entry.revenue || 0,
         JSON.stringify(entry.revenue_detail || {}), entry.expenses || 0,
         JSON.stringify(entry.expenses_detail || {}), entry.debt_payments || 0],
-    });
-  }
+    })),
+  ];
+}
+
+async function replaceCashflow(db, dossierId, entries, tenantId) {
+  await db.batch(cashflowStatements(dossierId, entries, tenantId), 'write');
 }
 
 export default router;

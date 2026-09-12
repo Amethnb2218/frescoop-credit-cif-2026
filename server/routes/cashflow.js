@@ -4,6 +4,7 @@ import { authMiddleware, tenantGuard, requireRole } from '../auth.js';
 import { logAudit } from './audit.js';
 import { findAccessibleDossier, isEditableDraft, scoreInvalidationStatement } from '../services/dossierAccess.js';
 import { resolveFinancingNeed, resolveLoanFinancials } from '../services/loanFinancials.js';
+import { evaluateDossier } from '../services/prequalification.js';
 
 const router = Router();
 
@@ -58,9 +59,10 @@ router.post('/dossier/:dossierId', authMiddleware, tenantGuard, requireRole('AGE
     }
     statements.push(scoreInvalidationStatement(dossierId, req.tenantId));
     await db.batch(statements, 'write');
+    const evaluation = await evaluateDossier(db, req.tenantId, dossierId);
 
     await logAudit(req.tenantId, req.user.id, req.user.name, req.user.role, 'CASHFLOW_UPDATED', 'dossier', dossierId, { months: entries.length }, req);
-    res.json({ ok: true });
+    res.json({ ok: true, evaluation });
   } catch {
     res.status(500).json({ error: 'Erreur serveur' });
   }

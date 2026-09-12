@@ -139,6 +139,17 @@ test('calcule la confiance selon le volume et la qualité des preuves', () => {
   assert.equal(calculateEvidenceConfidence(buildEvaluationContext(dossier, [], evidence(['A', 'A', 'B', 'D']), [])), 'HIGH');
 });
 
+test('ignore les preuves inactives dans le score', () => {
+  const context = buildEvaluationContext(dossier, [], [
+    { verification_level: 'A', status: 'active' },
+    { verification_level: 'B', status: 'expired' },
+    { verification_level: 'C', status: 'disputed' },
+    { verification_level: 'D', status: 'superseded' },
+  ], []);
+  assert.deepEqual(context.evidenceCounts, { A: 1, B: 0, C: 0, D: 0 });
+  assert.equal(context.totalEvidence, 1);
+});
+
 test('un dossier complet atteint la tranche préqualifiée', () => {
   const result = evaluateComplete(dossier, cashflow(1690), evidence(['A', 'A', 'A']));
   assert.equal(result.prequalification, 'PREQUALIFIE');
