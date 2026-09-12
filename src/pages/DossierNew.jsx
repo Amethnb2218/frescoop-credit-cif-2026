@@ -5,6 +5,13 @@ import { buildLocalFeasibility } from '../agriculturalFeasibilityLocal';
 import { isOnline, saveDossierOffline, updateDossierOffline, getDossierOffline, addToSyncQueue } from '../lib/offline';
 import { formatCFA } from '../lib/format';
 import { calculateLoanTerms, buildDetailedRepaymentSchedule } from '../../shared/creditCalculations.js';
+import { calculateProjectBudget } from '../lib/dossierFinance.js';
+import {
+  createDossierDraft,
+  dossierDraftKey,
+  parseDossierDraft,
+} from '../lib/dossierDraft.js';
+import { feasibilityReportView } from '../lib/agriculturalFeasibilityView.js';
 import { Save, WifiOff, ArrowLeft, ArrowRight, MapPin, Plus, Trash2, Pencil } from 'lucide-react';
 
 const STEPS = [
@@ -39,6 +46,11 @@ function num(v) { return v === '' || v == null ? null : Number(v); }
 function buildProjectAssessment(form) {
   const crops = form.crops?.length ? form.crops : (form.crop_name ? [{ name: form.crop_name, variety: form.crop_variety, surface_ha: num(form.project_surface_ha) }] : []);
   const modes = form.cultivation_modes?.length ? form.cultivation_modes : (form.irrigation_mode ? [form.irrigation_mode] : []);
+  const loan = calculateLoanTerms(creditCalculationInput(form));
+  const commerceRevenue = Number(form.revenue_commerce === 'neant' ? 0 : form.revenue_commerce || 0);
+  const otherRevenue = Number(form.revenue_other === 'neant' ? 0 : form.revenue_other || 0);
+  const annualCommerceRevenue = commerceRevenue * frequencyMultiplier(form.commerce_revenue_frequency);
+  const annualOtherRevenue = otherRevenue * frequencyMultiplier(form.other_revenue_frequency);
   return {
     crop_code: JSON.stringify(crops), crop_label: crops.map(crop => crop.name).filter(Boolean).join(', ') || form.crop_name,
     variety: crops.map(crop => crop.variety).filter(Boolean).join(', ') || form.crop_variety,
@@ -53,7 +65,17 @@ function buildProjectAssessment(form) {
     loss_percent: num(form.loss_percent), own_contribution: num(form.own_contribution),
     other_funding: num(form.other_funding), climate_risks: form.climate_risks,
     mitigations: form.mitigations, market_channel: form.main_buyer,
-    amount_requested: num(form.amount_requested),
+    amount_requested: loan.principal, interest_rate: loan.interest_rate,
+    interest_amount: loan.interest_amount, total_repayable: loan.total_repayable,
+    total_due: loan.total_repayable, duration_months: loan.duration_months,
+    desired_schedule: form.desired_schedule,
+    commerce_revenue: commerceRevenue,
+    commerce_revenue_frequency: form.commerce_revenue_frequency,
+    annual_commerce_revenue: annualCommerceRevenue,
+    other_revenue: otherRevenue,
+    other_revenue_frequency: form.other_revenue_frequency,
+    annual_other_revenue: annualOtherRevenue,
+    annual_complementary_revenue: annualCommerceRevenue + annualOtherRevenue,
   };
 }
 
@@ -118,17 +140,7 @@ export function repaymentEstimate(form) {
   return { count: payments.length || 1, installment: paymentAmount, label };
 }
 
-export function projectBudget(items, form) {
-  const byCategory = items.reduce((totals, item) => {
-    const category = item.category || 'Autres';
-    totals[category] = (totals[category] || 0) + Number(item.quantity || 0) * Number(item.unit_cost || 0);
-    return totals;
-  }, {});
-  const total = Object.values(byCategory).reduce((sum, value) => sum + value, 0);
-  const realNeed = Math.max(0, total - Number(form.own_contribution || 0) - Number(form.other_funding || 0));
-  const requested = Number(form.amount_requested) || 0;
-  return { byCategory, total, realNeed, overfinancing: Math.max(0, requested - realNeed), advisedAmount: realNeed };
-}
+export const projectBudget = calculateProjectBudget;
 
 export default function DossierNew() {
   const navigate = useNavigate();
@@ -144,12 +156,44 @@ export default function DossierNew() {
   const [declaredDebts, setDeclaredDebts] = useState([]);
   const [initialEvidence, setInitialEvidence] = useState([]);
   const [feasibilityAnalysis, setFeasibilityAnalysis] = useState(null);
+  const [draftHydrated, setDraftHydrated] = useState(false);
+  const [lastDraftSavedAt, setLastDraftSavedAt] = useState(null);
   const dossierIdRef = useRef(editId || crypto.randomUUID());
+  const pendingServerAnalysisRef = useRef(null);
+  const draftKey = dossierDraftKey(user?.id, editId);
   const feasibilityFingerprint = JSON.stringify({
     project: buildProjectAssessment(form),
     items: inputItems,
     city: form.applicant_location,
   });
+
+  useEffect(() => {
+    if (editing) return;
+    const restored = parseDossierDraft(localStorage.getItem(draftKey), STEPS.length - 1);
+    if (restored) {
+      setForm(current => ({ ...current, ...restored.form }));
+      setStep(restored.step);
+      setInputItems(restored.inputItems);
+      setDeclaredDebts(restored.declaredDebts);
+      setInitialEvidence(restored.initialEvidence);
+      setFeasibilityAnalysis(restored.feasibilityAnalysis);
+      setLastDraftSavedAt(restored.savedAt);
+    }
+    setDraftHydrated(true);
+  }, [draftKey, editing]);
+
+  useEffect(() => {
+    if (!draftHydrated) return undefined;
+    const timer = window.setTimeout(() => {
+      const draft = createDossierDraft({
+        form, step, inputItems, declaredDebts, initialEvidence,
+        feasibilityAnalysis,
+      });
+      localStorage.setItem(draftKey, JSON.stringify(draft));
+      setLastDraftSavedAt(new Date(draft.savedAt));
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [declaredDebts, draftHydrated, draftKey, editing, feasibilityAnalysis, form, initialEvidence, inputItems, step]);
 
   useEffect(() => {
     if (!editing) return;
@@ -216,12 +260,35 @@ export default function DossierNew() {
         setInputItems((response.input_items || dossier.input_items || []).map(item => ({ ...item, id: item.id || crypto.randomUUID() })));
         setDeclaredDebts((response.declared_debts || dossier.declared_debts || []).map(debt => ({ ...debt, id: debt.id || crypto.randomUUID() })));
         setInitialEvidence((response.evidence || dossier.initial_evidence || []).map(item => ({ ...item, id: item.id || crypto.randomUUID() })));
+        const serverAnalysis = parseJson(project.feasibility_analysis, null);
+        if (serverAnalysis) pendingServerAnalysisRef.current = serverAnalysis;
+        const restored = parseDossierDraft(localStorage.getItem(draftKey), STEPS.length - 1);
+        if (restored) {
+          setForm(current => ({ ...current, ...restored.form }));
+          setStep(restored.step);
+          setInputItems(restored.inputItems);
+          setDeclaredDebts(restored.declaredDebts);
+          setInitialEvidence(restored.initialEvidence);
+          setFeasibilityAnalysis(restored.feasibilityAnalysis);
+          setLastDraftSavedAt(restored.savedAt);
+        }
       } catch (err) { if (active) setError(err.message); }
-      finally { if (active) setLoading(false); }
+      finally { if (active) { setLoading(false); setDraftHydrated(true); } }
     }
     preload();
     return () => { active = false; };
   }, [editId, editing]);
+
+  useEffect(() => {
+    if (!draftHydrated || feasibilityAnalysis || !pendingServerAnalysisRef.current) return;
+    const result = pendingServerAnalysisRef.current;
+    pendingServerAnalysisRef.current = null;
+    setFeasibilityAnalysis({
+      fingerprint: feasibilityFingerprint,
+      result,
+      updatedAt: new Date(result.evaluated_at || Date.now()),
+    });
+  }, [draftHydrated, feasibilityAnalysis, feasibilityFingerprint]);
 
   useEffect(() => {
     setFeasibilityAnalysis(current => (
@@ -338,6 +405,7 @@ export default function DossierNew() {
             content_base64: await fileToBase64(item.file),
           });
         }
+        localStorage.removeItem(draftKey);
         navigate(`/dossiers/${res.id || editId}`);
       } else {
         const id = data.id;
@@ -356,6 +424,7 @@ export default function DossierNew() {
               content_base64: await fileToBase64(item.file) },
           });
         }
+        localStorage.removeItem(draftKey);
         navigate(editing ? `/dossiers/${id}` : '/dossiers');
       }
     } catch (err) { setError(err.message); }
@@ -371,6 +440,11 @@ export default function DossierNew() {
           <ArrowLeft size={14} /> Retour
         </button>
         <h1 className="page-title">{editing ? 'Modifier la demande de crédit' : 'Nouvelle demande de crédit'}</h1>
+        {draftHydrated && lastDraftSavedAt && (
+          <p className="page-subtitle" aria-live="polite">
+            Brouillon sauvegardé à {lastDraftSavedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+          </p>
+        )}
         {!isOnline() && (
           <p className="page-subtitle" style={{ color: 'var(--c-warning)' }}>
             <WifiOff size={14} style={{ verticalAlign: -2 }} /> Hors connexion — Le dossier sera synchronisé au retour du réseau
@@ -902,6 +976,7 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
   const revenueAdjustment = firstMetric(metrics, ['revenue_adjustment'])
     ?? (declaredRevenue != null && retainedRevenue != null ? retainedRevenue - declaredRevenue : null);
   const risk = terangaRisk(details);
+  const reportView = feasibilityReportView(current || {});
   return (
     <div>
       <h2 style={{ fontSize: 'var(--fs-16)', fontWeight: 600, marginBottom: 6 }}>Faisabilité agronomique</h2>
@@ -930,17 +1005,33 @@ function StepFaisabiliteAgronomique({ form, items, analysis, setAnalysis }) {
         </div>
         {(risk.score != null || risk.level || risk.recommendation) && (
           <div style={{ padding: 12, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 'var(--radius-md)', marginBottom: 14, fontSize: 'var(--fs-12)' }}>
-            <strong>Risque Teranga AI :</strong> {risk.level || 'niveau non précisé'}
-            {risk.score != null && <> · score de sécurité {risk.score}</>}
+            <strong>Signaux Teranga — rendement et risque</strong>
+            <div>{risk.level || 'niveau non précisé'}{risk.score != null && <> · score de sécurité {risk.score}</>}</div>
             {risk.recommendation && <div style={{ marginTop: 4 }}>{risk.recommendation}</div>}
           </div>
         )}
+        <div style={{ padding: 14, border: '1px solid var(--c-border)', borderRadius: 'var(--radius-md)', marginBottom: 14 }}>
+          <strong>Analyse déterministe FresCoop</strong>
+          <div className="text-sm" style={{ marginTop: 6, lineHeight: 1.6 }}>
+            {reportView.deterministicNarrative || current.summary || 'Analyse déterministe disponible dans les constats ci-dessous.'}
+          </div>
+        </div>
+        <div style={{ padding: 14, border: '1px solid var(--c-border)', borderRadius: 'var(--radius-md)', marginBottom: 14 }}>
+          <strong>Rapport du conseiller Teranga AI</strong>
+          <div className="text-sm" style={{ marginTop: 6, lineHeight: 1.6 }}>
+            {reportView.terangaNarrative || 'Le conseiller Teranga AI n’a pas fourni de réponse narrative valide.'}
+          </div>
+          <div className="text-xs text-muted" style={{ marginTop: 8 }}>
+            Source : {reportView.teranga.source || 'non fournie'} · Modèle : {reportView.teranga.model || 'non fourni'} · Disponibilité : {reportView.teranga.available ? 'disponible' : 'indisponible'} · État : {reportView.teranga.partial ? 'partiel' : reportView.teranga.degraded ? 'dégradé' : 'complet ou non précisé'}
+          </div>
+          {reportView.teranga.notice && <div className="text-xs text-muted" style={{ marginTop: 4 }}>{reportView.teranga.notice}</div>}
+        </div>
         <button type="button" className="btn btn-secondary btn-sm" disabled={loading} onClick={() => setRun(value => value + 1)}>
           {loading ? 'Analyse en cours…' : 'Relancer l’analyse'}
         </button>
         {analysis?.updatedAt && (
           <span className="text-sm text-muted" style={{ marginLeft: 10 }}>
-            Analyse mise à jour à {analysis.updatedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            Analyse mise à jour à {new Date(analysis.updatedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
           </span>
         )}
         <details style={{ marginTop: 14, padding: 14, background: 'var(--c-bg)', borderRadius: 'var(--radius-md)' }}>
@@ -1072,7 +1163,7 @@ function StepPreuves({ evidence, setEvidence }) {
   function saveEvidence() {
     if (!draft.label.trim()) return;
     if (draft.file && (!['application/pdf', 'image/jpeg', 'image/png'].includes(draft.file.type) || draft.file.size > 2 * 1024 * 1024)) return;
-    const item = { ...draft, id: editingId || crypto.randomUUID(), metadata: draft.file ? { file_name: draft.file.name, file_type: draft.file.type, file_size: draft.file.size, upload_pending: true } : (draft.metadata || {}) };
+    const item = { ...draft, id: editingId || crypto.randomUUID(), metadata: draft.file ? { file_name: draft.file.name, file_type: draft.file.type, file_size: draft.file.size, upload_pending: true } : (draft.metadata || {}), file_reselection_required: Boolean(draft.metadata?.file_name && !draft.file) };
     setEvidence(list => editingId ? list.map(x => x.id === editingId ? item : x) : [...list, item]);
     setDraft({ category: 'projet', label: '', source: 'document', source_detail: '', verification_level: 'C', file: null });
     setEditingId(null);
@@ -1093,7 +1184,7 @@ function StepPreuves({ evidence, setEvidence }) {
         <div className="field"><label className="field-label" htmlFor="evidence-file">Fichier PDF, JPEG ou PNG</label><input id="evidence-file" className="input" type="file" accept="application/pdf,image/jpeg,image/png" onChange={e => { const file = e.target.files?.[0] || null; if (file && file.size > 2 * 1024 * 1024) { e.target.value = ''; return; } setDraft(d => ({ ...d, file, verification_level: file ? 'C' : d.verification_level })); }} /><div className="field-hint">2 Mo maximum par fichier, 10 Mo par dossier. Envoi authentifié et empreinte SHA-256.</div></div>
         <button type="button" className="btn btn-primary btn-sm" onClick={saveEvidence}>{editingId ? 'Enregistrer les modifications' : 'Ajouter la preuve'}</button>
       </div>
-      {evidence.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '10px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span><strong>{item.verification_level}</strong> · {item.label}{item.metadata?.file_name ? ` · ${item.metadata.file_name}` : ''}</span><span><button type="button" className="btn btn-ghost btn-sm icon-button" onClick={() => editEvidence(item)} aria-label={`Modifier la preuve ${item.label}`} title="Modifier cette preuve"><Pencil size={13} /></button><button type="button" className="btn btn-ghost btn-sm icon-button" onClick={() => setEvidence(list => list.filter(x => x.id !== item.id))} aria-label={`Supprimer la preuve ${item.label}`} title="Supprimer cette preuve"><Trash2 size={13} /></button></span></div>)}
+      {evidence.map(item => <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '10px 0', borderBottom: '1px solid var(--c-border-light)', fontSize: 'var(--fs-12)' }}><span><strong>{item.verification_level}</strong> · {item.label}{item.metadata?.file_name ? ` · ${item.metadata.file_name}` : ''}{item.file_reselection_required ? ' · fichier à resélectionner' : ''}</span><span><button type="button" className="btn btn-ghost btn-sm icon-button" onClick={() => editEvidence(item)} aria-label={`Modifier la preuve ${item.label}`} title="Modifier cette preuve"><Pencil size={13} /></button><button type="button" className="btn btn-ghost btn-sm icon-button" onClick={() => setEvidence(list => list.filter(x => x.id !== item.id))} aria-label={`Supprimer la preuve ${item.label}`} title="Supprimer cette preuve"><Trash2 size={13} /></button></span></div>)}
     </div>
   );
 }

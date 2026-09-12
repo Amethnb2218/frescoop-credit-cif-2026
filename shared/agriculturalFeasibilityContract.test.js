@@ -68,6 +68,66 @@ test('laisse à null les métriques dont les entrées sont absentes', () => {
   assert.equal(metrics.revenue_adjustment, null);
 });
 
+test('calcule le besoin net et plafonne le montant conseillé au besoin réel', () => {
+  const financialProject = {
+    ...project,
+    own_contribution: 100000,
+    other_funding: 50000,
+    amount_requested: 1500000,
+  };
+  const metrics = buildFeasibilityMetrics(
+    { budget_total: 1450000 }, financialProject, [], { mode: 'local' },
+    { credit: { amount_requested: 1500000, interest_rate: 10, duration_months: 12 } },
+  );
+  assert.equal(metrics.financing_need, 1300000);
+  assert.equal(metrics.recommended_amount, 1300000);
+  assert.equal(metrics.overfinancing, 200000);
+  assert.equal(metrics.remaining_financing_gap, 0);
+  assert.equal(metrics.own_contribution, 100000);
+  assert.equal(metrics.other_funding, 50000);
+  assert.equal(metrics.non_debt_funding, 150000);
+});
+
+test('conseille toute la demande lorsqu’elle reste inférieure au besoin', () => {
+  const metrics = buildFeasibilityMetrics(
+    { budget_total: 1450000 }, {
+      ...project,
+      own_contribution: 100000,
+      other_funding: 50000,
+      amount_requested: 1200000,
+    }, [], { mode: 'local' },
+    { credit: { amount_requested: 1200000, interest_rate: 10, duration_months: 12 } },
+  );
+  assert.equal(metrics.financing_need, 1300000);
+  assert.equal(metrics.recommended_amount, 1200000);
+  assert.equal(metrics.overfinancing, 0);
+  assert.equal(metrics.remaining_financing_gap, 100000);
+});
+
+test('sépare marge économique, principal, intérêts et trésorerie agricole indicative', () => {
+  const metrics = buildFeasibilityMetrics(
+    { budget_total: 1450000 }, {
+      ...project,
+      own_contribution: 100000,
+      other_funding: 50000,
+      amount_requested: 1300000,
+    }, [], { mode: 'local' },
+    { credit: { amount_requested: 1300000, interest_rate: 10, duration_months: 12 } },
+  );
+  assert.equal(metrics.retained_revenue, 1900000);
+  assert.equal(metrics.economic_margin, 450000);
+  assert.equal(metrics.principal_borrowed, 1300000);
+  assert.equal(metrics.interest_amount, 130000);
+  assert.equal(metrics.debt_service_total, 1430000);
+  assert.equal(metrics.cash_before_debt_service, 1900000);
+  assert.equal(metrics.treasury_after_repayment, 470000);
+  assert.equal(metrics.stressed_revenue, 1520000);
+  assert.equal(metrics.stressed_economic_margin, 70000);
+  assert.equal(metrics.stressed_treasury_after_repayment, 90000);
+  assert.equal(metrics.agricultural_repayment_possible, true);
+  assert.equal(metrics.repayment_assessment_scope, 'indicative_agricultural_projection');
+  assert.equal(metrics.canonical_repayment_assessment_required, true);
+});
 test('produit un rapport déterministe et explicite sans classement inventé', () => {
   const metrics = buildFeasibilityMetrics({}, project, [], { mode: 'local' });
   const report = buildFeasibilityReport({

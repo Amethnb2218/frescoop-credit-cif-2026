@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api';
+import { severityPresentation } from '../lib/catalogDisplay';
 import PageHeader from '../components/ui/PageHeader';
 import Panel from '../components/ui/Panel';
 import StatusBadge from '../components/ui/StatusBadge';
@@ -38,16 +39,16 @@ export default function RulesPage() {
       <Panel title="Comment lire le résultat" className="mb-6">
         <div className="principles-grid">
           <div className="principle-item">
-            <h3>Pas de modèle opaque</h3>
-            <p>À données et version de règles identiques, FresCoop produit le même résultat. Chaque point et chaque alerte renvoient à un calcul identifiable.</p>
+            <h3>Calcul traçable</h3>
+            <p>Mêmes données et même version : même résultat, avec chaque point relié à une règle.</p>
           </div>
           <div className="principle-item">
-            <h3>Provisoire, puis définitif</h3>
-            <p>Un dossier incomplet conserve un score provisoire et la liste des données manquantes. Le serveur recalcule après complétion.</p>
+            <h3>Score évolutif</h3>
+            <p>Les données manquantes restent visibles et le score est recalculé dès leur complétion.</p>
           </div>
           <div className="principle-item">
-            <h3>Décision humaine</h3>
-            <p>Teranga peut enrichir l’analyse, sans décider. Une indisponibilité n’entraîne ni pénalité ni refus automatique.</p>
+            <h3>Décision encadrée</h3>
+            <p>Les signaux externes enrichissent l’analyse ; la décision finale reste humaine.</p>
           </div>
         </div>
       </Panel>
@@ -69,15 +70,14 @@ export default function RulesPage() {
                         : rule.result === 'REVUE_REQUISE' ? 'warning' : 'success';
                       const resultLabel = rule.result === 'NON_ELIGIBLE' ? 'Non éligible'
                         : rule.result === 'REVUE_REQUISE' ? 'Revue requise' : 'Préqualifié';
-                      const severityTone = rule.severity === 'critical' ? 'danger'
-                        : rule.severity === 'high' ? 'warning' : 'neutral';
+                      const severity = severityPresentation(rule.severity);
                       return (
                         <tr key={rule.id}>
                           <td><span className="font-mono">{rule.code}</span></td>
                           <td className="table-cell-primary">{rule.name}</td>
                           <td className="table-description">{rule.description}</td>
                           <td><StatusBadge tone={resultTone}>{resultLabel}</StatusBadge></td>
-                          <td><StatusBadge tone={severityTone}>{rule.severity}</StatusBadge></td>
+                          <td><StatusBadge tone={severity.tone}>{severity.label}</StatusBadge></td>
                           <td><StatusBadge tone={rule.active ? 'success' : 'neutral'}>{rule.active ? 'Active' : 'Inactive'}</StatusBadge></td>
                         </tr>
                       );

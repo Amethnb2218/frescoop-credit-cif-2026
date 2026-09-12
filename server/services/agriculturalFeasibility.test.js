@@ -125,8 +125,22 @@ test('appelle rendement, risque et POST /api/chat avec des messages français st
     if (url.includes('predict-yield')) return response({ predicted_yield_kg_ha: 3200 });
     return response({ safety_score: 84, niveau: 'information', recommandation: 'Risque acceptable' });
   };
+  const enrichedProject = {
+    ...project,
+    interest_amount: 20000,
+    total_due: 220000,
+    duration_months: 8,
+    desired_schedule: 'Paiement à la récolte',
+    commerce_revenue: 75000,
+    commerce_revenue_frequency: 'mensuelle',
+    annual_commerce_revenue: 900000,
+    other_revenue: 25000,
+    other_revenue_frequency: 'trimestrielle',
+    annual_other_revenue: 100000,
+    annual_complementary_revenue: 1000000,
+  };
   const result = await assessAgriculturalFeasibility({
-    project, input_items: inputItems, context: { city: 'Saint-Louis' },
+    project: enrichedProject, input_items: inputItems, context: { city: 'Saint-Louis' },
   }, { baseUrl: 'https://teranga.example/', fetchImpl });
   assert.equal(result.source.mode, 'hybrid');
   assert.equal(result.details.metrics.predicted_yield_kg_ha, 3200);
@@ -147,6 +161,14 @@ test('appelle rendement, risque et POST /api/chat avec des messages français st
   assert.match(chatBody.messages[1].content, /Projet :/);
   assert.match(chatBody.messages[1].content, /Budget :/);
   assert.match(chatBody.messages[1].content, /Crédit :/);
+  assert.match(chatBody.messages[1].content, /intérêts 20000 FCFA/);
+  assert.match(chatBody.messages[1].content, /total dû 220000 FCFA/);
+  assert.match(chatBody.messages[1].content, /durée 8 mois/);
+  assert.match(chatBody.messages[1].content, /calendrier Paiement à la récolte/);
+  assert.match(chatBody.messages[1].content, /Revenus :/);
+  assert.match(chatBody.messages[1].content, /commerce 75000 FCFA par période \(mensuelle\), soit 900000 FCFA\/an/);
+  assert.match(chatBody.messages[1].content, /autres 25000 FCFA par période \(trimestrielle\), soit 100000 FCFA\/an/);
+  assert.match(chatBody.messages[1].content, /total complémentaire annualisé 1000000 FCFA\/an/);
   assert.doesNotMatch(chatBody.messages[1].content, /\[object Object\]/);
 });
 

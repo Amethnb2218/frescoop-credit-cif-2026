@@ -63,11 +63,10 @@ export default function Dashboard() {
     <div className="dashboard-page">
       <header className="page-header page-header-row">
         <div>
-          <p className="page-kicker">Espace de travail</p>
           <h1 className="page-title">Tableau de bord</h1>
           <div className="dashboard-connectivity">
-            <span className="network-status"><span className={`network-dot ${online ? 'online' : 'offline'}`} />{online ? 'Données en ligne' : 'Mode hors connexion'}</span>
-            {pendingSync > 0 && <span className="badge badge-warning">{pendingSync} opération{pendingSync > 1 ? 's' : ''} à synchroniser</span>}
+            <span className={`network-status ${online ? 'online' : 'offline'}`}>{online ? 'Données en ligne' : 'Mode hors connexion'}</span>
+            {pendingSync > 0 && <span className="sync-status">{pendingSync} opération{pendingSync > 1 ? 's' : ''} à synchroniser</span>}
           </div>
         </div>
         {CAN_CREATE.includes(role) && <Link to="/dossiers/new" className="btn btn-primary"><Plus size={17} /> Nouveau dossier</Link>}
@@ -88,14 +87,14 @@ export default function Dashboard() {
 
       <section className="dashboard-priority" aria-labelledby="priority-title">
         <div className="section-heading">
-          <div><p className="section-eyebrow">Priorité</p><h2 id="priority-title">À traiter maintenant</h2></div>
+          <h2 id="priority-title">À traiter maintenant</h2>
           <Link to="/dossiers" className="btn btn-secondary btn-sm">Voir tous les dossiers</Link>
         </div>
         <ActionList dossiers={actions} loading={loading} role={role} />
       </section>
 
       <section aria-labelledby="activity-title">
-        <div className="section-heading"><div><p className="section-eyebrow">Activité</p><h2 id="activity-title">Repères du portefeuille</h2></div></div>
+        <div className="section-heading"><h2 id="activity-title">Repères du portefeuille</h2></div>
         <MetricGrid role={role} stats={stats} averageScore={averageScore} />
       </section>
 
@@ -142,7 +141,7 @@ function MetricGrid({ role, stats, averageScore }) {
   return <div className="metrics-row">{metrics.map(([value, label, status]) => {
     const target = status === null ? '/dossiers' : status ? `/dossiers?status=${status}` : '/dossiers';
     return (
-      <Link key={label} to={target} className="metric-card metric-card-link">
+      <Link key={label} to={target} className="portfolio-metric">
         <span className="metric-value">{value}</span><span className="metric-label">{label}</span>
       </Link>
     );
@@ -165,7 +164,7 @@ function ActionList({ dossiers, loading, role }) {
 
   return <div className="surface action-list">{dossiers.slice(0, 8).map(dossier => (
     <article className="action-list-item" key={dossier.id}>
-      <span className="action-list-icon"><FileText size={18} /></span>
+      <span className="action-list-icon" aria-hidden="true"><FileText size={16} /></span>
       <div className="action-list-main">
         <strong>{dossier.applicant_name || 'Demandeur non renseigné'}</strong>
         <span>{formatCFA(dossier.amount_requested)} · {dossier.applicant_location || dossier.activity_type || 'Localisation non renseignée'}</span>

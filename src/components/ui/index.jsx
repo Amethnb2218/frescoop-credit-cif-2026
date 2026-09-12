@@ -13,7 +13,7 @@ export function PageHeader({ eyebrow, title, subtitle, actions, children, classN
   return (
     <header className={`page-header ${className}`.trim()}>
       <div className="page-header-copy">
-        {eyebrow && <div className="page-eyebrow">{eyebrow}</div>}
+        {eyebrow && <p className="page-context">{eyebrow}</p>}
         <h1 className="page-title">{title}</h1>
         {subtitle && <p className="page-subtitle">{subtitle}</p>}
       </div>

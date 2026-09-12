@@ -54,7 +54,7 @@ export default function DossierList() {
   return (
     <div className="dossier-list-page">
       <header className="page-header page-header-row">
-        <div><p className="page-kicker">Portefeuille</p><h1 className="page-title">Dossiers de crédit</h1><p className="page-subtitle">{filtered.length} dossier{filtered.length !== 1 ? 's' : ''} affiché{filtered.length !== 1 ? 's' : ''}</p></div>
+        <div><h1 className="page-title">Dossiers de crédit</h1><p className="page-subtitle">{filtered.length} dossier{filtered.length !== 1 ? 's' : ''} affiché{filtered.length !== 1 ? 's' : ''}</p></div>
         {CAN_CREATE.includes(user?.role) && <Link to="/dossiers/new" className="btn btn-primary"><Plus size={17} /> Nouveau dossier</Link>}
       </header>
 

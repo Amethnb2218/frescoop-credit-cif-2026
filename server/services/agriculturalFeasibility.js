@@ -272,6 +272,17 @@ function buildChatMessages(project, inputItems, local) {
     const unitCost = Math.max(0, finiteNumber(item.unit_cost) || 0);
     return sum + quantity * unitCost;
   }, 0);
+  const commerceRevenue = finiteNumber(project.commerce_revenue ?? project.revenue_commerce);
+  const otherRevenue = finiteNumber(project.other_revenue ?? project.revenue_other);
+  const annualCommerceRevenue = finiteNumber(
+    project.annual_commerce_revenue ?? project.commerce_revenue_annual,
+  );
+  const annualOtherRevenue = finiteNumber(
+    project.annual_other_revenue ?? project.other_revenue_annual,
+  );
+  const annualComplementaryRevenue = finiteNumber(
+    project.annual_complementary_revenue ?? project.annual_revenue,
+  );
   return [
     {
       role: 'system',
@@ -282,7 +293,8 @@ function buildChatMessages(project, inputItems, local) {
       content: [
         `Projet : culture ${safeText(project.crop_label) || 'non renseignée'}, zone ${safeText(project.agro_zone) || 'non renseignée'}, surface ${finiteNumber(project.project_surface_ha) ?? 'non renseignée'} ha.`,
         `Budget : coût ${Math.round(budget)} FCFA, apport ${finiteNumber(project.own_contribution) ?? 'non renseigné'} FCFA, autres financements ${finiteNumber(project.other_funding) ?? 'non renseignés'} FCFA.`,
-        `Crédit : montant demandé ${finiteNumber(project.amount_requested) ?? 'non renseigné'} FCFA, taux ${finiteNumber(project.interest_rate_percent ?? project.interest_rate) ?? 'non renseigné'} %, total dû ${finiteNumber(project.total_due ?? project.credit_total_due) ?? 'non renseigné'} FCFA.`,
+        `Crédit : montant demandé ${finiteNumber(project.amount_requested) ?? 'non renseigné'} FCFA, taux ${finiteNumber(project.interest_rate_percent ?? project.interest_rate) ?? 'non renseigné'} %, intérêts ${finiteNumber(project.interest_amount ?? project.credit_interest_amount) ?? 'non renseignés'} FCFA, total dû ${finiteNumber(project.total_due ?? project.total_repayable ?? project.credit_total_due) ?? 'non renseigné'} FCFA, durée ${finiteNumber(project.duration_months) ?? 'non renseignée'} mois, calendrier ${safeText(project.desired_schedule ?? project.schedule_type) || 'non renseigné'}.`,
+        `Revenus : commerce ${commerceRevenue ?? 'non renseigné'} FCFA par période (${safeText(project.commerce_revenue_frequency) || 'fréquence non renseignée'}), soit ${annualCommerceRevenue ?? 'non renseigné'} FCFA/an ; autres ${otherRevenue ?? 'non renseignés'} FCFA par période (${safeText(project.other_revenue_frequency) || 'fréquence non renseignée'}), soit ${annualOtherRevenue ?? 'non renseigné'} FCFA/an ; total complémentaire annualisé ${annualComplementaryRevenue ?? 'non renseigné'} FCFA/an.`,
         `Données manquantes locales : ${(local.missing_data || []).map(missingDataLabel).filter(Boolean).join(', ') || 'aucune signalée'}.`,
       ].join('\n'),
     },

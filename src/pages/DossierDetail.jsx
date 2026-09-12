@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api, getUser } from '../lib/api';
 import { formatCFA, formatDate, formatDateTime, STATUS_LABELS, MONTHS, prequalLabel, prequalColor, scoreStyle, parseScoreDetails, getMissingScoreData, isProvisionalScore, isScoreAvailable, normalizeMissingData } from '../lib/format';
 import { EVIDENCE_LEVELS } from '../lib/tokens';
+import { feasibilityReportView } from '../lib/agriculturalFeasibilityView.js';
 import { isOnline, addToSyncQueue, saveEvidenceOffline, deleteEvidenceOffline } from '../lib/offline';
 import { ArrowLeft, Plus, Play, AlertTriangle, CheckCircle, XCircle, WifiOff, Shield, MapPin, FileCheck, Printer, Download, Trash2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
@@ -499,10 +500,11 @@ function AgronomicAssessmentCard({ projectAssessment, compact = false }) {
   const declaredRevenue = metricNumber(metrics, projectAssessment, ['declared_revenue', 'expected_revenue']);
   const retainedRevenue = metricNumber(metrics, projectAssessment, ['retained_revenue']) ?? declaredRevenue;
   const recommendations = analysis.details?.recommendations || analysis.recommendations || [];
+  const reportView = feasibilityReportView(analysis);
   const rawReport = analysis.report || analysis.details?.report || projectAssessment.report || {};
   const report = typeof rawReport === 'object' && rawReport ? rawReport : {};
-  const narrative = typeof rawReport === 'string' ? rawReport : report.narrative;
-  const terangaNarrative = report.teranga_narrative || analysis.teranga_narrative || analysis.details?.teranga_narrative;
+  const narrative = reportView.deterministicNarrative || (typeof rawReport === 'string' ? rawReport : report.narrative);
+  const terangaNarrative = reportView.terangaNarrative;
   const assumptions = optionalReportList(report.assumptions);
   const evidenceItems = optionalReportList(report.evidence);
   const reportMissing = normalizeMissingData(report.missing_data).map(item => item.label);
@@ -527,8 +529,18 @@ function AgronomicAssessmentCard({ projectAssessment, compact = false }) {
         <div><div className="text-xs text-muted">Revenu déclaré</div><strong>{declaredRevenue == null ? '—' : formatCFA(declaredRevenue)}</strong></div>
         <div><div className="text-xs text-muted">Revenu retenu</div><strong>{retainedRevenue == null ? '—' : formatCFA(retainedRevenue)}</strong></div>
       </div>
-      {narrative && <div className="text-xs" style={{ marginTop: 12, lineHeight: 1.6 }}><strong>Rapport agronomique :</strong> {narrative}</div>}
-      {terangaNarrative && <div className="text-xs" style={{ marginTop: 10, lineHeight: 1.6 }}><strong>Analyse Teranga :</strong> {terangaNarrative}</div>}
+      <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--c-border-light)' }}>
+        <strong className="text-xs">Analyse déterministe FresCoop</strong>
+        <div className="text-xs" style={{ marginTop: 6, lineHeight: 1.6 }}>{narrative || 'Analyse déterministe disponible dans les métriques et recommandations.'}</div>
+      </div>
+      <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--c-border-light)' }}>
+        <strong className="text-xs">Rapport du conseiller Teranga AI</strong>
+        <div className="text-xs" style={{ marginTop: 6, lineHeight: 1.6 }}>{terangaNarrative || 'Le conseiller Teranga AI n’a pas fourni de réponse narrative valide.'}</div>
+        <div className="text-xs text-muted" style={{ marginTop: 8 }}>
+          Source : {reportView.teranga.source || 'non fournie'} · Modèle : {reportView.teranga.model || 'non fourni'} · Disponibilité : {reportView.teranga.available ? 'disponible' : 'indisponible'} · État : {reportView.teranga.partial ? 'partiel' : reportView.teranga.degraded ? 'dégradé' : 'complet ou non précisé'}
+        </div>
+        {reportView.teranga.notice && <div className="text-xs text-muted" style={{ marginTop: 4 }}>{reportView.teranga.notice}</div>}
+      </div>
       <ReportList label="Hypothèses" items={assumptions} />
       <ReportList label="Preuves" items={evidenceItems} />
       <ReportList label="Données manquantes" items={reportMissing} />

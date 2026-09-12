@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { BarChart, Bar, PieChart, Pie, Cell, Tooltip, ResponsiveContainer, XAxis, YAxis } from 'recharts';
+import { BarChart, Bar, Tooltip, ResponsiveContainer, XAxis, YAxis } from 'recharts';
 import { api } from '../lib/api';
 import { STATUS_LABELS, formatCFA, prequalLabel } from '../lib/format';
 import PageHeader from '../components/ui/PageHeader';
@@ -115,34 +115,17 @@ export default function StatsPage() {
 
             <Panel title="Orientations de préqualification">
               {prequalificationData.length ? (
-                <div className="pie-layout">
-                  <figure className="chart-figure" aria-labelledby="prequal-chart-title">
-                    <figcaption id="prequal-chart-title" className="sr-only">Répartition des orientations de préqualification</figcaption>
-                    <ResponsiveContainer width="100%" height={220}>
-                      <PieChart>
-                        <Pie data={prequalificationData} cx="50%" cy="50%" innerRadius={52} outerRadius={80} dataKey="value" paddingAngle={2} stroke="#fff" strokeWidth={2}>
-                          {prequalificationData.map(item => <Cell key={item.key} fill={PREQUAL_COLORS[item.key] || PREQUAL_COLORS.non_evalue} />)}
-                        </Pie>
-                        <Tooltip formatter={(value, _name, item) => [value, item.payload.name]} />
-                      </PieChart>
-                    </ResponsiveContainer>
-                  </figure>
-                  <ul className="chart-legend">
-                    {prequalificationData.map(item => (
-                      <li key={item.key}><span className="legend-mark" style={{ '--legend-color': PREQUAL_COLORS[item.key] || PREQUAL_COLORS.non_evalue }} aria-hidden="true" /><span>{item.name}</span><strong>{item.value}</strong></li>
-                    ))}
-                  </ul>
-                </div>
+                <ul className="summary-list" aria-label="Répartition des orientations de préqualification">
+                  {prequalificationData.map(item => (
+                    <li key={item.key}>
+                      <span>{item.name}</span>
+                      <strong style={{ color: PREQUAL_COLORS[item.key] || PREQUAL_COLORS.non_evalue }}>{item.value}</strong>
+                    </li>
+                  ))}
+                </ul>
               ) : <EmptyState title="Aucune orientation disponible" />}
             </Panel>
           </div>
-
-          <Panel title="Lecture détaillée" className="chart-table-panel">
-            <div className="grid-2">
-              <div><h3>Statuts des dossiers</h3><ul className="summary-list">{statusData.map(item => <li key={item.key}><span>{item.name}</span><strong>{item.count}</strong></li>)}</ul></div>
-              <div><h3>Préqualification</h3><ul className="summary-list">{prequalificationData.map(item => <li key={item.key}><span>{item.name}</span><strong>{item.value}</strong></li>)}</ul></div>
-            </div>
-          </Panel>
         </>
       )}
     </div>

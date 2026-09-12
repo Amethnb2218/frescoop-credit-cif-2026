@@ -56,7 +56,11 @@ export function buildFeasibilityMetrics(localMetrics = {}, project = {}, externa
   const declaredRevenue = revenue(project, declaredProduction.saleable);
   const retainedRevenue = revenue(project, retainedProduction.saleable);
   const budgetTotal = agriculturalNumber(localMetrics.budget_total);
-  const financingNeed = agriculturalNumber(localMetrics.financing_gap);
+  const ownContribution = agriculturalNumber(project.own_contribution) ?? 0;
+  const otherFunding = agriculturalNumber(project.other_funding) ?? 0;
+  const declaredFinancingNeed = agriculturalNumber(localMetrics.financing_gap);
+  const financingNeed = declaredFinancingNeed
+    ?? (budgetTotal == null ? null : Math.max(0, budgetTotal - ownContribution - otherFunding));
   const credit = {
     ...financial.credit,
     amount_requested: financial.credit?.amount_requested ?? project.amount_requested,
@@ -65,16 +69,24 @@ export function buildFeasibilityMetrics(localMetrics = {}, project = {}, externa
   const requestedAmount = loanTerms.principal;
   const recommendedAmount = financingNeed == null ? null : Math.min(requestedAmount, financingNeed);
   const financingDifference = financingNeed == null ? null : requestedAmount - financingNeed;
+  const overfinancing = financingDifference == null ? null : Math.max(0, financingDifference);
+  const remainingFinancingGap = financingDifference == null ? null : Math.max(0, -financingDifference);
   const projectMargin = retainedRevenue == null || budgetTotal == null ? null : retainedRevenue - budgetTotal;
-  const marginAfterDebt = projectMargin == null || loanTerms.total_repayable <= 0
-    ? null : projectMargin - loanTerms.total_repayable;
   const stressedRevenue = retainedRevenue == null ? null : Math.round(retainedRevenue * 0.8);
-  const stressedMarginAfterDebt = stressedRevenue == null || budgetTotal == null || loanTerms.total_repayable <= 0
-    ? null : stressedRevenue - budgetTotal - loanTerms.total_repayable;
-  const debtCoverageRatio = projectMargin == null || loanTerms.total_repayable <= 0
-    ? null : projectMargin / loanTerms.total_repayable;
-  const stressedDebtCoverageRatio = stressedRevenue == null || budgetTotal == null || loanTerms.total_repayable <= 0
-    ? null : (stressedRevenue - budgetTotal) / loanTerms.total_repayable;
+  const stressedProjectMargin = stressedRevenue == null || budgetTotal == null
+    ? null : stressedRevenue - budgetTotal;
+  const cashBeforeDebtService = retainedRevenue == null || budgetTotal == null
+    ? null : retainedRevenue + ownContribution + otherFunding + requestedAmount - budgetTotal;
+  const stressedCashBeforeDebtService = stressedRevenue == null || budgetTotal == null
+    ? null : stressedRevenue + ownContribution + otherFunding + requestedAmount - budgetTotal;
+  const treasuryAfterRepayment = cashBeforeDebtService == null || loanTerms.total_repayable <= 0
+    ? null : cashBeforeDebtService - loanTerms.total_repayable;
+  const stressedTreasuryAfterRepayment = stressedCashBeforeDebtService == null || loanTerms.total_repayable <= 0
+    ? null : stressedCashBeforeDebtService - loanTerms.total_repayable;
+  const agriculturalDebtCoverageRatio = cashBeforeDebtService == null || loanTerms.total_repayable <= 0
+    ? null : cashBeforeDebtService / loanTerms.total_repayable;
+  const stressedAgriculturalDebtCoverageRatio = stressedCashBeforeDebtService == null || loanTerms.total_repayable <= 0
+    ? null : stressedCashBeforeDebtService / loanTerms.total_repayable;
   return {
     ...localMetrics,
     project_surface_ha: agriculturalNumber(project.project_surface_ha, { positive: true }),
@@ -95,20 +107,45 @@ export function buildFeasibilityMetrics(localMetrics = {}, project = {}, externa
       ? null : retainedRevenue - declaredRevenue,
     external_adjustment_applied: adjustmentAllowed && retainedYield !== declaredYield,
     project_cost: budgetTotal,
+    own_contribution: ownContribution,
+    other_funding: otherFunding,
+    non_debt_funding: ownContribution + otherFunding,
     financing_need: financingNeed,
     amount_requested: requestedAmount || null,
+    principal_borrowed: requestedAmount || null,
     recommended_amount: recommendedAmount,
     financing_difference: financingDifference,
+    overfinancing,
+    remaining_financing_gap: remainingFinancingGap,
     interest_rate: loanTerms.interest_rate,
     interest_amount: loanTerms.interest_amount,
     total_repayable: loanTerms.total_repayable || null,
+    debt_service_total: loanTerms.total_repayable || null,
     project_margin: projectMargin,
-    margin_after_debt: marginAfterDebt,
+    economic_margin: projectMargin,
     stressed_revenue: stressedRevenue,
-    stressed_margin_after_debt: stressedMarginAfterDebt,
-    debt_coverage_ratio: debtCoverageRatio == null ? null : Number(debtCoverageRatio.toFixed(4)),
-    stressed_debt_coverage_ratio: stressedDebtCoverageRatio == null ? null : Number(stressedDebtCoverageRatio.toFixed(4)),
-    repayment_possible: marginAfterDebt == null ? null : marginAfterDebt >= 0,
+    stressed_project_margin: stressedProjectMargin,
+    stressed_economic_margin: stressedProjectMargin,
+    cash_before_debt_service: cashBeforeDebtService,
+    stressed_cash_before_debt_service: stressedCashBeforeDebtService,
+    treasury_after_repayment: treasuryAfterRepayment,
+    stressed_treasury_after_repayment: stressedTreasuryAfterRepayment,
+    agricultural_debt_coverage_ratio: agriculturalDebtCoverageRatio == null
+      ? null : Number(agriculturalDebtCoverageRatio.toFixed(4)),
+    stressed_agricultural_debt_coverage_ratio: stressedAgriculturalDebtCoverageRatio == null
+      ? null : Number(stressedAgriculturalDebtCoverageRatio.toFixed(4)),
+    agricultural_repayment_possible: treasuryAfterRepayment == null
+      ? null : treasuryAfterRepayment >= 0,
+    repayment_assessment_scope: 'indicative_agricultural_projection',
+    canonical_repayment_assessment_required: true,
+    // Compatibilité API : ces alias décrivent désormais la trésorerie agricole indicative.
+    margin_after_debt: treasuryAfterRepayment,
+    stressed_margin_after_debt: stressedTreasuryAfterRepayment,
+    debt_coverage_ratio: agriculturalDebtCoverageRatio == null
+      ? null : Number(agriculturalDebtCoverageRatio.toFixed(4)),
+    stressed_debt_coverage_ratio: stressedAgriculturalDebtCoverageRatio == null
+      ? null : Number(stressedAgriculturalDebtCoverageRatio.toFixed(4)),
+    repayment_possible: treasuryAfterRepayment == null ? null : treasuryAfterRepayment >= 0,
   };
 }
 
@@ -156,10 +193,11 @@ export function buildAgriculturalFeasibilityContract({
   const risks = local.findings?.map(item => item.explanation).filter(Boolean) || [];
   if (overfinancing > 0) risks.push(`Le montant demandé dépasse le besoin réel de ${Math.round(overfinancing)} FCFA.`);
   const gains = [
-    metrics.project_margin == null ? 'Marge non calculable.' : `Marge estimée : ${Math.round(metrics.project_margin)} FCFA.`,
-    metrics.margin_after_debt == null
-      ? 'Excédent après remboursement non calculable.'
-      : `Excédent après remboursement : ${Math.round(metrics.margin_after_debt)} FCFA.`,
+    metrics.economic_margin == null ? 'Marge économique non calculable.' : `Marge économique estimée : ${Math.round(metrics.economic_margin)} FCFA.`,
+    metrics.treasury_after_repayment == null
+      ? 'Trésorerie agricole indicative après remboursement non calculable.'
+      : `Trésorerie agricole indicative après remboursement : ${Math.round(metrics.treasury_after_repayment)} FCFA.`,
+    'La capacité de remboursement définitive reste évaluée par le cash-flow canonique du dossier.',
   ];
   return {
     metrics: {
@@ -168,13 +206,13 @@ export function buildAgriculturalFeasibilityContract({
       overfinancing,
       total_due: metrics.total_repayable,
       revenue: metrics.retained_revenue,
-      margin: metrics.project_margin,
-      gross_margin: metrics.project_margin,
-      surplus_after_repayment: metrics.margin_after_debt,
-      repayment_coverage_ratio: metrics.debt_coverage_ratio,
+      margin: metrics.economic_margin,
+      gross_margin: metrics.economic_margin,
+      surplus_after_repayment: metrics.treasury_after_repayment,
+      repayment_coverage_ratio: metrics.agricultural_debt_coverage_ratio,
       stress_revenue_minus_20_percent: metrics.stressed_revenue,
-      stress_surplus_after_repayment: metrics.stressed_margin_after_debt,
-      stress_coverage_ratio: metrics.stressed_debt_coverage_ratio,
+      stress_surplus_after_repayment: metrics.stressed_treasury_after_repayment,
+      stress_coverage_ratio: metrics.stressed_agricultural_debt_coverage_ratio,
     },
     report: {
       language: 'fr',
@@ -197,9 +235,9 @@ export function buildAgriculturalFeasibilityContract({
         ['Montant demandé', requested],
         ['Montant conseillé', metrics.recommended_amount],
         ['Revenu', metrics.retained_revenue],
-        ['Marge', metrics.project_margin],
-        ['Total dû', metrics.total_repayable],
-        ['Excédent après remboursement', metrics.margin_after_debt],
+        ['Marge économique', metrics.economic_margin],
+        ['Total dû', metrics.debt_service_total],
+        ['Trésorerie agricole indicative après remboursement', metrics.treasury_after_repayment],
       ].map(([label, value]) => ({ label, value, unit: 'FCFA' })),
     },
   };

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { formatCFA } from '../lib/format';
+import { formatEligibleSectors } from '../lib/catalogDisplay';
 import PageHeader from '../components/ui/PageHeader';
 import Panel from '../components/ui/Panel';
 import StatusBadge from '../components/ui/StatusBadge';
@@ -51,12 +52,12 @@ export default function ProductsPage() {
                   <tbody>
                     {products.map(product => (
                       <tr key={product.id}>
-                        <td><span className="font-mono">{product.code}</span></td>
+                        <td className="table-cell-secondary"><span className="font-mono">{product.code}</span></td>
                         <td className="table-cell-primary">{product.name}</td>
                         <td className="table-cell-amount">{formatCFA(product.min_amount)}</td>
                         <td className="table-cell-amount">{formatCFA(product.max_amount)}</td>
                         <td>{product.min_duration}–{product.max_duration} mois</td>
-                        <td>{product.eligible_sectors || '—'}</td>
+                        <td>{formatEligibleSectors(product.eligible_sectors)}</td>
                         <td><StatusBadge tone={product.active ? 'success' : 'neutral'}>{product.active ? 'Actif' : 'Inactif'}</StatusBadge></td>
                       </tr>
                     ))}
